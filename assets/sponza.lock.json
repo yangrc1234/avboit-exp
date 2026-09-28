@@ -1,0 +1,386 @@
+{
+  "repository": "https://github.com/KhronosGroup/glTF-Sample-Assets",
+  "revision": "c6a6bd13ab2b3c685c7903d03561b8a9392f38b8",
+  "files": [
+    {
+      "path": "Models/Sponza/glTF/10381718147657362067.jpg",
+      "size": 881980,
+      "sha": "e49b8b12468323f8293f9c7e65b2f6f6c5debddd"
+    },
+    {
+      "path": "Models/Sponza/glTF/10388182081421875623.jpg",
+      "size": 917202,
+      "sha": "254626b440670950cd9f1f949245490545ff4b67"
+    },
+    {
+      "path": "Models/Sponza/glTF/11474523244911310074.jpg",
+      "size": 1079152,
+      "sha": "f2cf424e0c27d4c209ee5fabadc10a673763d141"
+    },
+    {
+      "path": "Models/Sponza/glTF/11490520546946913238.jpg",
+      "size": 321375,
+      "sha": "4174770a63aea6e0a86ade5ea0aae6b7b8fcca10"
+    },
+    {
+      "path": "Models/Sponza/glTF/11872827283454512094.jpg",
+      "size": 668962,
+      "sha": "fd4136f46878b129b0a2207d79a8b2a7de165cd0"
+    },
+    {
+      "path": "Models/Sponza/glTF/11968150294050148237.jpg",
+      "size": 530384,
+      "sha": "db25cc6c67d36037210e96bb1998c3fa9fc0cc1c"
+    },
+    {
+      "path": "Models/Sponza/glTF/1219024358953944284.jpg",
+      "size": 329124,
+      "sha": "4f3fe654ee3d576225ff7253c5b8704873d95ac4"
+    },
+    {
+      "path": "Models/Sponza/glTF/12501374198249454378.jpg",
+      "size": 418235,
+      "sha": "79276b204b3e251353474952590b6155993011eb"
+    },
+    {
+      "path": "Models/Sponza/glTF/13196865903111448057.jpg",
+      "size": 281980,
+      "sha": "cdf1eaee667bafe2408729367784020603be9b9d"
+    },
+    {
+      "path": "Models/Sponza/glTF/13824894030729245199.jpg",
+      "size": 313460,
+      "sha": "8410fd7731f9573d653aebd9b07c637a0048f5a3"
+    },
+    {
+      "path": "Models/Sponza/glTF/13982482287905699490.jpg",
+      "size": 347538,
+      "sha": "2c938a4ca239ab36f574190f98d6b1fab4aa5311"
+    },
+    {
+      "path": "Models/Sponza/glTF/14118779221266351425.jpg",
+      "size": 1611314,
+      "sha": "f385e6b40ce7d88eac659b05a853252e77f6cc1c"
+    },
+    {
+      "path": "Models/Sponza/glTF/14170708867020035030.jpg",
+      "size": 140738,
+      "sha": "51f9d064c23fbf7b25c4782262bf7e6bd6ecf542"
+    },
+    {
+      "path": "Models/Sponza/glTF/14267839433702832875.jpg",
+      "size": 711217,
+      "sha": "5e7b1c37f820403e6cc13657bb2ecb9542a24ceb"
+    },
+    {
+      "path": "Models/Sponza/glTF/14650633544276105767.jpg",
+      "size": 521947,
+      "sha": "64e58dc2c87a53417de0037b4a5814f9addbf2aa"
+    },
+    {
+      "path": "Models/Sponza/glTF/15295713303328085182.jpg",
+      "size": 520162,
+      "sha": "80c8b28b48d4a0c2680eeb49942b9f0cc38bca1a"
+    },
+    {
+      "path": "Models/Sponza/glTF/15722799267630235092.jpg",
+      "size": 560258,
+      "sha": "079c22c5620950ca00c742b2c7e3ddc6656406d8"
+    },
+    {
+      "path": "Models/Sponza/glTF/16275776544635328252.png",
+      "size": 1077432,
+      "sha": "987e8d03ad1da1542575108d6bcd8b90307bba03"
+    },
+    {
+      "path": "Models/Sponza/glTF/16299174074766089871.jpg",
+      "size": 322693,
+      "sha": "578484f29ca71f95394e204e06a40c907ae324a1"
+    },
+    {
+      "path": "Models/Sponza/glTF/16885566240357350108.jpg",
+      "size": 12575,
+      "sha": "82bd131e1e23feff2424b7895c3f017a61a3b244"
+    },
+    {
+      "path": "Models/Sponza/glTF/17556969131407844942.jpg",
+      "size": 370061,
+      "sha": "8b7b6ded422f2c73a70591d0cb50b92b603fdae6"
+    },
+    {
+      "path": "Models/Sponza/glTF/17876391417123941155.jpg",
+      "size": 1151448,
+      "sha": "662ac2e84cde764c45c1d78aa7f244e8aa78a216"
+    },
+    {
+      "path": "Models/Sponza/glTF/2051777328469649772.jpg",
+      "size": 206618,
+      "sha": "16bdb11d115e26aa5042108f2285b38d2a1e3332"
+    },
+    {
+      "path": "Models/Sponza/glTF/2185409758123873465.jpg",
+      "size": 780166,
+      "sha": "6740aee73530d43e22696fcea094be3c4944356a"
+    },
+    {
+      "path": "Models/Sponza/glTF/2299742237651021498.jpg",
+      "size": 772672,
+      "sha": "93e4c860c93868c0d7bf21108ba180e910f55fc1"
+    },
+    {
+      "path": "Models/Sponza/glTF/2374361008830720677.jpg",
+      "size": 852079,
+      "sha": "393a02897d98ecaa8221e0a6b398c583c670b9eb"
+    },
+    {
+      "path": "Models/Sponza/glTF/2411100444841994089.jpg",
+      "size": 399963,
+      "sha": "e0fe74c0480e840a0ee7caf7e8031bf4dd31d770"
+    },
+    {
+      "path": "Models/Sponza/glTF/2775690330959970771.jpg",
+      "size": 785678,
+      "sha": "a715d92c478b7ddde38a26e56db7ead4de2b9dd7"
+    },
+    {
+      "path": "Models/Sponza/glTF/2969916736137545357.jpg",
+      "size": 822373,
+      "sha": "d4c22138b90fd3f004718b3ad4f52f301442578f"
+    },
+    {
+      "path": "Models/Sponza/glTF/332936164838540657.jpg",
+      "size": 852079,
+      "sha": "393a02897d98ecaa8221e0a6b398c583c670b9eb"
+    },
+    {
+      "path": "Models/Sponza/glTF/3371964815757888145.jpg",
+      "size": 682743,
+      "sha": "5d7e258890688e6205d37890bb3d5ca92bd44f14"
+    },
+    {
+      "path": "Models/Sponza/glTF/3455394979645218238.jpg",
+      "size": 551432,
+      "sha": "c91c7956e866e452f27c121bd7ecc105e4f18da9"
+    },
+    {
+      "path": "Models/Sponza/glTF/3628158980083700836.jpg",
+      "size": 527788,
+      "sha": "75884009982c8bbbc94df6076f703a43858147b1"
+    },
+    {
+      "path": "Models/Sponza/glTF/3827035219084910048.jpg",
+      "size": 608394,
+      "sha": "0a7b892cf8b2c4ddeae3901c93938a52e4f60a9b"
+    },
+    {
+      "path": "Models/Sponza/glTF/4477655471536070370.jpg",
+      "size": 211322,
+      "sha": "3b463b27cd9de857310dbe2e9fbf37659dcb1b14"
+    },
+    {
+      "path": "Models/Sponza/glTF/4601176305987539675.jpg",
+      "size": 1043152,
+      "sha": "3fca97a404598ea5aa6abc9b9f59433a103fc01d"
+    },
+    {
+      "path": "Models/Sponza/glTF/466164707995436622.jpg",
+      "size": 486634,
+      "sha": "d65b8f3c45068614b30985af6202192c44db8cb4"
+    },
+    {
+      "path": "Models/Sponza/glTF/4675343432951571524.jpg",
+      "size": 764529,
+      "sha": "14dd8f9e551dd92a13ffe19e80b202cd385220f4"
+    },
+    {
+      "path": "Models/Sponza/glTF/4871783166746854860.jpg",
+      "size": 570081,
+      "sha": "dd777519519b41d00df6bda5b056819522cfd944"
+    },
+    {
+      "path": "Models/Sponza/glTF/4910669866631290573.jpg",
+      "size": 1043152,
+      "sha": "3fca97a404598ea5aa6abc9b9f59433a103fc01d"
+    },
+    {
+      "path": "Models/Sponza/glTF/4975155472559461469.jpg",
+      "size": 399027,
+      "sha": "43aee7b9b93f214e83b3957caba2b11792348336"
+    },
+    {
+      "path": "Models/Sponza/glTF/5061699253647017043.png",
+      "size": 2427921,
+      "sha": "8b690c363fa467a6acc232439606c43978150936"
+    },
+    {
+      "path": "Models/Sponza/glTF/5792855332885324923.jpg",
+      "size": 564801,
+      "sha": "c965353acdf76db7d9b51f0a2da0bd5d164884c4"
+    },
+    {
+      "path": "Models/Sponza/glTF/5823059166183034438.jpg",
+      "size": 573157,
+      "sha": "1873401fbee770d55436e796a82ac30131cd90d5"
+    },
+    {
+      "path": "Models/Sponza/glTF/6047387724914829168.jpg",
+      "size": 518310,
+      "sha": "d9b3ccaa5de3c1947d45a5f4465467a7aa9f4d96"
+    },
+    {
+      "path": "Models/Sponza/glTF/6151467286084645207.jpg",
+      "size": 643517,
+      "sha": "1714a852546944fab0d4399efa15c69c78c0c857"
+    },
+    {
+      "path": "Models/Sponza/glTF/6593109234861095314.jpg",
+      "size": 1043152,
+      "sha": "3fca97a404598ea5aa6abc9b9f59433a103fc01d"
+    },
+    {
+      "path": "Models/Sponza/glTF/6667038893015345571.jpg",
+      "size": 703420,
+      "sha": "2a79121d938c1d7a079551667a5973f2134eaaeb"
+    },
+    {
+      "path": "Models/Sponza/glTF/6772804448157695701.jpg",
+      "size": 599959,
+      "sha": "d3619afe0feac0983f8bf6fe717d2a9039cf0325"
+    },
+    {
+      "path": "Models/Sponza/glTF/7056944414013900257.jpg",
+      "size": 852079,
+      "sha": "393a02897d98ecaa8221e0a6b398c583c670b9eb"
+    },
+    {
+      "path": "Models/Sponza/glTF/715093869573992647.jpg",
+      "size": 280745,
+      "sha": "e56a2822547144c2f68ab42fa9ccad166a46ee49"
+    },
+    {
+      "path": "Models/Sponza/glTF/7268504077753552595.jpg",
+      "size": 572245,
+      "sha": "15a6d7dfc6b7254a8951bccf25446fbf5e7897fc"
+    },
+    {
+      "path": "Models/Sponza/glTF/7441062115984513793.jpg",
+      "size": 665796,
+      "sha": "e571d401ced3e00ad9fdd77e21492581c695c44e"
+    },
+    {
+      "path": "Models/Sponza/glTF/755318871556304029.jpg",
+      "size": 302363,
+      "sha": "f2afed3cd3fd3803a08d32bb0f6ee1421bda708a"
+    },
+    {
+      "path": "Models/Sponza/glTF/759203620573749278.jpg",
+      "size": 509411,
+      "sha": "8a2170c960a8e61a28d7575393bdee835b5b96df"
+    },
+    {
+      "path": "Models/Sponza/glTF/7645212358685992005.jpg",
+      "size": 656995,
+      "sha": "ee067215721f41b078608d953aa84fc47f766aa9"
+    },
+    {
+      "path": "Models/Sponza/glTF/7815564343179553343.jpg",
+      "size": 623144,
+      "sha": "11948eee5834d516f13e8fa981cd871c098d0c96"
+    },
+    {
+      "path": "Models/Sponza/glTF/8006627369776289000.png",
+      "size": 1225157,
+      "sha": "ba5f65519c18c288c8b58d0572415f3ad1cbf99d"
+    },
+    {
+      "path": "Models/Sponza/glTF/8051790464816141987.jpg",
+      "size": 260119,
+      "sha": "6e0501522007d07d05b28fbaeaf54ff65b6ce308"
+    },
+    {
+      "path": "Models/Sponza/glTF/8114461559286000061.jpg",
+      "size": 193077,
+      "sha": "58be9bcee57134c796897a04496c5b8f44e9b970"
+    },
+    {
+      "path": "Models/Sponza/glTF/8481240838833932244.jpg",
+      "size": 531156,
+      "sha": "207a7a6cc33e11acd39633c97c87bb05bf5c4714"
+    },
+    {
+      "path": "Models/Sponza/glTF/8503262930880235456.jpg",
+      "size": 104626,
+      "sha": "f3423ebee2ace0489f7b7d8a037dcec4336cbc9e"
+    },
+    {
+      "path": "Models/Sponza/glTF/8747919177698443163.jpg",
+      "size": 872255,
+      "sha": "3c3d983ff42de98687f436984e1de7244a8ada38"
+    },
+    {
+      "path": "Models/Sponza/glTF/8750083169368950601.jpg",
+      "size": 362437,
+      "sha": "48a46dfcb5727a2911304d62ce670801c0ffdb71"
+    },
+    {
+      "path": "Models/Sponza/glTF/8773302468495022225.jpg",
+      "size": 413837,
+      "sha": "4647a44e6059fdca58de9fbedccc56b9751ea75e"
+    },
+    {
+      "path": "Models/Sponza/glTF/8783994986360286082.jpg",
+      "size": 388462,
+      "sha": "6839be4a8bb6659eb9d15d24fbae7f5a4ca03ec2"
+    },
+    {
+      "path": "Models/Sponza/glTF/9288698199695299068.jpg",
+      "size": 1044330,
+      "sha": "dba904f11b17f78104c51f2dd8222ef1cf655446"
+    },
+    {
+      "path": "Models/Sponza/glTF/9916269861720640319.jpg",
+      "size": 608687,
+      "sha": "bfe9d287d7cf7fabd1011372870c6598236960f0"
+    },
+    {
+      "path": "Models/Sponza/glTF/Sponza.bin",
+      "size": 9528220,
+      "sha": "caa2a36d0309aa985adadd879991a4b3399c4ef4"
+    },
+    {
+      "path": "Models/Sponza/glTF/Sponza.gltf",
+      "size": 167176,
+      "sha": "02252eba518f40cce4b36d45000c7f21139e5494"
+    },
+    {
+      "path": "Models/Sponza/glTF/white.png",
+      "size": 951,
+      "sha": "0851a35f7e27a14f7dd415dae9b5b814c6366be2"
+    },
+    {
+      "path": "Models/Sponza/LICENSE.md",
+      "size": 722,
+      "sha": "e8f6f62ec0115f3353bbac95b3a3364b648a7979"
+    },
+    {
+      "path": "Models/Sponza/README.md",
+      "size": 3469,
+      "sha": "3fad2e68cd7bcd1de4c6a6a4e73264d7e510fd79"
+    },
+    {
+      "path": "Models/Sponza/metadata.json",
+      "size": 553,
+      "sha": "7a74d0a59255bcd7546f5c9844f127034966a555"
+    },
+    {
+      "path": "LICENSES/CC-BY-4.0.txt",
+      "size": 13034,
+      "sha": "4b404d2359ce2e933950e26882b6073b17a27c3b"
+    },
+    {
+      "path": "LICENSES/LicenseRef-CRYENGINE-Agreement.txt",
+      "size": 110,
+      "sha": "7daa668599b1e4a76f3cafe22fd61e0f7c508e2b"
+    }
+  ]
+}

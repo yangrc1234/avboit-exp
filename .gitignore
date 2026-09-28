@@ -1,0 +1,22 @@
+/bin/
+/build*/
+/dist/
+/.vs/
+/.vscode/
+/.venv/
+/assets/gltf-sample-assets/
+__pycache__/
+*.pyc
+# Generated captures and timing exports are local diagnostics, not source.
+/native-*
+/*.log
+/*.csv
+/*.ppm
+/*.raw
+/*.r32f
+/*.rgba16f
+/*.rgba32f
+/*.rgba8
+/*.rg16f
+/*.r11g11b10
+/*.u32
