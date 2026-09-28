@@ -32,11 +32,19 @@ Install `requirements-dev.txt` into a virtual environment. Useful targeted check
 .venv/Scripts/python avboit/tests/check_blur_roi.py
 .venv/Scripts/python avboit/tests/check_background_protection.py
 .venv/Scripts/python avboit/tests/check_vfx_materials.py
+.venv/Scripts/python avboit/tests/check_zero_depth.py
 ```
 
 Most scripts accept `--viewer` for a non-default executable; some fixed fixtures
 use `bin/avboit_viewer.exe`. Check the script before selecting a fixture or output directory. Dense, poisoned and ROI references
 are useful for detecting unwritten-source reads, not just visible artifacts.
+
+`check_zero_depth.py` verifies conservative depth writes and RGB-zero filtered
+footprints, then checks that closed ordinary rays resolve to `N/A` in both B and
+the final HDR output. A thin bright foreground bar exercises the difference
+between sampling the LUT at SceneDepth and incorrectly reading its far endpoint.
+It also covers RGB nonzero channels, frost validity/mirror repair, adaptive/fixed
+Z budgets and dense/poisoned references.
 
 `check_submission_order.py` reports finite-precision order differences rather than
 claiming bitwise order independence. The packed RGB overflow stress in the GPU

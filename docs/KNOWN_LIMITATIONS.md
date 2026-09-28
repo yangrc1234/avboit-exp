@@ -24,9 +24,15 @@ Passing the tests below does not establish physical correctness or paper parity.
 - **Floating-point blending order.** R11G11B10 additive targets are not bitwise
   order independent. RGBA16F CLI references help distinguish precision effects
   from ordering/classification errors.
-- **Zero-T approximation.** Zero quads update SceneDepth using the RGBA8 LUT.
-  Resolve still uses exp(-totalTau) from surviving full-resolution fragments.
-  The values can differ; saturated regions may retain some HDR background.
+- **Zero-T quantization and spatial approximation.** With Zero-T enabled, resolve
+  reads the filtered LUT at current SceneDepth. RGB zero forces effective total
+  transmission to zero and updates normalization, avoiding background leakage
+  from truncated totalTau. This can close pixels outside conservative quad tiles;
+  it adopts the low-resolution RGBA8 LUT's definition of opacity rather than exact
+  full-resolution transmission. Very dark nonzero transmission can therefore be
+  treated as opaque, and silhouette accuracy remains limited by the LUT. No
+  stencil or extra cutoff RT is used. The public presentation does not specify
+  this reconciliation; it is an explicit choice of this implementation.
 - **Sparse frost validity.** Mirror taps repair invalid source samples using
   nearby visible color. This does not reconstruct hidden geometry. Entirely
   invalid filter footprints fall back to the ordinary OIT result.

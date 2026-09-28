@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
-"""Validate in-place Zero-T SceneDepth, filtered LUT footprint and frost holes.
+"""Validate in-place Zero-T SceneDepth, resolve closure and frost holes.
 
-No cutoff texture or forced terminal T=0 exists. Resolve intentionally uses the
-surviving full-resolution tau; this test does not assume equality to the LUT.
+Resolve reads the filtered LUT at SceneDepth, closing RGB-zero rays without
+stencil or a cutoff texture. Accumulated tau itself remains a surviving sum.
 Requires NumPy. Default captures are 2560x1440, plus input-resolution alignment coverage.
 """
 import argparse, math, struct, subprocess
@@ -133,6 +133,23 @@ def check(folder, original=None, enabled=True):
     visible = (interface < depth) & (quad_depth < 1)
     # Sharp refraction permits foreground sampling; frost does not.
     assert (b[hidden & (surface[:, :, 3] > 0)] == 0).all(), "Hidden frost sample still valid"
+    # A winning quad guarantees RGB-zero LUT at SceneDepth. With no visible
+    # interface, B and the final HDR result must be N/A: no residual opaque
+    # contribution, and no old (1-exp(-truncatedTau)) normalization factor.
+    closed = (
+        (quad_depth < 1)
+        & (np.abs(depth - quad_depth) < 3e-7)
+        & ((interface >= 1) | (interface >= depth))
+        & (b[:, :, 3] > 0)
+        & work_domain(folder, 10)
+    )
+    if closed.any():
+        n = texture(folder / "native-numerator.raw", "<f2", 4)[:, :, :3].astype(np.float32)
+        d = texture(folder / "native-denominator.raw", "<f2", 4)[:, :, :3].astype(np.float32)
+        expected_color = n[closed] / np.maximum(d[closed], 0.000001)
+        np.testing.assert_allclose(b[:, :, :3][closed], expected_color, rtol=0.001, atol=2e-6)
+        final = texture(folder / "native-composition.rgba16f", "<f2", 4)
+        np.testing.assert_allclose(final[:, :, :3][closed], expected_color, rtol=0.001, atol=2e-6)
     print(
         folder.name,
         "quads",
@@ -156,6 +173,16 @@ assert (front / "native-depth.r32f").read_bytes() != (
 tau_on = texture(front / "native-total-tau.raw", "<f2", 4)
 tau_off = texture(reference / "native-total-tau.raw", "<f2", 4)
 assert ((tau_on[:, :, 0] + 1) < tau_off[:, :, 0]).sum() > 100, "No hardware fragment rejection"
+# The thin foreground bar lies before all extinction, but its sub-voxel
+# footprint has RGB-zero LUT farther away. Sampling the last slice instead of
+# SceneDepth would black it out. Its HDR color must survive unchanged.
+depth = texture(front / "native-depth.r32f", "<f4")
+near = depth < (80 / 79.95 - 4 / 79.95 / 1.5)
+assert near.sum() > 100, "Missing foreground occluder"
+final = texture(front / "native-composition.rgba16f", "<f2", 4)
+original = texture(reference / "native-composition.rgba16f", "<f2", 4)
+assert np.array_equal(final[near], original[near]), "Zero-T hid foreground opaque geometry"
+assert (final[near, 0] > 7).all(), "Foreground HDR bar lost its radiance"
 back = capture("back", 12)
 assert check(back)[2] > 100
 rgb = capture("rgb", 13)
@@ -203,5 +230,5 @@ for name, flag in [("poison", "--poison-extinction"), ("dense", "--dense-extinct
         a.output / "smoke-0.7/native-depth.r32f"
     ).read_bytes(), "Zero depth stale or dense/sparse mismatch"
 print(
-    "PASS: filtered LUT zeros, in-place depth, tau truncation, frost, RGB, mirror, ROI, Z budgets, dense/poison"
+    "PASS: LUT zeros, in-place depth, resolve closure, tau truncation, frost, RGB, mirror, ROI, Z budgets, dense/poison"
 )

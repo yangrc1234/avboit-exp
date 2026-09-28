@@ -49,8 +49,15 @@ packed integer 有有限 guard 容量；极端 RGB overdraw 的跨字段 carry �
 
 Zero-T VS 直接查询 tile 过滤 footprint 的 first-zero 信息，保守取最远零点并反解深度。
 无效 tile 折叠 quad；有效 tile 无 PS 地写入主 D32，没有 quad preparation 或独立 culling depth。
-后续 accumulation 使用该深度做 early depth rejection。Resolve 仍根据存活片元的 totalTau 求 T，
-不强制跟 LUT 零点一致，因此可能留下 HDR 背景残留。
+后续 accumulation 使用该深度做 early depth rejection。Resolve 在**当前 SceneDepth** 处查询过滤后的
+T-LUT，使用与 accumulation 相同的 adaptive Z 和两虚拟 slice 偏移；RGB 全零时，将有效 `totalT` 设为零，
+并用这个值计算 `(1-totalT)/A`。不修改存储的 `totalTau`，不占 stencil，不新增 RT 或 pass。
+
+B 生成与最终合成共用这个判断；闭合的射线跳过 opaque 颜色读取，允许 deferred 宿主不计算其背后的光照。
+位于闭合点前方的玻璃仍按自身深度求 q，不能因为远处不透光就把 q 一起清零。
+该规则依据逐像素 LUT，而非记录 quad 是否实际写入，因此也可能闭合保守 quad 覆盖外的全零像素。
+不能直接读取 LUT 最远端，因为不透明表面可能比浓烟更近。它仍受 LUT 的空间和量化近似影响；
+`--no-zero-depth` 同时关闭此修正，用于未剔除、按全分辨率 totalTau 合成的参考路径。
 
 ## 界面选取与四 MRT
 
@@ -63,6 +70,7 @@ Depth test 选择最近表面，同时输出这张表面的 T、sigma、offset�
 
 ```text
 totalT = exp(-totalTau)
+if zeroDepthEnabled && all(T_LUT(SceneDepth) == 0): totalT = 0
 k      = (1 - totalT) / max(A, epsilon)
 I      = N*k + Opaque*totalT
 q      = max(totalT, saturate(T_LUT(interfaceDepth)*interfaceT))

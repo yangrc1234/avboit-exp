@@ -10,8 +10,8 @@ struct ZeroTransmittanceInputs
     nvrhi::BufferHandle camera, warp;
     nvrhi::ShaderHandle vertex;
 };
-// Writes directly into host SceneDepth. Resolve treats these quads like ordinary
-// occluders; no separate cutoff texture or exact zero-T correction is retained.
+// Writes directly into host SceneDepth. Resolve closes rays whose filtered LUT
+// is RGB zero at that depth; no stencil bit or separate cutoff texture is used.
 class ZeroTransmittance
 {
   public:

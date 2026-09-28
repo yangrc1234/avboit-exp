@@ -14,10 +14,41 @@ This is a research implementation, not Activision source code or an official
 reference implementation. [Donut](https://github.com/NVIDIA-RTX/Donut) supplies
 the application/scene layer; [NVRHI](https://github.com/NVIDIA-RTX/NVRHI) submits GPU work.
 
-![Procedural frosted glass with varying roughness and HDR emissive objects](docs/images/frost.png)
+| Order-independent transparency | Frosted glass |
+|---|---|
+| ![Intersecting RGB-transmissive panes, a transparent sphere and smoke](docs/images/oit.png) | ![Frost roughness strips filtering HDR emissive objects](docs/images/frost.png) |
+| Intersecting red/cyan panes, a transparent sphere and smoke. Layers are accumulated without sorting draws. | Material-controlled Gaussian blur: varying roughness strips, HDR light spots and a cutout showing the sharp background. |
 
-Procedural fixture, captured at 2560x1440. The vertical strips vary frost roughness;
-the circular cutout shows the unfiltered background. No external model is used.
+Both are actual **2560x1440 DX12 captures**, using default packed accumulation
+and procedural geometry. Click either image for full size; no external models
+are needed.
+
+<details>
+<summary>OIT submission-order comparison and screenshot commands</summary>
+
+The geometry, camera and animation time are identical; only transparent draw
+submission order changes. Frost and refraction are disabled in this OIT fixture
+to make the overlapping layers easier to inspect.
+
+| Original draw order | Reversed draw order |
+|---|---|
+| ![OIT original draw order](docs/images/oit.png) | ![OIT reversed draw order](docs/images/oit-reversed.png) |
+
+R11G11B10 floating-point blending is not bitwise order independent. In these
+captures the mean absolute displayed RGB difference is **0.030/255**, with a
+maximum of **3/255**; there is no object-level sorting step.
+
+```powershell
+bin/avboit_viewer.exe --headless --stress 5 --no-frost --refraction-gain 0 --emissive-balls --time 0.7 --submission-order 0
+bin/avboit_viewer.exe --headless --stress 5 --no-frost --refraction-gain 0 --emissive-balls --time 0.7 --submission-order 1
+bin/avboit_viewer.exe --headless --stress 10 --emissive-balls --refraction-gain 0 --frost-mips 3
+```
+
+Each invocation writes `native-raster.ppm` and diagnostic readbacks to the current
+directory; save the image before running the next command. The README PNGs are
+lossless conversions of those images, with no compositing or retouching.
+
+</details>
 
 ## What is included
 

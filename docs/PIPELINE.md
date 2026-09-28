@@ -44,6 +44,7 @@ which does not prescribe an additional four-neighbor XY scatter.
 
 ```text
 totalT = exp(-totalTau)
+if zeroDepthEnabled && all(T_LUT(SceneDepth) == 0): totalT = 0
 k      = (1 - totalT) / max(A, epsilon)
 I      = N * k + Opaque * totalT
 q      = max(totalT, saturate(T_LUT(interfaceDepth) * interfaceTransmission))
@@ -57,6 +58,20 @@ small background numerator by subtracting two nearly equal accumulated values.
 The lower bound `q >= totalT` prevents filtered low-resolution LUT estimates from
 amplifying the opaque contribution beyond its intended range. `q` is recomputed
 in registers by the passes that need it.
+
+With Zero-T depth enabled, resolve samples the existing filtered LUT at the
+**current SceneDepth**, using the same adaptive mapping and two-virtual-slice
+bias as accumulation. An RGB-zero result closes the ray (`totalT = 0`), including
+the normalization above. It does not modify the stored `totalTau` or blindly zero
+`q` for an interface in front of the closure. B preparation and final composition
+share this code; closed rays skip reading opaque color, allowing a deferred host
+to leave hidden lighting unevaluated. No stencil, cutoff RT or new pass is needed.
+
+This is a per-pixel LUT rule, not a record of which quad won the depth test: it
+can also close rays outside the more conservative quad footprint. Reading the LUT
+at its far endpoint would incorrectly ignore a nearer opaque surface. The rule
+retains the LUT's spatial/quantization approximation and is disabled together
+with `--no-zero-depth` for the unculled full-resolution-tau reference.
 
 When there is no special interface, B is the ordinary resolved image `I`.
 When the interface is behind SceneDepth, composition uses ordinary OIT. Such a

@@ -6,9 +6,37 @@
 这是根据 Michal Drobot 的 SIGGRAPH 2025 公开演讲独立实现的研究原型，
 不是 Activision 源码，也不宣称是论文的官方参考实现。
 
-![不同粗糙度的磨砂玻璃与 HDR 自发光物体](docs/images/frost.png)
+| OIT：顺序无关透明 | 磨砂玻璃 |
+|---|---|
+| ![相交的 RGB 透射玻璃、透明球与烟雾](docs/images/oit.png) | ![不同粗糙度竖条过滤 HDR 自发光物体](docs/images/frost.png) |
+| 红色与青色玻璃相交，并与透明球、烟雾叠加；绘制提交无需按深度排序。 | 材质控制 Gaussian 模糊宽度；竖条粗糙度渐变，HDR 光斑被扩散，圆孔用于对照清晰背景。 |
 
-程序化场景的 2560×1440 截图：竖条使用不同粗糙度，圆孔用于对照未模糊的背景；不依赖外部模型。
+两张图均为 **2560×1440 DX12 实机截图**，使用默认 packed accumulation 和程序化几何。
+点击图片查看原尺寸；不依赖外部模型。
+
+<details>
+<summary>查看 OIT 正序／反序提交对比与截图命令</summary>
+
+相机、几何与动画时间完全相同，仅改变透明 draw 的提交顺序。
+OIT 图关闭了磨砂与折射，以便观察透明层的交叠关系。
+
+| 原始提交顺序 | 反转提交顺序 |
+|---|---|
+| ![OIT 原始提交顺序](docs/images/oit.png) | ![OIT 反转提交顺序](docs/images/oit-reversed.png) |
+
+R11G11B10 浮点混合不保证逐位一致。这两张截图的显示 RGB 平均绝对差为 **0.030/255**，
+最大差为 **3/255**；渲染没有逐物体深度排序步骤。
+
+```powershell
+bin/avboit_viewer.exe --headless --stress 5 --no-frost --refraction-gain 0 --emissive-balls --time 0.7 --submission-order 0
+bin/avboit_viewer.exe --headless --stress 5 --no-frost --refraction-gain 0 --emissive-balls --time 0.7 --submission-order 1
+bin/avboit_viewer.exe --headless --stress 10 --emissive-balls --refraction-gain 0 --frost-mips 3
+```
+
+每次运行向当前目录写入 `native-raster.ppm` 及诊断数据，执行下一条命令前请保存图片。
+README 中的 PNG 仅做无损格式转换，没有拼接或修图。
+
+</details>
 
 ## 快速运行
 
@@ -48,7 +76,7 @@ WASD/QE 移动、右键转视角、Home 复位；B 切换 bilinear/bicubic，G �
 
 详细公式和资源表：[当前管线](docs/PIPELINE.zh-CN.md)。
 材质提交边界：[actor/material draws](docs/MATERIAL_DRAWS_ZH.md)。
-局限包括单特殊界面、屏幕空间前景采样、packed 精度和高 overdraw 溢出、Zero-T 的背景残留，
+局限包括单特殊界面、屏幕空间前景采样、packed 精度和高 overdraw 溢出、Zero-T 的量化与空间近似，
 以及未接入 TAA/MSAA，见 [已知限制](docs/KNOWN_LIMITATIONS.zh-CN.md)。
 
 ## 测试与发布包

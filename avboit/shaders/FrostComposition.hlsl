@@ -50,7 +50,7 @@ float4 composePixel(Fullscreen i) : SV_Target0
     float2 uv = (float2(p) + .5) / float2(WIDTH, HEIGHT);
     ResolveTerms t = GetResolveTerms(p, uv);
     float3 n = Numerator.Load(int3(p, 0));
-    float3 color = n * t.normalization + Opaque.Load(int3(p, 0)).rgb * t.totalT;
+    float3 color = n * t.normalization + ResolveOpaqueContribution(p, t.totalT);
     if (t.hasInterface && t.transmission.a > 0)
     {
         float4 b = SampleInterfaceBackground(p, uv);

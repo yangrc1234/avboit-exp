@@ -193,7 +193,7 @@ class NativeViewer : public app::IRenderPass
                    {80.f / 79.95f, -4.f / 79.95f, .05f, 80.f},
                    {float(Width), float(Height), float(volumeWidth), float(volumeHeight)},
                    {float(qBound), float(protectBackground), backgroundThreshold,
-                    float((zeroTShortcut ? 1 : 0) | (mirrorBlur ? 4 : 0) | (fullVfx ? 8 : 0))},
+                    float((zeroTShortcut ? 1 : 0) | (zeroDepth ? 2 : 0) | (mirrorBlur ? 4 : 0) | (fullVfx ? 8 : 0))},
                    {float(chain.width), float(chain.height), float(chain.mipCount), tileResolve ? 0.f : 1.f},
                    {0, 0, 0, 0}}};
         auto projected = bounds;
@@ -1874,6 +1874,8 @@ class NativeViewer : public app::IRenderPass
             captureRaw(transparency.Interface().Offset(), "native-interface-offset.rg16f", 4);
             captureRaw(transparency.Resolve().Background(), "native-background.rgba16f", 8);
             captureRaw(transparency.Gaussian().Output(), "native-frost-base.rgba16f", 8);
+            captureRaw(transparency.Resolve().Numerator(), "native-numerator.raw", halfAccumulation ? 8 : 4);
+            captureRaw(transparency.Resolve().Denominator(), "native-denominator.raw", halfAccumulation ? 8 : 4);
             captureRaw(transparency.Resolve().TotalTau(), "native-total-tau.raw", halfAccumulation ? 8 : 4);
             captureRaw(transparency.Resolve().BackNumerator(), "native-back-numerator.raw", halfAccumulation ? 8 : 4);
             if (hardwareDepth)

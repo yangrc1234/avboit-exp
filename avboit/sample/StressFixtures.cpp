@@ -161,6 +161,9 @@ StressFixture BuildStressFixture(unsigned preset)
     else if (preset == 11)
     {
         result.sphere = true;
+        // A thin bright foreground bar tests terminal-depth LUT queries. Its
+        // sub-voxel silhouette must not be closed by dense glass farther away.
+        result.opaque.push_back({{.55f, .2f, 1.4f}, {.0015f, 0, 0}, {0, .1f, 0}, {8, 2, .3f, 1}, {0, 0, 0}, 0});
         // Full RGB extinction before the shaded sphere; no channel may be
         // treated as opaque merely because one wavelength has saturated.
         for (unsigned i = 0; i < 18; ++i)
