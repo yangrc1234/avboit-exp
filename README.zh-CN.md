@@ -6,6 +6,8 @@
 这是根据 Michal Drobot 的 SIGGRAPH 2025 公开演讲独立实现的研究原型，
 不是 Activision 源码，也不宣称是论文的官方参考实现。
 
+[快速启动](#快速启动) · [管线说明](docs/PIPELINE.zh-CN.md) · [已知限制](docs/KNOWN_LIMITATIONS.zh-CN.md)
+
 | OIT：顺序无关透明 | 磨砂玻璃 |
 |---|---|
 | ![相交的 RGB 透射玻璃、透明球与烟雾](docs/images/oit.png) | ![不同粗糙度竖条过滤 HDR 自发光物体](docs/images/frost.png) |
@@ -38,30 +40,30 @@ README 中的 PNG 仅做无损格式转换，没有拼接或修图。
 
 </details>
 
-## 快速运行
+## 快速启动
 
 需要 Windows x64、Visual Studio 2022 C++ 工具和 Windows SDK、CMake 3.18+、Python 3.9+、DX12 GPU。
+
+编译并启动默认程序化场景：
 
 ```powershell
 git clone --recursive https://github.com/yangrc1234/avboit-exp.git
 cd avboit-exp
 python build_native.py
-bin/avboit_viewer.exe
+.\bin\avboit_viewer.exe
 ```
 
-默认只构建 viewer，`bin` 中只有一个应用 exe 和必需的 shader。ShaderMake 放在 `build/tools`。
-默认渲染分辨率为 **2560×1440**，帧率上限 **120 FPS**，都可以在 ImGui 中调整。
-程序化测试场景不依赖外部模型。
-
-Sponza 按需下载，不随代码或运行包分发：
+**Sponza 不随 clone 附带，编译也不会自动下载。** 需要时在仓库根目录执行：
 
 ```powershell
 python tools/fetch_sponza.py
-bin/avboit_viewer.exe --sponza
+.\bin\avboit_viewer.exe --sponza
 ```
 
-下载脚本校验固定版本的每个文件；可附加 `--proxy http://HOST:PORT` 使用单次代理。
-可以在 ImGui 的 Background / Test case 中切换场景；Scene fixtures 修改后立即生效。
+下载后不用重新编译，也可以在 ImGui 中选择 **Background → Sponza**。
+Sponza 的独立许可见 [第三方授权](THIRD_PARTY_NOTICES.md)。
+
+默认 **2560×1440、120 FPS**；场景、画质和 Scene fixtures 均可在 ImGui 中即时切换。
 WASD/QE 移动、右键转视角、Home 复位；B 切换 bilinear/bicubic，G 开关磨砂，V 开关 VFX，空格暂停动画。
 
 ## 当前方案

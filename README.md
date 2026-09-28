@@ -6,7 +6,7 @@ An independent **DirectX 12 / C++17 / HLSL** experiment in Adaptive Voxel-Based
 Order-Independent Transparency, extended with frosted glass, screen-space
 refraction and VFX distortion.
 
-[中文说明](README.zh-CN.md) · [Pipeline](docs/PIPELINE.md) ·
+[Quick start](#quick-start) · [中文说明](README.zh-CN.md) · [Pipeline](docs/PIPELINE.md) ·
 [Known limitations](docs/KNOWN_LIMITATIONS.md) · [MIT license](LICENSE.txt)
 
 Based on Michal Drobot's [SIGGRAPH 2025 AVBOIT presentation](https://advances.realtimerendering.com/s2025/content/AVBOIT_SIG2025_MDROBOT-final.pdf).
@@ -68,33 +68,30 @@ Frost width is material-controlled in reference screen pixels. The default
 Gaussian chain has three levels; higher quality adds finer levels. The demo
 defaults to **2560x1440 and a 120 FPS cap**. It does not implement TAA or MSAA.
 
-## Build and run
+## Quick start
 
 Requirements: Windows x64, Visual Studio 2022 with C++ tools and Windows SDK,
-CMake 3.18+, Python 3.9+, and a DX12 GPU. ShaderMake downloads its pinned DXC
-version unless `--dxc PATH` selects an installed compiler.
+CMake 3.18+, Python 3.9+, and a DX12 GPU.
+
+Build and start the default procedural scene:
 
 ```powershell
 git clone --recursive https://github.com/yangrc1234/avboit-exp.git
 cd avboit-exp
 python build_native.py
-bin/avboit_viewer.exe
+.\bin\avboit_viewer.exe
 ```
 
-The default build produces **one application executable**, plus its compiled
-shaders. Build tools stay under `build/tools`; tests are off by default. The
-procedural scene requires no downloaded models.
-
-To enable the optional Sponza background:
+**Sponza is not included in the clone or downloaded by the build.** To use it,
+run from the repository root:
 
 ```powershell
 python tools/fetch_sponza.py
-bin/avboit_viewer.exe --sponza
+.\bin\avboit_viewer.exe --sponza
 ```
 
-The downloader verifies a pinned file manifest. `--proxy http://HOST:PORT` is a
-per-command option. Sponza has its own license and is not part of this repository
-or the runtime package; see [third-party notices](THIRD_PARTY_NOTICES.md).
+No rebuild is needed; you can also select **Background → Sponza** in ImGui after
+downloading. Sponza's separate license is listed in [third-party notices](THIRD_PARTY_NOTICES.md).
 
 Use **Background** and **Test case** in ImGui to change scenes. WASD/QE moves,
 right mouse looks, Home resets, B changes reconstruction, G toggles frost, V
