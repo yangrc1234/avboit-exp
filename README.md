@@ -1,5 +1,7 @@
 # avboit-exp
 
+[![Build and source checks](https://github.com/yangrc1234/avboit-exp/actions/workflows/ci.yml/badge.svg)](https://github.com/yangrc1234/avboit-exp/actions/workflows/ci.yml)
+
 An independent **DirectX 12 / C++17 / HLSL** experiment in Adaptive Voxel-Based
 Order-Independent Transparency, extended with frosted glass, screen-space
 refraction and VFX distortion.

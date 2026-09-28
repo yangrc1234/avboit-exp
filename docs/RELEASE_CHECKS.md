@@ -47,10 +47,13 @@ notices. Five relocated fixtures matched the source build's image and LUT exactl
 when launched from an unrelated working directory. An explicitly missing Sponza
 path failed with the expected diagnostic. The package includes a SHA-256 manifest.
 
-## Remaining coverage
+## Remote CI and remaining coverage
 
-GitHub Actions is configured to check sources and build/run CPU tests on Windows;
-the initial remote CI result is not included in this local record. DXC's automatic
-download path was not exercised in the local build, which used the SDK compiler.
-No separate-machine, lower-end GPU or alternate-driver verification is claimed.
-The [known limitations](KNOWN_LIMITATIONS.md) remain applicable.
+The [initial GitHub Actions run](https://github.com/yangrc1234/avboit-exp/actions/runs/36379686583)
+passed source checks and the Windows build/CPU tests for commit `93cbf9b`.
+This clean runner also exercised recursive dependency checkout and ShaderMake's
+automatic DXC download, independently of the SDK compiler used locally.
+
+Remote CI does not run the GPU rendering tests. No separate-machine GPU rendering,
+lower-end GPU or alternate-driver verification is claimed. The
+[known limitations](KNOWN_LIMITATIONS.md) remain applicable.
