@@ -44,7 +44,9 @@ footprints, then checks that closed ordinary rays resolve to `N/A` in both B and
 the final HDR output. A thin bright foreground bar exercises the difference
 between sampling the LUT at SceneDepth and incorrectly reading its far endpoint.
 It also covers RGB nonzero channels, frost validity/mirror repair, adaptive/fixed
-Z budgets and dense/poisoned references.
+Z budgets and dense/poisoned references. Indirect candidate IDs/counts are checked
+for missing or duplicate tiles, partial screen/volume edges, and stale work after
+switching from an occupied view to an empty frame.
 
 `check_submission_order.py` reports finite-precision order differences rather than
 claiming bitwise order independence. The packed RGB overflow stress in the GPU

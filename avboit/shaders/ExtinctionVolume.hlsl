@@ -8,6 +8,8 @@ RWBuffer<uint> Extinction : register(u0);
 RWBuffer<uint> FirstOverflow : register(u1);
 RWTexture3D<float4> Integrated : register(u2);
 RWTexture2D<uint> ZeroSlice : register(u3);
+RWBuffer<uint> ZeroCandidates : register(u4);
+RWBuffer<uint> ZeroDrawArgs : register(u5); // DrawInstanced: vertices, instances, first vertex, first instance
 #include "PackedExtinction.hlsli"
 #include "DepthMapping.hlsli"
 void splatPixel(Varyings i)
@@ -32,6 +34,15 @@ uint OccupancyTile(uint2 pixel)
 {
     if (any(pixel >= uint2(VOLUME_WIDTH, VOLUME_HEIGHT)))
         return;
+    // Reset in the existing clear dispatch, before any integration group can
+    // append. Only the valid list prefix is read, so the list needs no clear.
+    if (all(pixel == 0))
+    {
+        ZeroDrawArgs[0] = 4;
+        ZeroDrawArgs[1] = 0;
+        ZeroDrawArgs[2] = 0;
+        ZeroDrawArgs[3] = 0;
+    }
     uint ray = pixel.y * VOLUME_WIDTH + pixel.x, tile = OccupancyTile(pixel);
     for (uint word = 0; word < SLICE_COUNT / 4; ++word)
     {
@@ -55,6 +66,29 @@ uint OccupancyTile(uint2 pixel)
     // Small per-ray metadata is reset densely; consumers can use it directly.
     for (uint channel = 0; channel < 4; ++channel)
         FirstOverflow[ray * 4 + channel] = SLICE_COUNT;
+}
+
+void AppendZeroCandidates(uint2 pixel, uint zeroSlice)
+{
+    if ((uint(Camera[7].w) & 2u) == 0 || zeroSlice >= SLICE_COUNT)
+        return;
+    // Each 16x16 screen tile belongs to the ray floor(tile * 16 * volume / screen).
+    // That ray is inside the VS's conservative footprint, so an accepted quad
+    // must have a zero owner. Invert the mapping with integer ceil division to
+    // emit each tile exactly once, even at partial screen/volume edges.
+    uint2 screen = uint2(WIDTH, HEIGHT), pitch = 16 * uint2(VOLUME_WIDTH, VOLUME_HEIGHT);
+    uint2 tiles = (screen + 15) / 16;
+    uint2 first = (pixel * screen + pitch - 1) / pitch;
+    uint2 end = min(((pixel + 1) * screen + pitch - 1) / pitch, tiles);
+    uint2 extent = end - first;
+    uint count = extent.x * extent.y;
+    if (count == 0)
+        return;
+    uint slot;
+    InterlockedAdd(ZeroDrawArgs[1], count, slot);
+    for (uint y = first.y; y < end.y; ++y)
+        for (uint x = first.x; x < end.x; ++x)
+            ZeroCandidates[slot++] = y * tiles.x + x;
 }
 
 void Integrate(uint2 pixel, bool sparse)
@@ -117,6 +151,7 @@ void Integrate(uint2 pixel, bool sparse)
     }
     // Same threshold as quantized RGB LUT; sentinel means the ray never closed.
     ZeroSlice[pixel] = zeroSlice;
+    AppendZeroCandidates(pixel, zeroSlice);
 }
 [numthreads(8, 8, 1)] void integrateLut(uint2 pixel : SV_DispatchThreadID)
 { Integrate(pixel, true); }[numthreads(8, 8, 1)] void integrateDenseLut(uint2 pixel : SV_DispatchThreadID)

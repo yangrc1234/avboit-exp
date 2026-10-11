@@ -1850,22 +1850,28 @@ class NativeViewer : public app::IRenderPass
                        composedHdr->getDesc().format == nvrhi::Format::RGBA16_FLOAT ? "native-composition.rgba16f"
                                                                                     : "native-composition.r11g11b10",
                        composedHdr->getDesc().format == nvrhi::Format::RGBA16_FLOAT ? 8 : 4);
-            auto warpReadback = GetDevice()->createBuffer(nvrhi::BufferDesc()
-                                                              .setByteSize(warp->getDesc().byteSize)
+            auto captureBuffer = [&](nvrhi::IBuffer *source, const char *path)
+            {
+                auto readback = GetDevice()->createBuffer(nvrhi::BufferDesc()
+                                                              .setByteSize(source->getDesc().byteSize)
                                                               .setCpuAccess(nvrhi::CpuAccessMode::Read)
                                                               .setInitialState(nvrhi::ResourceStates::CopyDest)
                                                               .setKeepInitialState(true));
-            commands->open();
-            commands->copyBuffer(warpReadback, 0, warp, 0, warp->getDesc().byteSize);
-            commands->close();
-            GetDevice()->executeCommandList(commands);
-            GetDevice()->waitForIdle();
-            auto warpBytes = GetDevice()->mapBuffer(warpReadback, nvrhi::CpuAccessMode::Read);
-            if (!warpBytes)
-                throw std::runtime_error("Warp capture mapping failed");
-            std::ofstream warpFile("native-warp.u32", std::ios::binary);
-            warpFile.write(static_cast<const char *>(warpBytes), warp->getDesc().byteSize);
-            GetDevice()->unmapBuffer(warpReadback);
+                commands->open();
+                commands->copyBuffer(readback, 0, source, 0, source->getDesc().byteSize);
+                commands->close();
+                GetDevice()->executeCommandList(commands);
+                GetDevice()->waitForIdle();
+                auto bytes = GetDevice()->mapBuffer(readback, nvrhi::CpuAccessMode::Read);
+                if (!bytes)
+                    throw std::runtime_error("Buffer capture mapping failed");
+                std::ofstream file(path, std::ios::binary);
+                file.write(static_cast<const char *>(bytes), source->getDesc().byteSize);
+                GetDevice()->unmapBuffer(readback);
+            };
+            captureBuffer(warp, "native-warp.u32");
+            captureBuffer(transparency.Volume().ZeroDrawArgs(), "native-zero-draw-args.u32");
+            captureBuffer(transparency.Volume().ZeroCandidates(), "native-zero-candidates.u32");
             // Existing integration metadata, also consumed directly by the depth VS.
             captureRaw(transparency.Volume().ZeroSlice(), "native-zero-slice.r32u", 4);
             captureRaw(transparency.Interface().HardwareDepth(), "native-interface.rgba32f", 16);

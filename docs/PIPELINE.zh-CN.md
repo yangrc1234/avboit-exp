@@ -9,7 +9,7 @@ Opaque / SceneDepth
 Interface prepass
 Bounds occupancy + frost masks → Adaptive Z → Physical occupancy
 Extinction clear → Atomic splat → T-LUT integration
-Zero-T depth draw（直接写主 SceneDepth）
+Zero-T indirect depth draw（直接写主 SceneDepth）
 4RT OIT accumulation
 B′ resolve → Gaussian mip chain
 Main composition → Tile copy 回 SceneColor
@@ -26,6 +26,7 @@ VFX offset → VFX HDR apply → Display / tone mapping → ImGui
 | Extinction | packed uint buffer | scalar 每 DWORD 四个 slice；RGB 三个带 guard 的 10-bit 字段 |
 | T-LUT | RGBA8 3D | 积分后的透射率，默认 XY 1/8、Z 128 |
 | FirstZeroSlice | R32_UINT，extinction XY 大小 | 第一个 RGB 全零 slice，供 Zero-T depth VS 查询 |
+| Zero-T candidates / draw args | uint 列表 + 16 字节参数 | integration 输出候选 16×16 tile，驱动一次 indirect draw |
 | N / A / totalTau / BackN | 四张全分辨率 R11G11B10 | OIT 总贡献、权重、光学厚度、界面后方的 numerator |
 | B′ | RGBA16F | 透明 tile 内完整背景颜色 + 有效性；未覆盖域不读取 |
 | Gaussian | RGBA16F mip chain | 预乘有效性的过滤结果 |
@@ -47,7 +48,12 @@ XY 使用光栅覆盖。这对应原讲稿第 64–65 页的 Linear Splatting，
 T-LUT。**最终 accumulation 仍然全分辨率。** LUT 查询使用线性过滤，并保留虚拟深度采样偏移。
 packed integer 有有限 guard 容量；极端 RGB overdraw 的跨字段 carry 是已知近似。
 
-Zero-T VS 直接查询 tile 过滤 footprint 的 first-zero 信息，保守取最远零点并反解深度。
+Integration 顺便输出代表 ray 已 RGB 归零的候选 tile，并原子递增 indirect instance count。
+每个 tile 只有一条 owner ray，不需要去重 pass。计数随 extinction clear 每帧重置，列表只读取当帧有效前缀；
+2560×1440 下列表容量 57,600 字节，draw args 16 字节。
+Zero-T VS 再查询完整过滤 footprint 的 first-zero 信息，保守取最远零点并反解深度，保证跨 compute group 邻域也已写完。
+这与讲稿第 78 页的独立 quad-generation CS 不同：本实现由 integration 产生候选，VS 求最终深度。
+讲稿要求保守读取，但未给出确切 XY footprint；当前外扩 guard 是本实现的选择。
 无效 tile 折叠 quad；有效 tile 无 PS 地写入主 D32，没有 quad preparation 或独立 culling depth。
 后续 accumulation 使用该深度做 early depth rejection。Resolve 在**当前 SceneDepth** 处查询过滤后的
 T-LUT，使用与 accumulation 相同的 adaptive Z 和两虚拟 slice 偏移；RGB 全零时，将有效 `totalT` 设为零，

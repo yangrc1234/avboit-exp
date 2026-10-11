@@ -46,6 +46,8 @@ class ExtinctionVolume
     nvrhi::IBuffer *Overflow() const { return m_overflow; }
     nvrhi::ITexture *RasterTarget() const { return m_rasterTarget; }
     nvrhi::ITexture *ZeroSlice() const { return m_zeroSlice; }
+    nvrhi::IBuffer *ZeroCandidates() const { return m_zeroCandidates; }
+    nvrhi::IBuffer *ZeroDrawArgs() const { return m_zeroDrawArgs; }
     nvrhi::ITexture *Transmittance() const { return m_lut; }
 
   private:
@@ -59,6 +61,7 @@ class ExtinctionVolume
     void Barrier(nvrhi::ICommandList *commands) const;
     ComputePass m_boundsPass, m_warpPass, m_physicalPass, m_clearPass, m_integratePass, m_densePass;
     nvrhi::BufferHandle m_masks, m_warp, m_physicalMasks, m_extinction, m_overflow;
+    nvrhi::BufferHandle m_zeroCandidates, m_zeroDrawArgs;
     nvrhi::TextureHandle m_lut, m_rasterTarget, m_zeroSlice, m_screenTiles;
     nvrhi::FramebufferHandle m_framebuffer;
     nvrhi::BindingLayoutHandle m_splatLayout;

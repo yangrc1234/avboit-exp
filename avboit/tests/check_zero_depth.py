@@ -62,10 +62,24 @@ def check(folder, original=None, enabled=True):
     vw, vh, vd = struct.unpack_from("<III", raw)
     lut = np.frombuffer(raw[12:], dtype=np.uint8).reshape(vd, vh, vw, 4)
     warp = np.fromfile(folder / "native-warp.u32", dtype="<u4")
-    # The runtime no longer emits quad records. Reconstruct conservative
-    # candidates on the CPU from integration metadata, then verify actual D32
-    # coverage and every filtered LUT neighbor independently below.
+    # Validate GPU list ownership/deduplication, then reconstruct FINAL quads
+    # independently from the full footprint, without using the candidate list.
     zero = texture(folder / "native-zero-slice.r32u", "<u4")
+    args = np.fromfile(folder / "native-zero-draw-args.u32", dtype="<u4")
+    candidates = np.fromfile(folder / "native-zero-candidates.u32", dtype="<u4")
+    tiles_x, tiles_y = (w + 15) // 16, (h + 15) // 16
+    assert len(args) == 4 and tuple(args[[0, 2, 3]]) == (4, 0, 0), args
+    instances = int(args[1])
+    assert instances <= len(candidates) == tiles_x * tiles_y, (args, candidates.shape)
+    active = candidates[:instances]
+    assert len(np.unique(active)) == instances, "Duplicate candidate quad"
+    expected_candidates = [
+        y * tiles_x + x
+        for y in range(tiles_y)
+        for x in range(tiles_x)
+        if enabled and zero[y * 16 * vh // h, x * 16 * vw // w] < vd
+    ]
+    assert np.array_equal(np.sort(active), expected_candidates), "Missing or stale candidate quad"
     count = int(warp[0])
     prefix = warp[2 : 2 + count * 2 : 2]
     quads = []
@@ -152,6 +166,10 @@ def check(folder, original=None, enabled=True):
         np.testing.assert_allclose(final[:, :, :3][closed], expected_color, rtol=0.001, atol=2e-6)
     print(
         folder.name,
+        "candidates",
+        instances,
+        "/",
+        tiles_x * tiles_y,
         "quads",
         len(quads),
         "hidden",
@@ -226,9 +244,19 @@ for sparse in (False, True):
     ).read_bytes(), "Mirror ROI footprint mismatch"
 for name, flag in [("poison", "--poison-extinction"), ("dense", "--dense-extinction")]:
     other = capture(name, 14, "--time", "0.7", flag)
+    check(other)
     assert (other / "native-depth.r32f").read_bytes() == (
         a.output / "smoke-0.7/native-depth.r32f"
     ).read_bytes(), "Zero depth stale or dense/sparse mismatch"
+for scale in (2, 8):
+    flags = ["--volume-scale", str(scale), "--render-width", "2564", "--render-height", "1444"]
+    edge = capture(f"partial-edge-{scale}", 11, *flags)
+    edge_off = capture(f"partial-edge-{scale}-off", 11, *flags, "--no-zero-depth")
+    assert check(edge, edge_off)[0] > 0
+    check(edge_off, enabled=False)
+empty = capture("empty", 11, "--camera-preset", "6")
+assert check(empty)[0] == 0
+assert np.fromfile(empty / "native-zero-draw-args.u32", dtype="<u4")[1] == 0
 print(
-    "PASS: LUT zeros, in-place depth, resolve closure, tau truncation, frost, RGB, mirror, ROI, Z budgets, dense/poison"
+    "PASS: indirect candidates, LUT zeros, in-place depth, resolve closure, tau truncation, frost, RGB, mirror, ROI, Z budgets, dense/poison, partial edges, empty frame"
 )

@@ -14,8 +14,8 @@ optimizations or promise exact agreement with the paper. See
 | Adaptive Z | Virtual occupancy | Compacted mapping from 2048 virtual log-depth intervals to 16/32/64/128 physical slices |
 | Physical occupancy | Bounds masks and mapping | Physical scalar/RGB occupied-slice masks |
 | Extinction clear / splat | Occupancy, transparent geometry, opaque depth | Packed integer extinction and overflow markers, atomically accumulated |
-| LUT integration | Extinction, occupancy, overflow | RGBA8 3D transmittance LUT and R32_UINT first-zero slice |
-| Zero-T depth | First-zero slices and mapping | Conservative quads into the existing SceneDepth; no PS or preparation pass |
+| LUT integration | Extinction, occupancy, overflow | RGBA8 3D transmittance LUT, R32_UINT first-zero slice, candidate tile IDs and indirect draw count |
+| Zero-T depth | Candidates, first-zero slices and mapping | One indirect draw of conservative quads into SceneDepth; no PS or preparation pass |
 | OIT accumulation | All OIT geometry, SceneDepth, LUT, selected-interface depth | Full-resolution N, A, totalTau, BackN; four R11G11B10 MRTs by default |
 | B-prime resolve | Accumulations, LUT/interface, opaque | RGBA16F background cache, only on transparency tiles plus a one-pixel border |
 | Gaussian | B-prime/opaque source, validity and frost work masks | RGBA16F fixed-screen mip chain |
@@ -28,6 +28,16 @@ optimizations or promise exact agreement with the paper. See
 The default full-resolution HDR format is R11G11B10. `--accum-half` and
 `--composition-half` are RGBA16F precision references. B and Gaussian retain alpha
 for source validity; interface alpha stores sigma. There are no I/R/q cache RTs.
+
+Integration appends candidate 16x16 screen tiles whose representative ray reaches
+RGB zero. Each tile has one owner ray, so no deduplication pass is needed. The
+depth VS still checks the entire filtered neighborhood after integration completes;
+candidate selection does not change the conservative depth rule. The draw count
+is reset each frame alongside extinction clear; only the appended list prefix is
+read. At 2560x1440 the list capacity is 57,600 bytes, plus 16 bytes of draw arguments.
+This differs from the presentation's separate quad-generation CS (slide 78):
+here integration only emits candidates, and the VS computes the final depth.
+The presentation specifies conservative reads but not their exact XY footprint.
 
 ## Composition algebra
 

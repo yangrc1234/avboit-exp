@@ -56,10 +56,10 @@ void TransparencyPipeline::Create(nvrhi::IDevice *device, const TransparencyInpu
     interfaceInputs.materialShaders = inputs.materialShaders;
     m_interface.Create(device, interfaceInputs);
     ZeroTransmittanceInputs zero;
-    zero.width = inputs.width;
-    zero.height = inputs.height;
     zero.opaqueDepth = inputs.opaqueHardwareDepth;
     zero.zeroSlice = m_volume.ZeroSlice();
+    zero.candidates = m_volume.ZeroCandidates();
+    zero.drawArgs = m_volume.ZeroDrawArgs();
     zero.camera = inputs.camera;
     zero.warp = m_volume.Warp();
     zero.vertex = load("quadVertex", nvrhi::ShaderType::Vertex, "shaders/ZeroTransmittance.hlsl");
@@ -176,7 +176,7 @@ void TransparencyPipeline::Record(nvrhi::ICommandList *commands, const Transpare
          [&] { m_volume.RecordSplat(commands, frame.geometryDraws); });
     pass(Stage::Integration, "Transmittance LUT integration",
          [&] { m_volume.RecordIntegration(commands, frame.denseExtinction); });
-    pass(Stage::ZeroDepth, "Zero-T depth draw / VS tile rejection",
+    pass(Stage::ZeroDepth, "Zero-T indirect depth draw / VS neighborhood rejection",
          [&] { m_zero.RecordDepth(commands, frame.zeroDepth); });
     pass(Stage::Accumulation, "OIT accumulation (4 MRT)",
          [&] { m_resolve.RecordAccumulation(commands, frame.geometryDraws); });

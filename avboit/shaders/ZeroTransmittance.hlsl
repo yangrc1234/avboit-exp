@@ -5,12 +5,14 @@
 #include "TransparencyCommon.hlsli"
 Buffer<uint> DepthWarp : register(t1);
 Texture2D<uint> FirstZeroSlice : register(t2);
+Buffer<uint> CandidateTiles : register(t3);
 float4 quadVertex(uint vertex : SV_VertexID, uint instance : SV_InstanceID) : SV_Position
 {
     uint2 tiles = (uint2(WIDTH, HEIGHT) + 15) / 16;
-    uint2 tile = uint2(instance % tiles.x, instance / tiles.x);
-    // Four vertices form one instanced triangle strip. Invalid tiles collapse
-    // outside the viewport; there is no PS, append buffer or indirect draw.
+    uint tileID = CandidateTiles[instance];
+    uint2 tile = uint2(tileID % tiles.x, tileID / tiles.x);
+    // Integration only tests a representative ray. Keep the complete filtered
+    // footprint test here, after ALL integration groups have finished.
     const float4 rejected = float4(2, 2, 0, 1);
     uint2 begin = tile * 16, end = min(begin + 16, uint2(WIDTH, HEIGHT));
     // Exact footprint of all full-resolution pixel centers, with an extra

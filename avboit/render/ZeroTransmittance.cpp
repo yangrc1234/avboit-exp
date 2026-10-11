@@ -6,13 +6,14 @@ namespace avboit
 {
 void ZeroTransmittance::Create(nvrhi::IDevice *device, const ZeroTransmittanceInputs &i)
 {
-    m_tileCount = ((i.width + 15) / 16) * ((i.height + 15) / 16);
+    m_drawArgs = i.drawArgs;
     m_depth = i.opaqueDepth;
     using B = nvrhi::BindingSetItem;
     auto vs = nvrhi::BindingSetDesc()
                   .addItem(B::TypedBuffer_SRV(15, i.camera))
                   .addItem(B::TypedBuffer_SRV(1, i.warp))
-                  .addItem(B::Texture_SRV(2, i.zeroSlice));
+                  .addItem(B::Texture_SRV(2, i.zeroSlice))
+                  .addItem(B::TypedBuffer_SRV(3, i.candidates));
     m_drawLayout = nullptr;
     m_drawBindings = nullptr;
     if (!nvrhi::utils::CreateBindingSetAndLayout(device, nvrhi::ShaderType::Vertex, 0, vs, m_drawLayout,
@@ -37,8 +38,11 @@ void ZeroTransmittance::RecordDepth(nvrhi::ICommandList *cmd, bool enabled) cons
     state.pipeline = m_draw;
     state.framebuffer = m_framebuffer;
     state.bindings = {m_drawBindings};
+    // NVRHI transitions the integration UAVs to SRV / IndirectArgument here,
+    // making both the candidate records and their count visible to this draw.
+    state.indirectParams = m_drawArgs;
     state.viewport.addViewportAndScissorRect(m_framebuffer->getFramebufferInfo().getViewport());
     cmd->setGraphicsState(state);
-    cmd->draw(nvrhi::DrawArguments().setVertexCount(4).setInstanceCount(m_tileCount));
+    cmd->drawIndirect(0);
 }
 } // namespace avboit

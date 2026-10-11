@@ -45,6 +45,18 @@ void ExtinctionVolume::Create(nvrhi::IDevice *device, const ExtinctionInputs &in
     m_physicalMasks = buffer(m_physicalMasks, m_tiles * 8, "Physical scalar/RGB occupancy");
     m_extinction = buffer(m_extinction, rays * (m_depthBudget / 4 + m_depthBudget), "Packed extinction");
     m_overflow = buffer(m_overflow, rays * 4, "First overflow depth");
+    const unsigned zeroTiles = ((inputs.screenWidth + 15) / 16) * ((inputs.screenHeight + 15) / 16);
+    m_zeroCandidates = buffer(m_zeroCandidates, zeroTiles, "Zero-T candidate tile IDs");
+    m_zeroDrawArgs = ReuseBuffer(device, m_zeroDrawArgs,
+                                 nvrhi::BufferDesc()
+                                     .setByteSize(sizeof(nvrhi::DrawIndirectArguments))
+                                     .setCanHaveTypedViews(true)
+                                     .setCanHaveUAVs(true)
+                                     .setIsDrawIndirectArgs(true)
+                                     .setFormat(nvrhi::Format::R32_UINT)
+                                     .setDebugName("Zero-T indirect draw arguments")
+                                     .setInitialState(nvrhi::ResourceStates::UnorderedAccess)
+                                     .setKeepInitialState(true));
     m_lut = ReuseTexture(device, m_lut,
                          nvrhi::TextureDesc()
                              .setWidth(m_width)
@@ -109,7 +121,9 @@ void ExtinctionVolume::Create(nvrhi::IDevice *device, const ExtinctionInputs &in
                            .addItem(B::TypedBuffer_UAV(0, m_extinction))
                            .addItem(B::TypedBuffer_UAV(1, m_overflow))
                            .addItem(B::Texture_UAV(2, m_lut))
-                           .addItem(B::Texture_UAV(3, m_zeroSlice));
+                           .addItem(B::Texture_UAV(3, m_zeroSlice))
+                           .addItem(B::TypedBuffer_UAV(4, m_zeroCandidates))
+                           .addItem(B::TypedBuffer_UAV(5, m_zeroDrawArgs));
     m_integratePass = compute(integration, inputs.shaders.integrate);
     m_densePass = compute(integration, inputs.shaders.integrateDense);
     m_clearPass = compute(integration, inputs.shaders.clear);
@@ -172,6 +186,10 @@ void ExtinctionVolume::RecordClear(nvrhi::ICommandList *commands, bool dense, bo
 {
     if (dense)
     {
+        // The normal clear shader resets these itself. The dense reference uses
+        // hardware buffer clears instead, so initialize its indirect args here.
+        const auto args = nvrhi::DrawIndirectArguments().setVertexCount(4).setInstanceCount(0);
+        commands->writeBuffer(m_zeroDrawArgs, &args, sizeof(args));
         commands->clearBufferUInt(m_extinction, 0);
         commands->clearBufferUInt(m_overflow, m_depthBudget);
     }

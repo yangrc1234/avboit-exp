@@ -5,9 +5,8 @@ namespace avboit
 {
 struct ZeroTransmittanceInputs
 {
-    unsigned width = 0, height = 0;
     nvrhi::TextureHandle opaqueDepth, zeroSlice;
-    nvrhi::BufferHandle camera, warp;
+    nvrhi::BufferHandle camera, warp, candidates, drawArgs;
     nvrhi::ShaderHandle vertex;
 };
 // Writes directly into host SceneDepth. Resolve closes rays whose filtered LUT
@@ -20,7 +19,7 @@ class ZeroTransmittance
     nvrhi::ITexture *Depth() const { return m_depth; }
 
   private:
-    unsigned m_tileCount = 0;
+    nvrhi::BufferHandle m_drawArgs;
     nvrhi::TextureHandle m_depth;
     nvrhi::BindingLayoutHandle m_drawLayout;
     nvrhi::BindingSetHandle m_drawBindings;
