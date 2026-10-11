@@ -92,7 +92,7 @@ int main()
                                                                 {"--sphere-ior", "0.9"},
                                                                 {"--refraction-gain", "5"},
                                                                 {"--stress", "-1"},
-                                                                {"--stress", "16"},
+                                                                {"--stress", "17"},
                                                                 {"--stress", "1.5"},
                                                                 {"--camera-preset", "7"},
                                                                 {"--volume-scale", "4"},
@@ -126,6 +126,7 @@ int main()
                 !Parse({"--no-zero-t-shortcut"}).zeroTShortcut);
         Require(defaults.zeroDepth && defaults.mirrorBlur && !Parse({"--no-zero-depth"}).zeroDepth &&
                 !Parse({"--no-mirror-blur"}).mirrorBlur);
+        Require(Parse({"--stress", "16"}).stressPreset == 16);
         Require(defaults.fullVfx && !defaults.halfComposition && !defaults.allInterface);
         Require(Parse({"--vfx-full"}).fullVfx && !Parse({"--vfx-half"}).fullVfx &&
                 Parse({"--composition-half"}).halfComposition && Parse({"--all-interface"}).allInterface);

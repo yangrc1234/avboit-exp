@@ -149,7 +149,7 @@ ViewerOptions ParseViewerOptions(int argc, const char *const *argv)
             options.fixtureTime =
                 ReadFloat(arg, value(), -std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
         else if (arg == "--stress")
-            options.stressPreset = ReadInteger(arg, value(), 0, 15);
+            options.stressPreset = ReadInteger(arg, value(), 0, 16);
         else if (arg == "--camera-preset")
             options.cameraPreset = ReadInteger(arg, value(), 0, 6);
         else if (arg == "--benchmark")
@@ -226,7 +226,7 @@ Scene and materials:
   --sponza                   Load Sponza through Donut (default scene backend)
   --legacy-scene             Old Sponza loader for calibration comparisons
   --sponza-path PATH          Explicit Sponza.gltf path; enables Sponza
-  --stress 0..15             Stress preset (0: manual, 15: separated glass); also in ImGui Test case
+  --stress 0..16             Stress preset (0: manual, 16: uncovered foreground); also in ImGui Test case
   --time SECONDS             Finite initial fixture time, default 0
   --glass-sphere             Replace default panes with a sphere
   --rgb-glass                Strong RGB absorption for sphere fixtures

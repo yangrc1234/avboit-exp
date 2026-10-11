@@ -92,6 +92,7 @@ void TransparencyPipeline::Create(nvrhi::IDevice *device, const TransparencyInpu
     gaussianInputs.height = inputs.height;
     gaussianInputs.background = m_resolve.Background();
     gaussianInputs.opaque = inputs.opaqueColorDepth;
+    gaussianInputs.interfaceDepth = m_interface.HardwareDepth();
     gaussianInputs.screenTiles = m_volume.ScreenTiles();
     gaussianInputs.linearSampler = inputs.linear;
     gaussianInputs.sparseShader = load("sparseBase", nvrhi::ShaderType::Compute, "shaders/GaussianBlur.hlsl");

@@ -22,7 +22,8 @@ const char *StressPresetName(unsigned preset)
                                   "Frost before zero-T stack",
                                   "RGB nonzero channel survives",
                                   "Moving dense smoke before frost",
-                                  "Separated frost / refraction tiles"};
+                                  "Separated frost / refraction tiles",
+                                  "Frost edge / uncovered foreground"};
     return names[preset < StressPresetCount ? preset : 0];
 }
 StressFixture BuildStressFixture(unsigned preset)
@@ -174,6 +175,14 @@ StressFixture BuildStressFixture(unsigned preset)
         pane({-2.6f, .15f, 4.5f}, {.42f, 0, 0}, {0, .7f, 0}, {.35f, .82f, .95f}, .5f, 10);
         pane({2.6f, -.1f, 4.5f}, {.42f, 0, 0}, {0, .7f, 0}, {.95f, .5f, .25f}, .7f, 14);
         smoke({-2.6f, .2f, 3.5f}, .25f, {.7f, .75f, .8f, .55f});
+    }
+    else if (preset == 16)
+    {
+        pane({0, 0, 4}, {1, 0, 0}, {0, .8f, 0}, {.85f, .9f, .95f}, .75f);
+        result.opaque.push_back({{0, 0, 7}, {3, 0, 0}, {0, 2, 0}, {.15f, .18f, .22f, 1}, {0, 0, 0}, 0});
+        // Its left edge projects just outside the pane's right silhouette at
+        // the default camera. No interface depth exists over this HDR source.
+        result.opaque.push_back({{.625f, 0, 2}, {.12f, 0, 0}, {0, .36f, 0}, {24, .01f, .01f, 1}, {0, 0, 0}, 0});
     }
     else if (preset == 10)
     {

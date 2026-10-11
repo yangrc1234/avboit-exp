@@ -33,9 +33,11 @@ Passing the tests below does not establish physical correctness or paper parity.
   treated as opaque, and silhouette accuracy remains limited by the LUT. No
   stencil or extra cutoff RT is used. The public presentation does not specify
   this reconciliation; it is an explicit choice of this implementation.
-- **Sparse frost validity.** Mirror taps repair invalid source samples using
-  nearby visible color. This does not reconstruct hidden geometry. Entirely
-  invalid filter footprints fall back to the ordinary OIT result.
+- **Frost validity.** The first filter rejects taps whose bilinear footprint
+  extends outside interface coverage. Mirror taps repair invalid samples using
+  nearby visible color. This also excludes real background outside glass and can
+  stretch edge colors; it does not reconstruct hidden geometry or distinguish
+  adjacent interfaces. Entirely invalid footprints fall back to ordinary OIT.
 - **Sample host ABI.** The camera/vertex buffers are a compact research interface,
   not a UE material compiler. The implementation uses forward D32 depth. Reverse-Z,
   instancing, skinning and host material permutations require explicit integration.

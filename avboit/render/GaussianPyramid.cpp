@@ -85,6 +85,7 @@ void GaussianPyramid::Create(nvrhi::IDevice *device, const GaussianInputs &input
         D().addItem(B::TypedBuffer_SRV(15, inputs.camera))
             .addItem(B::Texture_SRV(27, inputs.background))
             .addItem(B::Texture_SRV(3, inputs.opaque))
+            .addItem(B::Texture_SRV(7, inputs.interfaceDepth))
             .addItem(B::Texture_SRV(30, inputs.screenTiles))
             .addItem(B::TypedBuffer_SRV(28, m_workMask, nvrhi::Format::UNKNOWN, WorkRange(1)))
             .addItem(B::Texture_UAV(0, m_pyramid, nvrhi::Format::UNKNOWN, nvrhi::TextureSubresourceSet(0, 1, 0, 1)))

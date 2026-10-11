@@ -7,6 +7,7 @@ RWTexture2D<float4> Destination : register(u0);
 SamplerState LinearClamp : register(s0);
 Buffer<float4> Camera : register(t15);
 Texture2D<float4> Opaque : register(t3);
+Texture2D<float> FrostInterfaceDepth : register(t7);
 #include "BackgroundSampling.hlsli"
 float4 Pair(float2 uv, float2 offset)
 {
@@ -26,6 +27,13 @@ float4 Pair(float2 uv, float2 offset)
 
 float4 SampleBackground(float2 uv)
 {
+    // Restrict source coverage only before the first filter. Later
+    // mips keep their premultiplied validity and the existing producer halos.
+    uv = clamp(uv, .5 / Camera[6].xy, 1. - .5 / Camera[6].xy);
+    // Match the color bilinear footprint, including corners. Reject the
+    // whole tap before reading color if any source texel has no interface.
+    if (!all(FrostInterfaceDepth.GatherRed(LinearClamp, uv) < 1.))
+        return 0;
     return SampleBackgroundCache(uv);
 }
 #include "FrostBaseKernel.hlsli"

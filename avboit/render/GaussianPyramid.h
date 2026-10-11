@@ -12,7 +12,7 @@ struct GaussianInputs
 {
     unsigned width = 0, height = 0;
     unsigned mipCount = 3;
-    nvrhi::TextureHandle background, opaque, screenTiles;
+    nvrhi::TextureHandle background, opaque, screenTiles, interfaceDepth;
     nvrhi::BufferHandle camera;
     nvrhi::SamplerHandle linearSampler;
     nvrhi::ShaderHandle sparseShader, fusedShader;

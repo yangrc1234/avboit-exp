@@ -41,6 +41,16 @@ The presentation specifies conservative reads but not their exact XY footprint.
 
 ## Composition algebra
 
+First-level Gaussian source taps always require interface coverage. One interface-depth
+gather rejects the whole bilinear tap if any of its four texels has no interface
+(D32 clear = 1). Existing mirror repair handles the zero-RGBA tap. Shared B,
+sharp refraction, later mip validity and producer halos remain unchanged; no new
+RT or pass is added. This also rejects real background outside the silhouette,
+can stretch interior colors near edges, and does not distinguish adjacent
+interface identities. If a narrow interface or large offset leaves no valid
+samples, composition retains its existing unfiltered fallback. Stress preset 16
+places an HDR foreground just outside glass.
+
 For each surviving fragment, RGB alpha is `1 - transmission` after material
 coverage. The LUT estimates transmission in front of its depth. Accumulation
 builds weighted numerator `N`, denominator `A`, exact-fragment optical depth

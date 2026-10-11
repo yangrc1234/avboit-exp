@@ -31,6 +31,7 @@ Install `requirements-dev.txt` into a virtual environment. Useful targeted check
 .venv/Scripts/python avboit/tests/check_extinction_roi.py
 .venv/Scripts/python avboit/tests/check_blur_roi.py
 .venv/Scripts/python avboit/tests/check_background_protection.py
+.venv/Scripts/python avboit/tests/check_frost_interface.py
 .venv/Scripts/python avboit/tests/check_vfx_materials.py
 .venv/Scripts/python avboit/tests/check_zero_depth.py
 ```
