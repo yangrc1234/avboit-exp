@@ -26,7 +26,7 @@ void ZeroTransmittance::Create(nvrhi::IDevice *device, const ZeroTransmittanceIn
     pipeline.primType = nvrhi::PrimitiveType::TriangleStrip;
     pipeline.renderState.depthStencilState.depthTestEnable = true;
     pipeline.renderState.depthStencilState.depthWriteEnable = true;
-    pipeline.renderState.depthStencilState.depthFunc = nvrhi::ComparisonFunc::LessOrEqual;
+    pipeline.renderState.depthStencilState.depthFunc = nvrhi::ComparisonFunc::GreaterOrEqual;
     pipeline.renderState.rasterState.cullMode = nvrhi::RasterCullMode::None;
     m_draw = device->createGraphicsPipeline(pipeline, m_framebuffer->getFramebufferInfo());
 }

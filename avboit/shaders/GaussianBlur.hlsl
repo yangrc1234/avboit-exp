@@ -32,7 +32,7 @@ float4 SampleBackground(float2 uv)
     uv = clamp(uv, .5 / Camera[6].xy, 1. - .5 / Camera[6].xy);
     // Match the color bilinear footprint, including corners. Reject the
     // whole tap before reading color if any source texel has no interface.
-    if (!all(FrostInterfaceDepth.GatherRed(LinearClamp, uv) < 1.))
+    if (!all(FrostInterfaceDepth.GatherRed(LinearClamp, uv) > 0.))
         return 0;
     return SampleBackgroundCache(uv);
 }

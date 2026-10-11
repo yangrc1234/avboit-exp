@@ -4,6 +4,15 @@ import numpy as np
 from PIL import Image
 
 
+def view_depth(device_depth):
+    """Finite Reversed-Z used by the sample: near=0.05, far=80, clear=0."""
+    return 4.0 / (0.05 + 79.95 * device_depth)
+
+
+def device_depth(view_z):
+    return (4.0 / view_z - 0.05) / 79.95
+
+
 def texture(path, dtype, channels):
     with path.open("rb") as f:
         w, h = np.fromfile(f, "<u4", 2)

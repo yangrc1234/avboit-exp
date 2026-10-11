@@ -7,7 +7,7 @@ import subprocess
 
 import numpy as np
 
-from capture_utils import texture, work_domain
+from capture_utils import texture, view_depth, work_domain
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument(
@@ -48,9 +48,13 @@ for dense in (False, True):
     flags = ["--stress", "16", "--dense-blur" if dense else "--sparse-blur"]
     folder = capture(tag, *flags)
     depth = texture(folder / "native-interface-depth.r32f", "<f4", 1)[..., 0]
-    covered = depth < 1
+    covered = depth > 0
     y, x = np.nonzero(covered)
     assert len(x) > 1000, "Missing frost interface"
+    assert (depth[~covered] == 0).all(), "Interface clear must be zero"
+    # This fixture's glass is a front-facing plane at view Z=4, independently
+    # checking the prepass projection and readback depth convention.
+    np.testing.assert_allclose(view_depth(depth[covered]), 4.0, rtol=2e-6)
     yy, xx = np.indices(covered.shape)
     edge = covered & (xx > x.max() - 48) & (abs(yy - (y.min() + y.max()) / 2) < 100)
     hdr = texture(folder / "native-composition.rgba16f", "<f2", 4).astype(np.float32)
@@ -71,7 +75,7 @@ for dense in (False, True):
     h, w = base.shape[:2]
     iy = np.minimum(((np.arange(h) + 0.5) * depth.shape[0] / h).astype(int), depth.shape[0] - 1)
     ix = np.minimum(((np.arange(w) + 0.5) * depth.shape[1] / w).astype(int), depth.shape[1] - 1)
-    outside = depth[iy[:, None], ix[None, :]] >= 1
+    outside = depth[iy[:, None], ix[None, :]] == 0
     assert (valid & outside & (base[..., 3] > 0)).any(), "Gaussian halo was clipped"
     print(
         f"{tag}: edge red excess {leakage:.6f}; HDR source visible, Gaussian halo preserved",

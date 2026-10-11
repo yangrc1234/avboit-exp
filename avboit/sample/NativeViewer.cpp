@@ -190,7 +190,7 @@ class NativeViewer : public app::IRenderPass
                    {up[0], up[1], up[2], time},
                    {forward[0], forward[1], forward[2], vfx ? vfxStrength : 0.f},
                    {sigmaCeiling, float(maxBlurMip), float(sparseBlur), float(hardwareDepth)},
-                   {80.f / 79.95f, -4.f / 79.95f, .05f, 80.f},
+                   {-.05f / 79.95f, 4.f / 79.95f, .05f, 80.f},
                    {float(Width), float(Height), float(volumeWidth), float(volumeHeight)},
                    {float(qBound), float(protectBackground), backgroundThreshold,
                     float((zeroTShortcut ? 1 : 0) | (zeroDepth ? 2 : 0) | (mirrorBlur ? 4 : 0) | (fullVfx ? 8 : 0))},
@@ -318,6 +318,8 @@ class NativeViewer : public app::IRenderPass
                                               .setHeight(h)
                                               .setFormat(format)
                                               .setIsRenderTarget(true)
+                                              .setClearValue(nvrhi::Color(0))
+                                              .setUseClearValue(format == nvrhi::Format::D32)
                                               .setDebugName(name)
                                               .setInitialState(format == nvrhi::Format::D32
                                                                    ? nvrhi::ResourceStates::DepthWrite
@@ -383,6 +385,7 @@ class NativeViewer : public app::IRenderPass
         d.bindingLayouts = {p.layout};
         d.renderState.depthStencilState.depthTestEnable = depthTest;
         d.renderState.depthStencilState.depthWriteEnable = depthTest;
+        d.renderState.depthStencilState.depthFunc = nvrhi::ComparisonFunc::Greater;
         d.renderState.rasterState.cullMode = nvrhi::RasterCullMode::None;
         for (unsigned i = 0; i < 4; ++i)
             if (additive)
@@ -1378,6 +1381,7 @@ class NativeViewer : public app::IRenderPass
             desc.bindingLayouts = {opaquePass.layout};
             desc.renderState.depthStencilState.depthTestEnable = true;
             desc.renderState.depthStencilState.depthWriteEnable = true;
+            desc.renderState.depthStencilState.depthFunc = nvrhi::ComparisonFunc::Greater;
             desc.renderState.rasterState.cullMode = material.cullMode;
             opaqueMaterialPipelines.push_back(device->createGraphicsPipeline(desc, opaqueFb->getFramebufferInfo()));
         }
@@ -1571,7 +1575,7 @@ class NativeViewer : public app::IRenderPass
                 // this map. Init/scene rebuilding always resets shadowDirty.
                 if (useSponza && !useDonutScene && (shadowDirty || redrawShadows))
                 {
-                    commands->clearDepthStencilTexture(shadowDepth, nvrhi::AllSubresources, true, 1, false, 0);
+                    commands->clearDepthStencilTexture(shadowDepth, nvrhi::AllSubresources, true, 0, false, 0);
                     for (unsigned mesh = 0; mesh < shadowPasses.size(); ++mesh)
                         Draw(shadowPasses[mesh], shadowFb, scene.primitives[mesh].vertexCount);
                     shadowDirty = false;
@@ -1580,7 +1584,7 @@ class NativeViewer : public app::IRenderPass
             {
                 AVBOIT_GPU_SCOPE(commands, "Opaque", profiler.Route(commands, Stage::Opaque));
                 commands->clearTextureFloat(opaque, nvrhi::AllSubresources, nvrhi::Color(.025f, .04f, .06f, 80));
-                commands->clearDepthStencilTexture(depth, nvrhi::AllSubresources, true, 1, false, 0);
+                commands->clearDepthStencilTexture(depth, nvrhi::AllSubresources, true, 0, false, 0);
                 if (donutScene)
                     donutScene->Record(commands, opaqueFb, camera);
                 for (unsigned mesh = 0; mesh < scenePasses.size(); ++mesh)
@@ -1783,7 +1787,7 @@ class NativeViewer : public app::IRenderPass
                         for (unsigned x = 0; x < size[0]; ++x)
                         {
                             const float d = row[x];
-                            F4 hit = d < 1.f ? F4{camera[5][1] / (d - camera[5][0]), 0, 0, 1} : F4{};
+                            F4 hit = d > 0.f ? F4{camera[5][1] / (d - camera[5][0]), 0, 0, 1} : F4{};
                             file.write(reinterpret_cast<const char *>(hit.data()), 16);
                         }
                     }

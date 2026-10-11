@@ -18,6 +18,7 @@
 Buffer<float4> Vertices : register(t0);
 Buffer<float4> Materials : register(t23);
 Buffer<float4> Camera : register(t15);
+#include "DeviceDepth.hlsli"
 SamplerState LinearClamp : register(s0);
 struct Varyings
 {
@@ -44,8 +45,7 @@ Varyings meshVertex(uint id : SV_VertexID)
         float3 delta = p.xyz - Camera[0].xyz;
         p.xyz = float3(dot(delta, Camera[1].xyz), dot(delta, Camera[2].xyz), dot(delta, Camera[3].xyz));
     } // Negative position.w marks geometry already in view space.
-    o.position =
-        float4(p.x / (float(WIDTH) / HEIGHT * .57735027), p.y / .57735027, p.z * 80. / 79.95 - 4. / 79.95, p.z);
+    o.position = float4(p.x / (float(WIDTH) / HEIGHT * .57735027), p.y / .57735027, ClipDepthFromView(p.z), p.z);
     uint material = uint(Vertices[id * 4 + 1].w) * 4;
     o.depth = p.z;
     o.color = Materials[material];

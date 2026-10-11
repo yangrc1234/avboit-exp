@@ -64,7 +64,7 @@ void OitResolve::Create(nvrhi::IDevice *device, const OitResolveInputs &inputs)
         pipeline.PS = ps;
         pipeline.bindingLayouts = {pass.layout};
         pipeline.renderState.depthStencilState.depthTestEnable = additive;
-        pipeline.renderState.depthStencilState.depthFunc = nvrhi::ComparisonFunc::LessOrEqual;
+        pipeline.renderState.depthStencilState.depthFunc = nvrhi::ComparisonFunc::GreaterOrEqual;
         pipeline.renderState.depthStencilState.depthWriteEnable = false;
         pipeline.renderState.rasterState.cullMode = nvrhi::RasterCullMode::None;
         if (additive)

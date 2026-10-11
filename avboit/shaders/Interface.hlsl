@@ -57,7 +57,7 @@ InterfaceOutput interfacePixel(Varyings i)
     // Keep the nearest interface even behind opaque geometry. Its depth tells
     // B preparation that an occluding foreground pixel is NOT blur background.
     // Visibility is tested by resolve; no extra depth RT/pass is required.
-    bool opaqueOccluded = i.position.z >= OpaqueHardwareDepth.Load(int3(uint2(i.position.xy), 0));
+    bool opaqueOccluded = i.position.z <= OpaqueHardwareDepth.Load(int3(uint2(i.position.xy), 0));
     float rough = Camera[1].w > 0 ? i.roughness : 0;
     // Seven material-local roughness bands, matching the current browser fixture.
     if (rough > 0 && i.kind == 2 && i.sphere.w >= 0)

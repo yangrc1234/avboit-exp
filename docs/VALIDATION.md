@@ -34,6 +34,8 @@ Install `requirements-dev.txt` into a virtual environment. Useful targeted check
 .venv/Scripts/python avboit/tests/check_frost_interface.py
 .venv/Scripts/python avboit/tests/check_vfx_materials.py
 .venv/Scripts/python avboit/tests/check_zero_depth.py
+.venv/Scripts/python avboit/tests/check_hardware_depth.py
+.venv/Scripts/python avboit/tests/check_visibility.py
 ```
 
 Most scripts accept `--viewer` for a non-default executable; some fixed fixtures
@@ -48,6 +50,11 @@ It also covers RGB nonzero channels, frost validity/mirror repair, adaptive/fixe
 Z budgets and dense/poisoned references. Indirect candidate IDs/counts are checked
 for missing or duplicate tiles, partial screen/volume edges, and stale work after
 switching from an occupied view to an empty frame.
+
+`check_hardware_depth.py` compares Reversed-Z D32 reconstruction against an
+independent linear-depth output over six Sponza views. The frost interface check
+also validates its known plane depth and zero clear value; visibility checks
+cover empty-sky scheduling and rejection of bright foreground sources.
 
 `check_submission_order.py` reports finite-precision order differences rather than
 claiming bitwise order independence. The packed RGB overflow stress in the GPU

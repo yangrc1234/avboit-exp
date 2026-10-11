@@ -47,7 +47,7 @@ float4 quadVertex(uint vertex : SV_VertexID, uint instance : SV_InstanceID) : SV
     float z = exp2(float(boundary) / float(count) * log2(81.)) - 1.;
     if (z <= Camera[5].z || z >= Camera[5].w)
         return rejected;
-    float deviceDepth = Camera[5].x + Camera[5].y / z;
+    float deviceDepth = DeviceDepthFromView(z);
     static const float2 corners[4] = {float2(0, 0), float2(1, 0), float2(0, 1), float2(1, 1)};
     float2 uv = lerp(float2(begin), float2(end), corners[vertex]) / float2(WIDTH, HEIGHT);
     return float4(uv * float2(2, -2) + float2(-1, 1), deviceDepth, 1);

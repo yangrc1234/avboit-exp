@@ -11,6 +11,8 @@ not Activision or Call of Duty source. No additional CLA applies to this project
 Donut is pinned by the root Git submodule. Its nested submodules pin NVRHI,
 ShaderMake, ImGui, GLFW, cgltf and stb. Embedded JsonCpp retains its upstream
 license. Do not remove notices when distributing a modified build.
+`avboit/shaders/SceneShadows.hlsli` adapts Donut's 16-tap shadow filter to the
+sample's Reversed-Z depth convention and retains the NVIDIA MIT notice.
 
 | Component | Upstream | License in the checkout |
 |---|---|---|

@@ -8,7 +8,7 @@ optimizations or promise exact agreement with the paper. See
 
 | Pass | Reads | Writes / work |
 |---|---|---|
-| Opaque | Scene/materials, shadow map | HDR SceneColor, forward D32 SceneDepth |
+| Opaque | Scene/materials, shadow map | HDR SceneColor, Reversed-Z D32 SceneDepth |
 | Interface prepass | Special-surface geometry/materials, opaque depth | Nearest D32 interface, RGBA16F RGB transmission + sigma, RG16F offset |
 | Bounds occupancy | View-space actor bounds and effective material footprint | Virtual Z occupancy, scalar/RGB XY masks, screen tile bits, per-mip frost work masks |
 | Adaptive Z | Virtual occupancy | Compacted mapping from 2048 virtual log-depth intervals to 16/32/64/128 physical slices |
@@ -29,6 +29,12 @@ The default full-resolution HDR format is R11G11B10. `--accum-half` and
 `--composition-half` are RGBA16F precision references. B and Gaussian retain alpha
 for source validity; interface alpha stores sigma. There are no I/R/q cache RTs.
 
+All scene, interface and shadow D32 targets use Reversed-Z: near is 1, far/clear
+is 0. Depth tests use Greater/GreaterEqual; interface selection uses strict
+Greater so equal-depth surfaces keep the first writer. The camera keeps finite 0.05/80 planes;
+device depth is `A + B / viewZ`, with `A=-near/(far-near)` and
+`B=near*far/(far-near)`. AVBOIT slices still integrate increasing positive view Z.
+
 Integration appends candidate 16x16 screen tiles whose representative ray reaches
 RGB zero. Each tile has one owner ray, so no deduplication pass is needed. The
 depth VS still checks the entire filtered neighborhood after integration completes;
@@ -43,7 +49,7 @@ The presentation specifies conservative reads but not their exact XY footprint.
 
 First-level Gaussian source taps always require interface coverage. One interface-depth
 gather rejects the whole bilinear tap if any of its four texels has no interface
-(D32 clear = 1). Existing mirror repair handles the zero-RGBA tap. Shared B,
+(D32 clear = 0). Existing mirror repair handles the zero-RGBA tap. Shared B,
 sharp refraction, later mip validity and producer halos remain unchanged; no new
 RT or pass is added. This also rejects real background outside the silhouette,
 can stretch interior colors near edges, and does not distinguish adjacent
@@ -148,7 +154,6 @@ caller's open command list. Shader handles and material/geometry tables come fro
 the host. Actors and material sections stay separate draws; see
 [material submission](MATERIAL_DRAWS_ZH.md).
 
-Internal dimensions are rounded up to multiples of four. The sample uses forward
-D32 and explicit shader-readable depth; reverse-Z requires adapting comparisons
-and projection. Zero-T modifies the host's SceneDepth in place, which downstream
+Internal dimensions are rounded up to multiples of four. The sample uses Reversed-Z
+D32 and explicit shader-readable depth. Zero-T modifies the host's SceneDepth in place, which downstream
 host passes must account for. Pass markers use the common RAII scope macro.

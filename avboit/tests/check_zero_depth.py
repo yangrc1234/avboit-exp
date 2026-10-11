@@ -8,7 +8,7 @@ Requires NumPy. Default captures are 2560x1440, plus input-resolution alignment 
 import argparse, math, struct, subprocess
 from pathlib import Path
 import numpy as np
-from capture_utils import work_domain
+from capture_utils import device_depth, view_depth, work_domain
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -107,16 +107,16 @@ def check(folder, original=None, enabled=True):
                 if not 0.05 < z < 80:
                     continue
                 device = float(
-                    np.float32(np.float32(80 / 79.95) + np.float32(-4 / 79.95) / np.float32(z))
+                    np.float32(np.float32(-0.05 / 79.95) + np.float32(4 / 79.95) / np.float32(z))
                 )
                 quads.append((x0, y0, x1, y1, device))
     expected = texture(original / "native-depth.r32f", "<f4").copy() if original else None
-    quad_depth = np.ones_like(depth)
+    quad_depth = np.zeros_like(depth)
     seen = set()
     for quad in quads:
         x0, y0, x1, y1 = map(int, quad[:4])
         d = float(quad[4])
-        z = (-4 / 79.95) / (d - 80 / 79.95)
+        z = view_depth(d)
         assert (x0, y0) not in seen
         seen.add((x0, y0))
         assert x0 % 16 == 0 and y0 % 16 == 0 and x1 == min(x0 + 16, w) and y1 == min(y0 + 16, h)
@@ -134,26 +134,31 @@ def check(folder, original=None, enabled=True):
         assert not lut[lower : upper + 1, ly:hy, lx:hx, :3].any(), ("Nonzero LUT footprint", quad)
         quad_depth[y0:y1, x0:x1] = d
         if expected is not None:
-            np.minimum(expected[y0:y1, x0:x1], d, out=expected[y0:y1, x0:x1])
+            np.maximum(expected[y0:y1, x0:x1], d, out=expected[y0:y1, x0:x1])
     if expected is not None:
-        assert (
-            np.max(np.abs(depth - expected)) < 3e-7
-        ), "SceneDepth differs from min(original, quad)"
+        np.testing.assert_allclose(
+            depth,
+            expected,
+            rtol=2e-6,
+            atol=2e-9,
+            err_msg="SceneDepth differs from max(original, quad)",
+        )
         assert (folder / "native-lut.rgba8").read_bytes() == (
             original / "native-lut.rgba8"
         ).read_bytes(), "Zero draw changed LUT"
-    assert (depth <= quad_depth + 3e-7).all()
-    hidden = (interface < 1) & (interface >= depth) & (quad_depth < 1) & work_domain(folder, 10)
-    visible = (interface < depth) & (quad_depth < 1)
+    depth_tolerance = np.maximum(quad_depth * 2e-6, 2e-9)
+    assert (depth >= quad_depth - depth_tolerance).all()
+    hidden = (interface > 0) & (interface <= depth) & (quad_depth > 0) & work_domain(folder, 10)
+    visible = (interface > depth) & (quad_depth > 0)
     # Sharp refraction permits foreground sampling; frost does not.
     assert (b[hidden & (surface[:, :, 3] > 0)] == 0).all(), "Hidden frost sample still valid"
     # A winning quad guarantees RGB-zero LUT at SceneDepth. With no visible
     # interface, B and the final HDR result must be N/A: no residual opaque
     # contribution, and no old (1-exp(-truncatedTau)) normalization factor.
     closed = (
-        (quad_depth < 1)
-        & (np.abs(depth - quad_depth) < 3e-7)
-        & ((interface >= 1) | (interface >= depth))
+        (quad_depth > 0)
+        & (np.abs(depth - quad_depth) < depth_tolerance)
+        & ((interface == 0) | (interface <= depth))
         & (b[:, :, 3] > 0)
         & work_domain(folder, 10)
     )
@@ -195,7 +200,7 @@ assert ((tau_on[:, :, 0] + 1) < tau_off[:, :, 0]).sum() > 100, "No hardware frag
 # footprint has RGB-zero LUT farther away. Sampling the last slice instead of
 # SceneDepth would black it out. Its HDR color must survive unchanged.
 depth = texture(front / "native-depth.r32f", "<f4")
-near = depth < (80 / 79.95 - 4 / 79.95 / 1.5)
+near = depth > device_depth(1.5)
 assert near.sum() > 100, "Missing foreground occluder"
 final = texture(front / "native-composition.rgba16f", "<f2", 4)
 original = texture(reference / "native-composition.rgba16f", "<f2", 4)

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image
-from capture_utils import difference, texture, work_domain
+from capture_utils import difference, texture, view_depth, work_domain
 
 
 def main():
@@ -51,7 +51,7 @@ def main():
         on, bright = run(mode + "-front1", [*flags, "--emissive-gain", "1"])
         hit = texture(on / "native-interface.rgba32f", "<f4", 4)
         device = texture(on / "native-depth.r32f", "<f4", 1)[..., 0]
-        opaque_z = (-4.0 / 79.95) / (device - 80.0 / 79.95)
+        opaque_z = view_depth(device)
         covered = hit[..., 3] > 0
         visible = covered & (hit[..., 0] < opaque_z - 0.01)
         hidden = covered & (hit[..., 0] > opaque_z + 0.01)

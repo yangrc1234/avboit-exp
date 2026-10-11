@@ -41,7 +41,7 @@ ResolveTerms GetResolveTerms(uint2 p, float2 uv)
         // close this ray. Reuse the filtered LUT at the CURRENT depth, not its
         // far endpoint: a nearer opaque surface may be in front of the smoke.
         // This also closes per-pixel LUT zeros outside conservative quad tiles.
-        float viewDepth = Camera[5].y / (sceneDepth - Camera[5].x);
+        float viewDepth = ViewDepthFromDevice(sceneDepth);
         if (all(SampleResolveTransmittance(uv, viewDepth) == 0))
             o.totalT = 0;
     }
@@ -57,7 +57,7 @@ ResolveTerms GetResolveTerms(uint2 p, float2 uv)
     // The prepass retains occluded geometry so foreground emission is excluded
     // from frost's source before any bilinear/Gaussian filtering takes place.
     // Both real foreground and zero-T quads reject occluded frost sources.
-    o.opaqueOccluded = InterfaceDepth.Load(int3(p, 0)) >= sceneDepth;
+    o.opaqueOccluded = InterfaceDepth.Load(int3(p, 0)) <= sceneDepth;
     if (o.opaqueOccluded)
     {
         o.transmission = 0; // keep the ordinary OIT/opaque result at this target

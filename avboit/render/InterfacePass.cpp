@@ -18,6 +18,8 @@ void InterfacePass::Create(nvrhi::IDevice *device, const InterfaceInputs &inputs
                                 .setHeight(inputs.height)
                                 .setFormat(format)
                                 .setIsRenderTarget(true)
+                                .setClearValue(nvrhi::Color(0))
+                                .setUseClearValue(true)
                                 .setDebugName(name)
                                 .setKeepInitialState(true)
                                 .setInitialState(format == nvrhi::Format::D32 ? nvrhi::ResourceStates::DepthWrite
@@ -48,6 +50,7 @@ void InterfacePass::Create(nvrhi::IDevice *device, const InterfaceInputs &inputs
     pipeline.bindingLayouts = {m_layout};
     pipeline.renderState.depthStencilState.depthTestEnable = true;
     pipeline.renderState.depthStencilState.depthWriteEnable = true;
+    pipeline.renderState.depthStencilState.depthFunc = nvrhi::ComparisonFunc::Greater;
     m_pipelines.clear();
     for (const auto &material : inputs.materialShaders)
     {
@@ -63,7 +66,7 @@ void InterfacePass::Record(nvrhi::ICommandList *commands, const std::vector<Geom
 {
     for (const auto &texture : {m_transmissionSigma, m_offset})
         commands->clearTextureFloat(texture, nvrhi::AllSubresources, nvrhi::Color(0));
-    commands->clearDepthStencilTexture(m_hardwareDepth, nvrhi::AllSubresources, true, 1, false, 0);
+    commands->clearDepthStencilTexture(m_hardwareDepth, nvrhi::AllSubresources, true, 0, false, 0);
     nvrhi::GraphicsState state;
     state.framebuffer = m_framebuffer;
     state.bindings = {m_bindings};

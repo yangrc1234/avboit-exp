@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 Buffer<float4> SceneVertices : register(t0);
 Buffer<float4> Camera : register(t15);
+#include "DeviceDepth.hlsli"
 Texture2D<float4> Albedo : register(t16);
 Texture2D<float4> NormalMap : register(t17);
 Texture2D<float4> MetallicRoughness : register(t18);
@@ -28,8 +29,8 @@ VertexOutput sceneVertex(uint id : SV_VertexID)
     o.world = SceneVertices[id * 5].xyz;
     float3 delta = o.world - Camera[0].xyz;
     float3 view = float3(dot(delta, Camera[1].xyz), dot(delta, Camera[2].xyz), dot(delta, Camera[3].xyz));
-    o.position = float4(view.x / (Camera[6].x / Camera[6].y * .57735027), view.y / .57735027,
-                        view.z * 80. / 79.95 - 4. / 79.95, view.z);
+    o.position =
+        float4(view.x / (Camera[6].x / Camera[6].y * .57735027), view.y / .57735027, ClipDepthFromView(view.z), view.z);
     o.depth = view.z;
     o.normal = SceneVertices[id * 5 + 1].xyz;
     o.cutoff = SceneVertices[id * 5 + 1].w;
@@ -44,7 +45,7 @@ float4 ShadowPosition(float3 world)
     float3 forward = -light;
     float3 right = normalize(cross(float3(0, 1, 0), forward)), up = cross(forward, right);
     float3 delta = world - (float3(0, 2, 8) + light * 30.);
-    return float4(dot(delta, right) / 18., dot(delta, up) / 14., dot(delta, forward) / 70., 1);
+    return float4(dot(delta, right) / 18., dot(delta, up) / 14., 1. - dot(delta, forward) / 70., 1);
 }
 VertexOutput shadowVertex(uint id : SV_VertexID)
 {
@@ -81,7 +82,7 @@ float4 scenePixel(VertexOutput i) : SV_Target
     float shadow = 0, bias = max(.00015, .001 * (1. - max(0., dot(n, light))));
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x)
-            shadow += float(shadowPosition.z - bias <=
+            shadow += float(shadowPosition.z + bias >=
                             ShadowDepth.SampleLevel(MaterialSampler, shadowUV + float2(x, y) / 2048., 0)) /
                       9.;
     if (any(shadowUV < 0) || any(shadowUV > 1) || shadowPosition.z < 0 || shadowPosition.z > 1)

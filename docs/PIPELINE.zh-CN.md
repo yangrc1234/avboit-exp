@@ -37,6 +37,11 @@ VFX offset → VFX HDR apply → Display / tone mapping → ImGui
 没有单独存储 q / I / R，也没有 front/back 各三张 RT。
 `--accum-half`、`--composition-half` 保留 RGBA16F 数值对照。
 
+场景、interface 和阴影的 D32 都使用 Reversed-Z：近处为 1、远处/清屏为 0。
+深度测试使用 Greater/GreaterEqual；interface 选择使用严格 Greater，让相同深度保留先写入的表面。
+主相机保留 0.05/80 的有限近平面与远平面；`deviceDepth=A+B/viewZ`，
+其中 `A=-near/(far-near)`、`B=near*far/(far-near)`。AVBOIT 仍按正的 view Z 从近到远积分。
+
 ## AVBOIT
 
 CPU 提交保守 actor bounds 与材质信息。共享 compute 同时标记普通透明、frost 的 XY 区域和
@@ -92,7 +97,7 @@ Gaussian 只过滤背景 B，界面前的烟雾保留在清晰 Front 中。
 ## B′ 与区域跳过
 
 Gaussian 首级固定只接受 interface 覆盖内的源。每个 tap 先 Gather interface depth 的四个双线性邻居，
-任意邻居无 interface（D32 clear=1）就返回零 RGBA，再交给现有对称样本替换。
+任意邻居无 interface（D32 clear=0）就返回零 RGBA，再交给现有对称样本替换。
 不改变公共 B′、光滑折射或后续 mip 的有效性传播；不增加 RT/pass，仅首级多一次 depth Gather/判定。
 后续 mip 的工作域与 halo 保留。这个保守规则同时排除界面外的真实背景，边缘可能延展内部颜色；
 它不区分相邻界面的身份。窄界面或大偏移若使所有样本失效，会沿用现有的未模糊合成回退。
@@ -136,5 +141,5 @@ B 是相对于**采样源像素自己的界面**定义的，不是相对于每�
 
 `avboit/render` 只依赖 NVRHI；宿主提供材质 shader 集、几何 section、参数和 command list。
 资源重建前由宿主等待在途 GPU 工作，pass `Record` 不自行提交或等待。
-使用 forward D32，内部尺寸对齐到四的倍数；反向深度、蒙皮、引擎材质系统需显式接入。
+使用 Reversed-Z D32，内部尺寸对齐到四的倍数；蒙皮、引擎材质系统需显式接入。
 RenderDoc 标记使用统一 RAII 宏，GPU profiler 不侵入算法模块。

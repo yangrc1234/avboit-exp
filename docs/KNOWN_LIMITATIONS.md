@@ -39,8 +39,8 @@ Passing the tests below does not establish physical correctness or paper parity.
   stretch edge colors; it does not reconstruct hidden geometry or distinguish
   adjacent interfaces. Entirely invalid footprints fall back to ordinary OIT.
 - **Sample host ABI.** The camera/vertex buffers are a compact research interface,
-  not a UE material compiler. The implementation uses forward D32 depth. Reverse-Z,
-  instancing, skinning and host material permutations require explicit integration.
+  not a UE material compiler. The implementation uses Reversed-Z D32 depth.
+  Instancing, skinning and host material permutations require explicit integration.
 - **Performance scope.** Local validation uses an RTX 3070. No lower-end GPU or
   separate-machine validation is claimed. Detailed timestamp instrumentation adds
   overhead; prefer frame-only timings for overall comparisons.

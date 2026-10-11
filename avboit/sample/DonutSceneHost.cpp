@@ -20,6 +20,33 @@
 namespace avboit
 {
 using namespace donut;
+namespace
+{
+// Keep Donut's material/lighting pass, with the sample's Reversed-Z shadow ABI.
+class SceneShadingPass : public render::ForwardShadingPass
+{
+  public:
+    using ForwardShadingPass::ForwardShadingPass;
+    void Init(engine::ShaderFactory &factory, const CreateParameters &params) override
+    {
+        ForwardShadingPass::Init(factory, params);
+        m_ShadowSampler = m_Device->createSampler(
+            nvrhi::SamplerDesc().setAllAddressModes(nvrhi::SamplerAddressMode::Border).setBorderColor(0.f));
+    }
+
+  protected:
+    nvrhi::ShaderHandle CreatePixelShader(engine::ShaderFactory &factory, const CreateParameters &,
+                                          bool transmissive) override
+    {
+        const std::vector<engine::ShaderMacro> macros = {{"TRANSMISSIVE_MATERIAL", transmissive ? "1" : "0"}};
+        auto shader =
+            factory.CreateShader("avboit/shaders/SceneForward.hlsl", "main", &macros, nvrhi::ShaderType::Pixel);
+        if (!shader)
+            throw std::runtime_error("Scene shading shader missing");
+        return shader;
+    }
+};
+} // namespace
 struct DonutSceneHost::Impl
 {
     std::shared_ptr<engine::ShaderFactory> shaders;
@@ -63,6 +90,8 @@ void DonutSceneHost::Load(nvrhi::IDevice *device, const std::filesystem::path &s
     auto fs = std::make_shared<vfs::NativeFileSystem>();
     auto shaderFS = std::make_shared<vfs::RootFileSystem>();
     shaderFS->mount("/shaders/donut", frameworkShaders);
+    shaderFS->mount("/shaders/avboit",
+                    frameworkShaders.parent_path().parent_path() / "avboit" / frameworkShaders.filename());
     state->shaders = std::make_shared<engine::ShaderFactory>(device, shaderFS, "/shaders");
     state->common = std::make_shared<engine::CommonRenderPasses>(device, state->shaders);
     state->textures = std::make_shared<engine::TextureCache>(device, fs, nullptr);
@@ -95,18 +124,38 @@ void DonutSceneHost::Load(nvrhi::IDevice *device, const std::filesystem::path &s
                 state->geometryOrder.emplace(geometry.get(), unsigned(state->geometryOrder.size()));
         }
     }
-    state->forward = std::make_unique<render::ForwardShadingPass>(device, state->common);
+    state->forward = std::make_unique<SceneShadingPass>(device, state->common);
     state->forward->Init(*state->shaders, render::ForwardShadingPass::CreateParameters());
-    state->shadow = std::make_shared<render::PlanarShadowMap>(device, 2048, nvrhi::Format::D32);
+    auto shadowTexture = device->createTexture(nvrhi::TextureDesc()
+                                                   .setWidth(2048)
+                                                   .setHeight(2048)
+                                                   .setFormat(nvrhi::Format::D32)
+                                                   .setDimension(nvrhi::TextureDimension::Texture2DArray)
+                                                   .setIsTypeless(true)
+                                                   .setIsRenderTarget(true)
+                                                   .setClearValue(nvrhi::Color(0))
+                                                   .setUseClearValue(true)
+                                                   .setInitialState(nvrhi::ResourceStates::ShaderResource)
+                                                   .setKeepInitialState(true)
+                                                   .setDebugName("Scene shadow depth"));
+    state->shadow =
+        std::make_shared<render::PlanarShadowMap>(device, shadowTexture, 0, nvrhi::Viewport(2048.f, 2048.f));
     state->shadow->SetupWholeSceneDirectionalLightView(*sun, root->GetGlobalBoundingBox());
+    auto shadowView = state->shadow->GetPlanarView();
+    auto shadowProjection = shadowView->GetProjectionMatrix(false);
+    // Preserve Donut's fitted light bounds while mapping near to 1 and far to 0.
+    for (unsigned row = 0; row < 4; ++row)
+        shadowProjection[row][2] = shadowProjection[row][3] - shadowProjection[row][2];
+    shadowView->SetMatrices(shadowView->GetViewMatrix(), shadowProjection);
+    shadowView->UpdateCache();
     state->shadow->SetLitOutOfBounds(true);
     sun->shadowMap = state->shadow;
     state->shadowFramebuffer =
         device->createFramebuffer(nvrhi::FramebufferDesc().setDepthAttachment(state->shadow->GetTexture()));
     state->shadowPass = std::make_unique<render::DepthPass>(device, state->common);
     render::DepthPass::CreateParameters shadowParams;
-    shadowParams.depthBias = 100;
-    shadowParams.slopeScaledDepthBias = 2.f;
+    shadowParams.depthBias = -100;
+    shadowParams.slopeScaledDepthBias = -2.f;
     state->shadowPass->Init(*state->shaders, shadowParams);
     m_impl = std::move(state);
     log::info("Donut scene resources loaded (retained across transparency quality changes)");
@@ -122,8 +171,9 @@ void DonutSceneHost::Record(nvrhi::ICommandList *commands, nvrhi::IFramebuffer *
         right, up, forward, math::float3(-math::dot(eye, right), -math::dot(eye, up), -math::dot(eye, forward)));
     const auto &info = target->getFramebufferInfo();
     state.view.SetViewport(info.getViewport());
-    state.view.SetMatrices(worldToView,
-                           math::perspProjD3DStyle(math::radians(60.f), float(info.width) / info.height, .05f, 80.f));
+    const float yScale = 1.f / .57735027f, xScale = yScale * info.height / info.width;
+    state.view.SetMatrices(
+        worldToView, math::float4x4(xScale, 0, 0, 0, 0, yScale, 0, 0, 0, 0, camera[5][0], 1, 0, 0, camera[5][1], 0));
     state.view.UpdateCache();
     state.scene->Refresh(commands, ++state.frame);
     render::ForwardShadingPass::Context context;
@@ -138,7 +188,7 @@ void DonutSceneHost::RecordShadow(nvrhi::ICommandList *commands, bool forceRedra
     auto &state = *m_impl;
     if (!state.shadowDirty && !forceRedraw)
         return;
-    commands->clearDepthStencilTexture(state.shadow->GetTexture(), nvrhi::AllSubresources, true, 1.f, false, 0);
+    commands->clearDepthStencilTexture(state.shadow->GetTexture(), nvrhi::AllSubresources, true, 0.f, false, 0);
     auto view = state.shadow->GetPlanarView();
     state.SelectDraws(*view);
     render::DepthPass::Context context;

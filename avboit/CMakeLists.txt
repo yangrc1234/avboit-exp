@@ -2,6 +2,7 @@ include(../donut/compileshaders.cmake)
 donut_compile_shaders_all_platforms(TARGET avboit_shaders PROJECT_NAME AVBOIT
     CONFIG ${CMAKE_CURRENT_SOURCE_DIR}/shaders.cfg FOLDER AVBOIT
     SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/shaders/AdaptiveDepth.hlsl
+    INCLUDES ${CMAKE_SOURCE_DIR}/donut/shaders
     SHADERMAKE_OPTIONS_DXIL --embedPDB
     OUTPUT_BASE ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/shaders/avboit)
 
