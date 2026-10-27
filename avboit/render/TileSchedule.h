@@ -5,9 +5,9 @@
 
 namespace avboit
 {
-// Disjoint per-mip uint masks, one word per 4x4 output group. Odd stage indices
-// and a reserved header word retain the diagnostic capture ABI. Even stages
-// and B (stage 10) have no mask storage; B reuses ScreenTiles transparency bit 4.
+// Only stage 1 has a uint mask (one word per 4x4 base output group).
+// Later mips run full-screen. Stage dimensions/reserved headers retain the
+// diagnostic capture ABI; B reuses ScreenTiles transparency bit 4.
 struct TileSchedule
 {
     static constexpr unsigned Stages = 11, GroupSize = 4, SourceGroupSize = 8, RequestSize = 64;
@@ -31,7 +31,7 @@ struct TileSchedule
             }
             s.offset[stage] = s.entries;
             unsigned block = stage == 10 ? SourceGroupSize : GroupSize;
-            if (stage < 10 && (stage & 1))
+            if (stage == 1)
                 s.capacity[stage] = ((s.width[stage] + block - 1) / block) * ((s.height[stage] + block - 1) / block);
             s.entries += 1 + s.capacity[stage];
         }

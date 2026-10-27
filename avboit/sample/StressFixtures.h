@@ -21,7 +21,7 @@ struct StressFixture
     std::vector<StressQuad> opaque, transparent;
     bool sphere = false;
 };
-constexpr unsigned StressPresetCount = 17;
+constexpr unsigned StressPresetCount = 19;
 const char *StressPresetName(unsigned preset);
 StressFixture BuildStressFixture(unsigned preset);
 // View-space prototype receiver: opaque frame and three optical skin panels.

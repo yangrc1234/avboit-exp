@@ -23,6 +23,8 @@ int main()
         auto defaults = Parse({});
         Require(defaults.cubic && defaults.frost && defaults.showSmoke && !defaults.headless);
         Require(defaults.frostMipCount == 3 && defaults.sparseBlur);
+        Require(!defaults.cubicTrilinear && Parse({"--cubic-trilinear"}).cubicTrilinear);
+        Require(defaults.slopeSplat && !Parse({"--no-slope-splat"}).slopeSplat);
         Require(defaults.volumeScale == 8 && Parse({"--camera-preset", "6"}).cameraPreset == 6);
         Require(defaults.occupancyOverlay == 0);
         Require(Parse({"--occupancy-overlay", "7", "--occupancy-slice", "127"}).occupancySlice == 127);
@@ -92,9 +94,11 @@ int main()
                                                                 {"--sphere-ior", "0.9"},
                                                                 {"--refraction-gain", "5"},
                                                                 {"--stress", "-1"},
-                                                                {"--stress", "17"},
+                                                                {"--stress", "19"},
+                                                                {"--frost-detail-radius", "65"},
+                                                                {"--frost-detail-radius", "-1"},
                                                                 {"--stress", "1.5"},
-                                                                {"--camera-preset", "7"},
+                                                                {"--camera-preset", "10"},
                                                                 {"--volume-scale", "4"},
                                                                 {"--occupancy-overlay", "8"},
                                                                 {"--occupancy-slice", "128"},
@@ -127,6 +131,10 @@ int main()
         Require(defaults.zeroDepth && defaults.mirrorBlur && !Parse({"--no-zero-depth"}).zeroDepth &&
                 !Parse({"--no-mirror-blur"}).mirrorBlur);
         Require(Parse({"--stress", "16"}).stressPreset == 16);
+        Require(Parse({"--stress", "17", "--camera-preset", "9"}).cameraPreset == 9);
+        Require(Parse({"--stress", "18", "--frost-detail-radius", "64"}).frostDetailRadius == 64);
+        Require(defaults.frostNormalTiling == 1 && Parse({"--frost-normal-tiling", ".25"}).frostNormalTiling == .25f &&
+                Parse({"--frost-normal-tiling", "64"}).frostNormalTiling == 64);
         Require(defaults.fullVfx && !defaults.halfComposition && !defaults.allInterface);
         Require(Parse({"--vfx-full"}).fullVfx && !Parse({"--vfx-half"}).fullVfx &&
                 Parse({"--composition-half"}).halfComposition && Parse({"--all-interface"}).allInterface);

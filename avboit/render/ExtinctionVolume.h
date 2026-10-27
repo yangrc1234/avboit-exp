@@ -17,7 +17,7 @@ struct ExtinctionInputs
     unsigned width = 160, height = 96, objectCount = 0;
     unsigned screenWidth = 640, screenHeight = 384, depthBudget = 128;
     nvrhi::BufferHandle vertices, indices, bounds, camera, materials;
-    nvrhi::BufferHandle frostFootprints, frostWorkMask, frostRectangles;
+    nvrhi::BufferHandle frostWorkMask, frostRectangles;
     nvrhi::BufferRange vertexRange;
     nvrhi::TextureHandle opaqueColorDepth;
     nvrhi::TextureHandle opaqueHardwareDepth;

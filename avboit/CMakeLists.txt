@@ -26,6 +26,14 @@ target_sources(avboit_viewer PRIVATE debug/StablePowerState.cpp)
 target_link_libraries(avboit_viewer advapi32)
 add_dependencies(avboit_viewer avboit_shaders)
 
+# Keep the bundled CC0 normal beside the runtime, independent of the working directory.
+add_custom_target(avboit_textures
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/textures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/textures/frost-normal.dds"
+        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/textures/frost-normal.dds")
+add_dependencies(avboit_viewer avboit_textures)
+
 
 target_include_directories(avboit_viewer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -39,6 +47,12 @@ if(BUILD_TESTING)
     target_link_libraries(avboit_gpu_test donut_app donut_engine)
     add_dependencies(avboit_gpu_test avboit_test_shaders)
     add_test(NAME adaptive_depth_gpu COMMAND avboit_gpu_test -dx12)
+    add_executable(avboit_mrt_test tests/MrtOutputTest.cpp debug/StablePowerState.cpp)
+    target_include_directories(avboit_mrt_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(avboit_mrt_test donut_app donut_engine d3d12 advapi32)
+    add_dependencies(avboit_mrt_test avboit_test_shaders)
+    add_test(NAME mrt_output_gpu COMMAND avboit_mrt_test)
+    add_test(NAME mrt_write_mask_gpu COMMAND avboit_mrt_test --shader-work)
     add_test(NAME native_raster_smoke COMMAND avboit_viewer --headless)
 
     if(EXISTS "${CMAKE_SOURCE_DIR}/assets/gltf-sample-assets/Models/Sponza/glTF/Sponza.gltf")
@@ -52,6 +66,7 @@ if(BUILD_TESTING)
     add_test(NAME native_crossing_surfaces COMMAND avboit_viewer --headless --stress 4 --time 2)
     add_test(NAME native_perforated_interface COMMAND avboit_viewer --headless --stress 10 --emissive-balls)
     add_test(NAME native_frost_interface_edge COMMAND avboit_viewer --headless --stress 16)
+    add_test(NAME native_orthogonal_glass COMMAND avboit_viewer --headless --stress 17 --camera-preset 8)
     add_test(NAME native_normal_refraction COMMAND avboit_viewer --headless --glass-sphere --normal-sphere --sphere-roughness 0.6 --refraction-gain 4)
     add_executable(avboit_options_test tests/ViewerOptionsTest.cpp sample/ViewerOptions.cpp)
     add_test(NAME viewer_options COMMAND avboit_options_test)
@@ -102,7 +117,7 @@ if(BUILD_TESTING)
     add_test(NAME native_zero_depth_rgb COMMAND avboit_viewer --headless --stress 13)
     add_test(NAME native_zero_depth_smoke COMMAND avboit_viewer --headless --stress 14 --time 0.7)
 
-    foreach(target avboit_gpu_test avboit_options_test avboit_material_test avboit_order_test avboit_interface_test avboit_camera_test)
+    foreach(target avboit_gpu_test avboit_mrt_test avboit_options_test avboit_material_test avboit_order_test avboit_interface_test avboit_camera_test)
         set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests/bin")
         foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
             set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_BINARY_DIR}/tests/bin")

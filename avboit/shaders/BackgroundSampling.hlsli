@@ -4,9 +4,9 @@
 Texture2D<float4> CachedBackground : register(t27);
 Texture2D<uint> BackgroundTiles : register(t30);
 
-// Occupancy encloses geometry plus one pixel. Cached tiles have another
-// one-pixel write border. Thus one center-tile test suffices for bilinear:
-// inside, every cache texel exists; outside, every texel equals opaque.
+// B is cleared to zero premultiplied color/validity every frame. Inside a cached
+// center tile, bilinear taps may include invalid zero texels across its edge.
+// Outside a cached center tile, use opaque. No pixel border is generated.
 // Callers supply Opaque, Camera and LinearClamp. Only mip 0 is sampled here.
 float4 SampleBackgroundCache(float2 uv)
 {

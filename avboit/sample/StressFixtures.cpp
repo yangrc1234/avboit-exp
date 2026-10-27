@@ -23,7 +23,9 @@ const char *StressPresetName(unsigned preset)
                                   "RGB nonzero channel survives",
                                   "Moving dense smoke before frost",
                                   "Separated frost / refraction tiles",
-                                  "Frost edge / uncovered foreground"};
+                                  "Frost edge / uncovered foreground",
+                                  "90-degree crossing glass / LUT self-shadow",
+                                  "Textured frost / smooth left, detail right"};
     return names[preset < StressPresetCount ? preset : 0];
 }
 StressFixture BuildStressFixture(unsigned preset)
@@ -183,6 +185,30 @@ StressFixture BuildStressFixture(unsigned preset)
         // Its left edge projects just outside the pane's right silhouette at
         // the default camera. No interface depth exists over this HDR source.
         result.opaque.push_back({{.625f, 0, 2}, {.12f, 0, 0}, {0, .36f, 0}, {24, .01f, .01f, 1}, {0, 0, 0}, 0});
+    }
+    else if (preset == 17)
+    {
+        // Two separate actors/materials. Their horizontal tangents are orthogonal;
+        // constant source radiance and roughness expose LUT artifacts, not shading.
+        auto &a = pane({0, 0, 4.5f}, {1.5f, 0, 1.5f}, {0, 1.15f, 0}, {.2f, .75f, .9f}, .55f);
+        a.color = {.15f, .85f, .95f, 1};
+        auto &b = pane({0, 0, 4.5f}, {1.5f, 0, -1.5f}, {0, 1.15f, 0}, {.9f, .45f, .15f}, .55f);
+        b.color = {.95f, .25f, .1f, 1};
+        // In front of the default calibration wall/emitter, behind both panes.
+        result.opaque.push_back({{0, 0, 6.8f}, {20, 0, 0}, {0, 20, 0}, {.12f, .12f, .12f, 1}, {0, 0, 0}, 0});
+    }
+    else if (preset == 18)
+    {
+        // Equal roughness/tint and symmetric emitters isolate material distortion.
+        // Negative shape keeps sigma uniform instead of using the stripe fixture.
+        for (int side : {-1, 1})
+        {
+            auto &glass = pane({side * .9f, 0, 3.8f}, {.86f, 0, 0}, {0, 1.15f, 0}, {.78f, .86f, .87f}, .32f,
+                               side > 0 ? 32.f : 0.f);
+            glass.color = {.012f, .018f, .018f, 1};
+        }
+        result.opaque.push_back({{0, 0, 7}, {4, 0, 0}, {0, 3, 0}, {.055f, .075f, .08f, 1}, {0, 0, 0}, 0});
+        result.opaque.push_back({{0, 0, 3.75f}, {.025f, 0, 0}, {0, 1.2f, 0}, {.015f, .018f, .018f, 1}, {0, 0, 0}, 0});
     }
     else if (preset == 10)
     {

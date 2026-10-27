@@ -11,7 +11,7 @@ Bounds occupancy + frost masks → Adaptive Z → Physical occupancy
 Extinction clear → Atomic splat → T-LUT integration
 Zero-T indirect depth draw（直接写主 SceneDepth）
 4RT OIT accumulation
-B′ resolve → Gaussian mip chain
+B′ resolve（应用玻璃折射）→ Gaussian mip chain
 Main composition → Tile copy 回 SceneColor
 VFX offset → VFX HDR apply → Display / tone mapping → ImGui
 ```
@@ -28,7 +28,7 @@ VFX offset → VFX HDR apply → Display / tone mapping → ImGui
 | FirstZeroSlice | R32_UINT，extinction XY 大小 | 第一个 RGB 全零 slice，供 Zero-T depth VS 查询 |
 | Zero-T candidates / draw args | uint 列表 + 16 字节参数 | integration 输出候选 16×16 tile，驱动一次 indirect draw |
 | N / A / totalTau / BackN | 四张全分辨率 R11G11B10 | OIT 总贡献、权重、光学厚度、界面后方的 numerator |
-| B′ | RGBA16F | 透明 tile 内完整背景颜色 + 有效性；未覆盖域不读取 |
+| B′ | RGBA16F | 透明 tile 内已折射的背景颜色 + 有效性；未覆盖域不读取 |
 | Gaussian | RGBA16F mip chain | 预乘有效性的过滤结果 |
 | TemporaryColor | 与 SceneColor 同格式 | 主合成临时输出，随后 tile 拷回 SceneColor |
 | VFXOffset | 全分辨率 RG16F | 多个 VFX 的加法偏移 |
@@ -87,31 +87,48 @@ I      = N*k + Opaque*totalT
 q      = max(totalT, saturate(T_LUT(interfaceDepth)*interfaceT))
 B      = (BackN*k + Opaque*totalT) / max(q, epsilon)
 Front  = (N-BackN)*k
-Result = Front + q*Filter(B)
+D      = InterfaceOffset(p)
+detail = sigma > 0 ? clampLength(D, detailRadius) : 0
+Bd(p)  = SampleResolvedBackground(p + D - detail)
+Result(p) = Front(p) + q(p)*Filter(Bd)(p + detail)
 ```
 
 RGB 逐通道运算。直接累加 BackN 避免用大数相减恢复很小的背景贡献。
 q 的全分辨率 totalT 下界避免低分辨率 LUT 估计使背景除法异常放大；q 在寄存器中重算。
-Gaussian 只过滤背景 B，界面前的烟雾保留在清晰 Front 中。
+Gaussian 只过滤已折射的背景 Bd，界面前的烟雾保留在目标像素的清晰 Front 中。
+源位置的 B 使用源位置自己的 q，最后乘回的 q 则属于目标像素，不能混用。
 
 ## B′ 与区域跳过
 
+B′ 是 RGBA16F RenderTarget，未启用 UAV。每帧生成前通过 `ClearRenderTargetView`
+清为零 RGBA，并在资源创建时声明相同的 optimized clear value；未写区域的有效性因此为零。
+调试 poison 模式先填垃圾再执行相同的零清理，验证旧内容不会进入本帧。B 和 occupancy 均不加 1px border。
+
 Gaussian 首级固定只接受 interface 覆盖内的源。每个 tap 先 Gather interface depth 的四个双线性邻居，
 任意邻居无 interface（D32 clear=0）就返回零 RGBA，再交给现有对称样本替换。
-不改变公共 B′、光滑折射或后续 mip 的有效性传播；不增加 RT/pass，仅首级多一次 depth Gather/判定。
-后续 mip 的工作域与 halo 保留。这个保守规则同时排除界面外的真实背景，边缘可能延展内部颜色；
+玻璃折射的前置部分在 B′ 生产时完成；对于带 frost 的目标，偏移位置最近的源 texel 必须有 interface 且未被
+SceneDepth 遮挡，否则返回零 RGBA。光滑折射仍允许前景采样。
+后续 mip 保持预乘有效性，不增加 RT/pass。
+这个保守规则同时排除界面外的真实背景，边缘可能延展内部颜色；
 它不区分相邻界面的身份。窄界面或大偏移若使所有样本失效，会沿用现有的未模糊合成回退。
 Test case 16 放置玻璃边缘外的 HDR 前景，用于检查边缘污染。
 
-64×64 的 **普通透明 occupancy tile** 加一像素边界内生成完整 B′，边界用于双线性采样。
-其他位置没有透明贡献，采样器直接读 Opaque。B′ 的生产域不由 frost 或折射半径决定，
+64×64 的 **普通透明 occupancy tile** 内生成完整 B′，不加像素边界。双线性采到未写区域时，零 RGB/有效性参与过滤。
+B′ 在目标像素写入已折射背景：直接读取偏移位置的全屏 Opaque、accumulation、LUT/interface，
+先硬件双线性过滤连续 RT 输入，再 resolve 一次。不会读取另一位置的 B′，也不需要源位置预先生产 B′。
+无偏移时使用精确 texel load；源位置没有透明贡献时直接读 Opaque。
+B′ 的生产域不由 frost 或折射半径决定，
 因此不用为了 B′ 调度限制效果半径。
 
 主合成不能一边采样原 SceneColor，一边原位写它：先用 tile VS 绘制到 TemporaryColor，
-再用相同 tile 拷回 SceneColor。无效 tile 在 VS 折叠。Gaussian 使用另一个每 mip 工作 mask：
-根据每块 frost 的投影、位移和重建 footprint 反向推导核依赖并保守扩张，多个请求原子合并。
-**目前是固定 compute 网格 + 每 group 一致 early return，不是 compact list / indirect dispatch。**
-调试矩形只是包络，不代表每个矩形内像素都执行 blur。
+再用相同 tile 拷回 SceneColor。无效 tile 在 VS 折叠。
+
+Gaussian 只保留首级 4×4 输出 group 的 work mask，直接由 frost actor 投影 bounds 标记；
+不按 kernel、重建采样或 detail offset 外扩。重叠请求通过原子 OR 合并。
+首级 UAV mip 每帧清为零 RGBA，未过滤 group 保持零有效性；后续活跃 mip 全屏生成，不再分配或读取逐级 mask。
+**首级是固定 compute 网格 + 每 group 一致 early return，不是 compact list / indirect dispatch。**
+调试矩形只是首级 mask 的包络，不代表每个矩形内像素都执行 blur。
+这是允许边缘近似的简化：靠近界面边缘的过滤支撑可能减少，不再保证与全屏首级生成逐像素一致。
 
 ## Gaussian 与重建
 
@@ -130,7 +147,26 @@ fractional LOD 混合两个级别。
 
 ## Distortion
 
-玻璃 offset 由 interface prepass 输出，合成时偏移 B/Gaussian 的采样坐标。
+玻璃 offset 仍由 interface prepass 写入同一张 RG16F。带 frost 的界面将它拆成两部分：
+`detail = D * min(1, r / max(length(D), epsilon))`，B′ resolve 使用 `D-detail`，
+主合成使用 `detail` 偏移 Gaussian 采样。Front、RGB q 和 sigma 始终取原像素；光滑玻璃仍全部在 B′ 阶段处理。
+`r` 默认是 1440p 下 24 像素，随渲染高度缩放；ImGui 的 `Post-blur offset (1440p px)` 或
+`--frost-detail-radius 0..64` 可实时调节。0 表示全部前置，同一个实现自然退化，不保留独立 shader 变体。
+该参数不截断总偏移。最终合成增加一次现有 offset 读取；没有新增 RT/pass 或 Gaussian 采样次数。
+detail radius 不再扩大 Gaussian 调度区域；最终读取继续按过滤后的有效性归一化，全无效时回退普通 OIT。
+
+这只是同一向量的幅度分配，不是严格的频率分解。恒定偏移可相加还原；空间变化偏移的两次 warp 不可交换，
+在曲面或界面边缘仍是近似。Test case 18 并排放置无偏移磨砂和带法线贴图偏移的磨砂，后面有相同亮球。
+Interface 材质 shader 采样 [CC0 法线贴图](../assets/textures/README.md)，线性解码 XY 并写入已有 offset。
+贴图为 512×512 RG8，含完整 mip；Wrap + SampleGrad 在远处过滤细节。它作为艺术化屏幕偏移，未做完整切线空间折射。
+`Frost normal tiling` / `--frost-normal-tiling .25..64` 控制整张贴图在玻璃上的重复次数，默认 1，实时修改不重建资源。
+未加入 sigma 噪声或表面明暗噪声，便于单独观察后置折射。
+
+偏移位置的 N/A/totalTau/BackN、Opaque 和 interface RGB T 使用硬件双线性采样，再 resolve 一次。
+深度、界面归属与有效性判定取最近源 texel；目标 Front/q 不变。
+这不是完全等价的过滤，尤其 `exp(-filter(tau))` 和 `filter(exp(-tau))` 不同，跨界面或无效源边界还会
+混合不同含义的数据。若实际 deferred 管线允许 Zero-T 后的 opaque 邻居未初始化，这个近似还要求
+保证双线性 footprint 内颜色可读；只验证中心像素为非零透射率不够。
 VFX 是独立材质 pass，写全分辨率 RG16F 加法 offset；用 T-LUT 衰减，忽略最近特殊界面后的 VFX。
 VFX apply 在透明合成后运行，所以近处 VFX 可以扭曲已经完成的 frost 结果。
 

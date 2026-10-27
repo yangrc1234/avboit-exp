@@ -13,14 +13,18 @@ struct ViewerOptions
 {
     bool help = false, headless = false, uiCapture = false, uiSelfTest = false;
     bool cubic = true, frost = true, sparseBlur = true, fullBlur = false;
+    bool cubicTrilinear = false;
     bool sponza = false, emissiveBalls = false, emissiveFront = false, showSmoke = true, glassSphere = false,
          rgbGlass = false;
     bool vfx = false, behind = false, normalSphere = false;
     bool denseExtinction = false, poisonExtinction = false, detailedProfiling = true;
+    bool slopeSplat = true;
     bool followWindow = false;
     bool redrawShadows = false, hardwareDepth = false, donutScene = false, legacyScene = false;
     float sphereRoughness = 0, planarIor = 1.3f, sphereIor = 1.5f, refractionStrength = 1;
     float fixtureTime = 0, sigmaLimit = 24;
+    float frostDetailRadius = 24;
+    float frostNormalTiling = 1;
     unsigned cameraPreset = 0, stressPreset = 0, benchmarkFrames = 0;
     unsigned volumeScale = 8, depthBudget = 128, fpsLimit = 120;
     unsigned occupancyOverlay = 0, occupancySlice = 0;

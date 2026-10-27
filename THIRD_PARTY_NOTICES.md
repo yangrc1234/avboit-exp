@@ -49,6 +49,14 @@ reference is not a new grant from this repository's maintainer.
 All bundled scene fixtures are generated procedurally from the MIT source. No
 external weapon model is distributed.
 
+## Bundled frost normal
+
+`assets/textures/frost-normal.dds` is derived from ambientCG / Lennart Demes's
+[Plaster 001](https://ambientcg.com/view?id=Plaster001) NormalDX map, released under
+[CC0 1.0](https://docs.ambientcg.com/license/). The texture retains its CC0 status.
+See [conversion and provenance](assets/textures/README.md). Runtime packages carry
+the same map at `bin/textures/frost-normal.dds`.
+
 ## Research references
 
 - Michal Drobot, [Adaptive Voxel-Based Order-Independent Transparency, SIGGRAPH 2025](https://advances.realtimerendering.com/s2025/content/AVBOIT_SIG2025_MDROBOT-final.pdf).

@@ -2,7 +2,6 @@
 // Called from bounds occupancy, once per actor. Mark producer masks directly;
 // no rescan, compaction, counters, indirect arguments or preparation dispatch.
 Buffer<float4> Camera : register(t15);
-Buffer<float4> FrostFootprints : register(t16);
 RWBuffer<uint> FrostWorkMask : register(u2);
 RWBuffer<uint> FrostRectangles : register(u5); // diagnostic envelopes only
 #include "TileSchedule.hlsli"
@@ -32,17 +31,13 @@ void MarkGaussian(uint level, int4 rect, uint lane)
         InterlockedOr(FrostWorkMask[base + 1 + tile.y * pitch + tile.x], 1u);
     }
 }
-void ScheduleFrost(int4 target, uint flags, float displacement, uint lane)
+void ScheduleFrost(int4 target, uint flags, uint lane)
 {
     if ((flags & 2u) == 0)
         return;
     float2 size = Camera[6].xy;
-    uint top = min(flags >> 3, uint(Camera[8].z) - 1);
-    for (uint level = 0; level <= top; ++level)
-    {
-        float2 halo = displacement + FrostFootprints[top * 5 + level].xy;
-        float2 mipSize = TileStageSize(level * 2 + 1);
-        MarkGaussian(level, int4(floor((target.xy - halo) * mipSize / size), ceil((target.zw + halo) * mipSize / size)),
-                     lane);
-    }
+    // No kernel/detail padding: unfiltered base pixels are explicitly zero.
+    // All subsequent levels run over the complete mip and propagate validity.
+    float2 mipSize = TileStageSize(1);
+    MarkGaussian(0, int4(floor(target.xy * mipSize / size), ceil(target.zw * mipSize / size)), lane);
 }

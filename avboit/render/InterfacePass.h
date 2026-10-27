@@ -14,6 +14,8 @@ struct InterfaceInputs
     nvrhi::BufferRange vertexRange;
     nvrhi::TextureHandle opaqueColorDepth;
     nvrhi::TextureHandle opaqueHardwareDepth;
+    nvrhi::TextureHandle frostNormal;
+    nvrhi::SamplerHandle frostSampler;
     std::vector<MaterialShaders> materialShaders;
 };
 

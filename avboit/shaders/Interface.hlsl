@@ -2,6 +2,7 @@
 #include "TransparencyCommon.hlsli"
 Texture2D<float4> Opaque : register(t3);
 #include "OpaqueDepth.hlsli"
+#include "FrostMaterial.hlsli"
 float2 SolidSphereOffset(Varyings i, float2 uv)
 {
     const float ior = i.optics.x;
@@ -50,6 +51,8 @@ struct InterfaceOutput
 };
 InterfaceOutput interfacePixel(Varyings i)
 {
+    // Evaluate derivatives before coverage/visibility can diverge within a quad.
+    float2 localDx = ddx(i.local), localDy = ddy(i.local);
     if (i.kind == 2 && i.sphere.w > 0)
         clip(length(i.local) - i.sphere.w);
     if ((i.kind != 2 && i.kind != 4) || ((i.roughness <= 0 || Camera[1].w == 0) && i.distortion == 0))
@@ -81,7 +84,9 @@ InterfaceOutput interfacePixel(Varyings i)
                                   : SolidSphereOffset(i, i.position.xy / float2(WIDTH, HEIGHT));
     }
     else
-        o.offset = float2(sin(i.local.y * 3.), cos(i.local.x * 3.)) * i.distortion;
+        o.offset = (i.roughness > 0 ? FrostMaterialOffset(i.local, localDx, localDy)
+                                    : float2(sin(i.local.y * 3.), cos(i.local.x * 3.))) *
+                   i.distortion;
     // A larger offset reaches the same clamped screen edge. This preserves
     // the sampled UV while keeping the RG16F value finite (no radius cap).
     o.offset = clamp(o.offset, -float2(WIDTH, HEIGHT), float2(WIDTH, HEIGHT));

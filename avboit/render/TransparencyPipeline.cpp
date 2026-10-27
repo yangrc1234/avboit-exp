@@ -13,7 +13,6 @@ void TransparencyPipeline::Create(nvrhi::IDevice *device, const TransparencyInpu
     { return shaders(entry, type, file); };
     ExtinctionInputs volumeInputs;
     m_gaussian.AllocateSchedule(device, inputs.width, inputs.height, inputs.frostMipCount);
-    volumeInputs.frostFootprints = m_gaussian.Footprints();
     volumeInputs.frostWorkMask = m_gaussian.WorkMask();
     volumeInputs.frostRectangles = m_gaussian.Rectangles();
     volumeInputs.depthBudget = inputs.depthBudget;
@@ -54,6 +53,8 @@ void TransparencyPipeline::Create(nvrhi::IDevice *device, const TransparencyInpu
     interfaceInputs.materials = inputs.materials;
     interfaceInputs.opaqueColorDepth = inputs.opaqueColorDepth;
     interfaceInputs.materialShaders = inputs.materialShaders;
+    interfaceInputs.frostNormal = inputs.frostNormal;
+    interfaceInputs.frostSampler = inputs.frostSampler;
     m_interface.Create(device, interfaceInputs);
     ZeroTransmittanceInputs zero;
     zero.opaqueDepth = inputs.opaqueHardwareDepth;
@@ -81,6 +82,7 @@ void TransparencyPipeline::Create(nvrhi::IDevice *device, const TransparencyInpu
     oitInputs.linear = inputs.linear;
     oitInputs.interfaceDepth = m_interface.HardwareDepth();
     oitInputs.interfaceSurface = m_interface.TransmissionSigma();
+    oitInputs.interfaceOffset = m_interface.Offset();
     oitInputs.materialShaders = inputs.materialShaders;
     oitInputs.backgroundVertex = load("backgroundVertex", nvrhi::ShaderType::Vertex, "shaders/ResolveTiles.hlsl");
     oitInputs.backgroundPixel = load("backgroundPixel", nvrhi::ShaderType::Pixel, "shaders/OitResolve.hlsl");
@@ -166,7 +168,7 @@ void TransparencyPipeline::Record(nvrhi::ICommandList *commands, const Transpare
     pass(Stage::Bounds, "Bounds occupancy / frost masks",
          [&]
          {
-             m_gaussian.ResetSchedule(commands, frame.cubic);
+             m_gaussian.ResetSchedule(commands, frame.lastBlurMip);
              m_volume.RecordBounds(commands);
          });
     pass(Stage::AdaptiveZ, "Adaptive Z", [&] { m_volume.RecordAdaptiveDepth(commands); });
@@ -181,7 +183,7 @@ void TransparencyPipeline::Record(nvrhi::ICommandList *commands, const Transpare
          [&] { m_zero.RecordDepth(commands, frame.zeroDepth); });
     pass(Stage::Accumulation, "OIT accumulation (4 MRT)",
          [&] { m_resolve.RecordAccumulation(commands, frame.geometryDraws); });
-    pass(Stage::Resolve, "B prime / transparency tiles with 1px border",
+    pass(Stage::Resolve, "Refracted B prime / transparency tiles",
          [&] { m_resolve.RecordResolve(commands, frame.poisonResolve); });
     m_gaussian.RecordBlur(commands, frame.lastBlurMip, frame.poisonResolve, route(Stage::BlurBase), route(Stage::Blur));
     pass(Stage::Composition, "Resolve temporary color / tile copy back",

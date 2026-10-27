@@ -14,6 +14,20 @@ RWBuffer<uint> ZeroDrawArgs : register(u5); // DrawInstanced: vertices, instance
 #include "DepthMapping.hlsli"
 void splatPixel(Varyings i)
 {
+    // Evaluate derivatives before opacity/opaque rejection. One raster pixel is
+    // one LUT XY texel; its bilinear support reaches up to one texel per axis.
+    // Device depth is affine on a projected triangle, unlike view/log/warped Z.
+    float depthSpan = abs(ddx(i.position.z)) + abs(ddy(i.position.z));
+    float logDepth = NormalizedLogDepth(i.depth, 80., 1.);
+    if (Camera[9].x != 0)
+    {
+        // Clamp before reciprocal reconstruction to stay inside the far plane.
+        float pushedDepth = ViewDepthFromDevice(max(i.position.z - depthSpan, 0.));
+        float pushedLogDepth = NormalizedLogDepth(pushedDepth, 80., 1.);
+        // Bounds occupancy reserves the SAME limit before adaptive compression.
+        // No actor-specific shader input or post-warp slice offset is needed.
+        logDepth += clamp(pushedLogDepth - logDepth, 0., MaxSlopeSplatPush);
+    }
     uint2 pixel = uint2(i.position.xy);
     float2 uv = (float2(pixel) + .5) / float2(VOLUME_WIDTH, VOLUME_HEIGHT);
     if (i.depth >= LoadOpaqueViewDepth(uint2(uv * float2(WIDTH, HEIGHT))))
@@ -21,7 +35,7 @@ void splatPixel(Varyings i)
     float3 opacity = Opacity(i);
     if (all(opacity < .00001))
         discard;
-    float mapped = MapAdaptiveDepth(DepthWarp, i.depth, 80., 1., 0.);
+    float mapped = MapAdaptiveLogDepth(DepthWarp, logDepth, 0.);
     SplatExtinction(pixel.y * VOLUME_WIDTH + pixel.x, mapped, TransmittanceToOpticalDepth(1. - opacity),
                     i.scalarExtinction != 0);
 }

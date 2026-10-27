@@ -9,14 +9,20 @@ from capture_utils import texture, work_domain
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
-    "--viewer", type=Path, default=Path(__file__).resolve().parents[2] / "bin/avboit_viewer.exe"
+    "--viewer",
+    type=Path,
+    default=Path(__file__).resolve().parents[2] / "bin/avboit_viewer.exe",
 )
 args = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix="avboit-background-") as directory:
     directory = Path(directory)
     results = []
     reference_lut = None
-    for options in ([], ["--protect-background", "--background-threshold", "1"], ["--no-q-bound"]):
+    for options in (
+        [],
+        ["--protect-background", "--background-threshold", "1"],
+        ["--no-q-bound"],
+    ):
         run = subprocess.run(
             [
                 str(args.viewer.resolve()),
@@ -44,8 +50,11 @@ with tempfile.TemporaryDirectory(prefix="avboit-background-") as directory:
     base, protected, unbounded = results
     rejected = (base[:, 3] > 0) & (protected[:, 3] == 0)
     valid = protected[:, 3] > 0
+    assert np.isin(protected[:, 3], [0, 1]).all(), "B validity must be binary before Gaussian"
     assert (protected[rejected] == 0).all(), "Rejected B must be zero premultiplied RGBA"
     assert np.array_equal(base[valid], protected[valid]), "Valid B changed"
+    assert (protected[:, 3] <= base[:, 3]).all(), "Rejection increased source support"
+    assert (protected[:, :3] <= base[:, :3]).all(), "Rejection added background energy"
     assert rejected.sum() > 100, "Fixture did not exercise rejection"
     changes = np.any(base != unbounded, axis=1).sum()
     assert changes > 0, "Fixture did not exercise q bound"

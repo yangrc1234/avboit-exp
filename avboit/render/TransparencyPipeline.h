@@ -26,6 +26,8 @@ struct TransparencyInputs
     nvrhi::TextureHandle opaqueColorDepth;
     nvrhi::TextureHandle opaqueHardwareDepth;
     nvrhi::SamplerHandle linear;
+    nvrhi::TextureHandle frostNormal;
+    nvrhi::SamplerHandle frostSampler;
     std::vector<DistortionBatch> distortionBatches;
     std::vector<MaterialShaders> materialShaders;
 };

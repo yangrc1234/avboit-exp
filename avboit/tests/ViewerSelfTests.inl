@@ -222,9 +222,23 @@ void NativeViewer::TestUiInteractions(avboit::ViewerUi &ui, nvrhi::IFramebuffer 
         if (a.empty() || a != b)
             throw std::runtime_error("Quality round trip changed the restored image");
     }
+    const bool initialSlope = slopeSplat;
+    for (bool expected : {!initialSlope, initialSlope})
+    {
+        click(uiSlopeSplat);
+        if (slopeSplat != expected || camera[9][0] != float(expected) || vertexBuffer != initialVertices ||
+            boundsBuffer != initialBounds)
+            throw std::runtime_error("ImGui slope splat toggle failed or rebuilt scene data");
+    }
     click(uiCubic);
     if (cubic == initialCubic)
         throw std::runtime_error("ImGui cubic toggle failed");
+    const float initialTiling = frostNormalTiling;
+    click(uiFrostTiling);
+    if (frostNormalTiling == initialTiling || camera[9][2] != frostNormalTiling || vertexBuffer != initialVertices ||
+        materialBuffer != initialMaterials)
+        throw std::runtime_error("ImGui normal tiling did not update live or rebuilt scene data");
+    frostNormalTiling = initialTiling;
     bool initialSparse = sparseBlur;
     click(uiSparse);
     if (sparseBlur == initialSparse)
@@ -335,12 +349,15 @@ void NativeViewer::TestUiInteractions(avboit::ViewerUi &ui, nvrhi::IFramebuffer 
     uiScrollRequest = -100000;
     pump();
     pump();
-    for (unsigned choice : {15u, 16u, 17u, 18u})
+    for (unsigned choice :
+         {16u, 17u, 18u, avboit::StressPresetCount, avboit::StressPresetCount + 1, avboit::StressPresetCount + 2})
     {
         click(uiDemoCase);
         click(uiDemoChoices[choice]);
         if (CurrentDemoCase() != choice || rebuildRequested)
             throw std::runtime_error("ImGui scene preset did not apply immediately");
+        if (choice == 17 && (glassSphere || emissiveBalls || objectCount != 2 || cameraPreset != 8))
+            throw std::runtime_error("Crossing glass preset must isolate two panes at the grazing view");
     }
     stressPreset = savedStress;
     glassSphere = savedSphere;

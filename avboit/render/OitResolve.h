@@ -13,14 +13,14 @@ struct OitResolveInputs
     bool halfAccumulation = false;
     nvrhi::BufferHandle vertices, indices, camera, materials, warp;
     nvrhi::BufferRange vertexRange;
-    nvrhi::TextureHandle lut, opaque, interfaceDepth, interfaceSurface, screenTiles;
+    nvrhi::TextureHandle lut, opaque, interfaceDepth, interfaceSurface, interfaceOffset, screenTiles;
     nvrhi::TextureHandle opaqueHardwareDepth;
     nvrhi::SamplerHandle linear;
     nvrhi::ShaderHandle backgroundVertex, backgroundPixel;
     std::vector<MaterialShaders> materialShaders;
 };
 
-// Four-RT accumulation followed by a background cache on transparency tiles.
+// Four-RT accumulation followed by a refracted background cache on transparency tiles.
 // Final normalization/composition is deferred until the Gaussian input is ready.
 class OitResolve
 {

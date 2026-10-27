@@ -38,6 +38,8 @@ void InterfacePass::Create(nvrhi::IDevice *device, const InterfaceInputs &inputs
                         .addItem(B::TypedBuffer_SRV(0, inputs.vertices, nvrhi::Format::UNKNOWN, inputs.vertexRange))
                         .addItem(B::Texture_SRV(3, inputs.opaqueColorDepth))
                         .addItem(B::Texture_SRV(24, inputs.opaqueHardwareDepth))
+                        .addItem(B::Texture_SRV(25, inputs.frostNormal))
+                        .addItem(B::Sampler(1, inputs.frostSampler))
                         .addItem(B::TypedBuffer_SRV(15, inputs.camera))
                         .addItem(B::TypedBuffer_SRV(23, inputs.materials));
     m_layout = nullptr;

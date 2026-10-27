@@ -5,37 +5,46 @@ Texture2D<float4> BlurPyramid : register(t13);
 Texture2D<float2> InterfaceOffset : register(t14);
 #include "BackgroundSampling.hlsli"
 #include "FrostScale.hlsli"
-float4 CubicLevel(float2 uv, uint level)
+#include "FrostDistortion.hlsli"
+float4 CubicLevel(float2 uv, uint gridLevel, float sampleLod)
 {
     uint w, h, levels;
-    BlurPyramid.GetDimensions(level, w, h, levels);
+    BlurPyramid.GetDimensions(gridLevel, w, h, levels);
     float2 size = float2(w, h), p = uv * size - .5, b = floor(p), f = frac(p);
     float2 w0 = (1. - f) * (1. - f) * (1. - f) / 6., w1 = (3. * f * f * f - 6. * f * f + 4.) / 6.,
            w2 = (-3. * f * f * f + 3. * f * f + 3. * f + 1.) / 6., w3 = f * f * f / 6.;
     float2 g0 = w0 + w1, g1 = w2 + w3, p0 = (b - .5 + w1 / g0) / size, p1 = (b + 1.5 + w3 / g1) / size;
-    return lerp(lerp(BlurPyramid.SampleLevel(LinearClamp, p0, level),
-                     BlurPyramid.SampleLevel(LinearClamp, float2(p1.x, p0.y), level), g1.x),
-                lerp(BlurPyramid.SampleLevel(LinearClamp, float2(p0.x, p1.y), level),
-                     BlurPyramid.SampleLevel(LinearClamp, p1, level), g1.x),
+    return lerp(lerp(BlurPyramid.SampleLevel(LinearClamp, p0, sampleLod),
+                     BlurPyramid.SampleLevel(LinearClamp, float2(p1.x, p0.y), sampleLod), g1.x),
+                lerp(BlurPyramid.SampleLevel(LinearClamp, float2(p0.x, p1.y), sampleLod),
+                     BlurPyramid.SampleLevel(LinearClamp, p1, sampleLod), g1.x),
                 g1.y);
 }
 float4 SampleInterfaceBackground(uint2 p, float2 uv)
 {
     float sigma = InterfaceSurface.Load(int3(p, 0)).a;
+    if (sigma <= 0)
+        return CachedBackground.Load(int3(p, 0)); // Sharp refraction stays entirely in B.
+    float2 detail = FrostDetailOffset(InterfaceOffset.Load(int3(p, 0)), sigma);
+    // Offset only the filtered background. Front, q and sigma belong to p.
+    uv = clamp(uv + detail / float2(WIDTH, HEIGHT), .5 / float2(WIDTH, HEIGHT), 1. - .5 / float2(WIDTH, HEIGHT));
     float base = FrostBaseLevel(), variance = max(sigma * sigma, FrostVariance(base));
     float referenceLevel = floor(.5 * log2(16. + 3. * (variance - 9.) / 2.12297680594));
     float a = FrostVariance(referenceLevel), b = FrostVariance(referenceLevel + 1.);
     uint maxMip = uint(Camera[4].y);
     float lod = clamp(referenceLevel - base + (variance - a) / max(b - a, .00001), 0., float(maxMip));
-    uv = clamp(uv + InterfaceOffset.Load(int3(p, 0)) / float2(WIDTH, HEIGHT), .5 / float2(WIDTH, HEIGHT),
-               1. - .5 / float2(WIDTH, HEIGHT));
     float4 background;
-    if (sigma <= 0)
-        background = SampleBackgroundCache(uv);
-    else if (Camera[0].w == 0)
+    if (Camera[0].w == 0)
         background = BlurPyramid.SampleLevel(LinearClamp, uv, lod);
+    else if (Camera[0].w == 2)
+        // Four hardware trilinear taps share the finer level's cubic footprint.
+        // Exact at integer LOD; the coarser contribution is approximate between levels.
+        background = CubicLevel(uv, uint(lod), lod);
     else
-        background = lerp(CubicLevel(uv, uint(lod)), CubicLevel(uv, min(uint(lod) + 1, maxMip)), frac(lod));
+    {
+        uint lo = uint(lod), hi = min(lo + 1, maxMip);
+        background = lerp(CubicLevel(uv, lo, float(lo)), CubicLevel(uv, hi, float(hi)), frac(lod));
+    }
     return background;
 }
 float4 composePixel(Fullscreen i) : SV_Target0

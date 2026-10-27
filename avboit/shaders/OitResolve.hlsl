@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "ResolveData.hlsli"
+#include "FrostDistortion.hlsli"
 struct Accumulation
 {
     float3 numerator : SV_Target0;
@@ -28,11 +29,36 @@ struct Accumulation
     o.backNumerator = BehindInterface(uint2(i.position.xy), i.position.z) ? o.numerator : float3(0, 0, 0);
     return o;
 } Texture2D<uint> ScreenTiles : register(t30);
+Texture2D<float2> InterfaceOffset : register(t14);
+
 float4 backgroundPixel(Fullscreen i) : SV_Target0
 {
     uint2 p = uint2(i.position.xy);
-    // Opaque-only source tiles are needed by neighbouring glass, but need no OIT math.
+    // This cache is written at the DESTINATION, only in occupied tiles.
     if ((ScreenTiles[p / 64] & 4u) == 0)
         return float4(Opaque.Load(int3(p, 0)).rgb, 1);
-    return ResolveBackground(p, (float2(p) + .5) / float2(WIDTH, HEIGHT));
+    float2 offset = InterfaceOffset.Load(int3(p, 0));
+    float sigma = InterfaceSurface.Load(int3(p, 0)).a;
+    // Retain the bounded part for the Gaussian lookup, rather than blurring it.
+    offset -= FrostDetailOffset(offset, sigma);
+    float depth = InterfaceDepth.Load(int3(p, 0));
+    if (all(offset == 0) || depth <= OpaqueHardwareDepth.Load(int3(p, 0)))
+        return ResolveBackground(p, (float2(p) + .5) / float2(WIDTH, HEIGHT));
+
+    float2 source = clamp(float2(p) + offset, 0., float2(WIDTH - 1, HEIGHT - 1));
+    uint2 nearest = min(uint2(source + .5), uint2(WIDTH - 1, HEIGHT - 1));
+    float2 uv = (source + .5) / float2(WIDTH, HEIGHT);
+    // Depth, interface membership and validity use the nearest source texel.
+    // Frost rejects uncovered/occluded sources; sharp refraction accepts foreground.
+    if (sigma > 0)
+    {
+        float sourceDepth = InterfaceDepth.Load(int3(nearest, 0));
+        if (sourceDepth == 0 || sourceDepth <= OpaqueHardwareDepth.Load(int3(nearest, 0)))
+            return 0;
+    }
+    if ((ScreenTiles[nearest / 64] & 4u) == 0)
+        return float4(Opaque.SampleLevel(LinearClamp, uv, 0).rgb, 1);
+    // Filter the full-screen RT inputs, then resolve once. Never sample the
+    // partial B cache here; final Front and RGB q remain at the destination.
+    return ResolveBackground(nearest, uv, true);
 }

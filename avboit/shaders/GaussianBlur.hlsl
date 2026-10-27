@@ -27,8 +27,8 @@ float4 Pair(float2 uv, float2 offset)
 
 float4 SampleBackground(float2 uv)
 {
-    // Restrict source coverage only before the first filter. Later
-    // mips keep their premultiplied validity and the existing producer halos.
+    // Restrict source coverage only before the first filter. Later mips keep
+    // premultiplied validity and run over the complete image.
     uv = clamp(uv, .5 / Camera[6].xy, 1. - .5 / Camera[6].xy);
     // Match the color bilinear footprint, including corners. Reject the
     // whole tap before reading color if any source texel has no interface.
@@ -78,9 +78,7 @@ float4 CachedPair(uint x, float center, float offset, int firstRow)
     uint w, h, sw, sh;
     Destination.GetDimensions(w, h);
     Source.GetDimensions(sw, sh);
-    uint2 origin;
-    if (!TileOrigin(group, uint2(w, h), origin))
-        return;
+    uint2 origin = group * 4;
     int firstRow = int(origin.y * 2) - 3;
     uint rowCount = 2 * min(4u, h - origin.y) + 6;
     for (uint index = local.y * 4 + local.x; index < rowCount * 4; index += 16)

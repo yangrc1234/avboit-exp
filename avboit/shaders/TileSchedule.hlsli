@@ -18,7 +18,7 @@ uint TileStageOffset(uint stage)
     for (uint i = 0; i < stage; ++i)
     {
         uint block = TileBlockSize(i);
-        uint2 groups = (i < 10 && (i & 1) != 0) ? (TileStageSize(i) + block - 1) / block : uint2(0, 0);
+        uint2 groups = i == 1 ? (TileStageSize(i) + block - 1) / block : uint2(0, 0);
         offset += 1 + groups.x * groups.y;
     }
     return offset;

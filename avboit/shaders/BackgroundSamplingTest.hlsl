@@ -15,7 +15,7 @@ bool Occupied(int2 tile)
 {
     int2 low = tile * 64, high = low + 64;
     for (uint i = 0; i < 3; ++i)
-        if (all(high > Geometry[i].xy - 1) && all(low < Geometry[i].zw + 1))
+        if (all(high > Geometry[i].xy) && all(low < Geometry[i].zw))
             return true;
     return false;
 }
@@ -28,18 +28,9 @@ bool Occupied(int2 tile)
     for (uint i = 0; i < 3; ++i)
         if (all(int2(p) >= Geometry[i].xy) && all(int2(p) < Geometry[i].zw))
             color = ((p.x + p.y) % 5) == 0 ? 0 : float4(2048, 3, 64, 1);
-    ReferenceOut[p] = color;
-    bool written = false;
-    // A cache producer draws its tile plus a one-pixel border.
-    for (int y = -1; y <= 1; ++y)
-        for (int x = -1; x <= 1; ++x)
-        {
-            int2 tile = int2(p / 64) + int2(x, y);
-            if (all(tile >= 0) && all(tile < int2(ceil(Camera[6].xy / 64.))) && Occupied(tile) &&
-                all(int2(p) >= tile * 64 - 1) && all(int2(p) < tile * 64 + 65))
-                written = true;
-        }
-    CacheOut[p] = written ? color : asfloat(0x7fc00000u).xxxx;
+    // Both the dense oracle and partial cache explicitly define invalid texels.
+    ReferenceOut[p] = Occupied(int2(p / 64)) ? color : 0;
+    CacheOut[p] = Occupied(int2(p / 64)) ? color : 0;
     if (all(p < uint2(ceil(Camera[6].xy / 64.))))
         TilesOut[p] = Occupied(p) ? 4 : 0;
 }[numthreads(8, 8, 1)] void compare(uint2 p : SV_DispatchThreadID)
@@ -55,7 +46,10 @@ bool Occupied(int2 tile)
         if (i == 15)
             uv = uv * 4. - 1.5;
         float4 actual = SampleBackgroundCache(uv);
-        float4 expected = Reference.SampleLevel(LinearClamp, clamp(uv, .5 / size, 1. - .5 / size), 0);
+        float2 clampedUV = clamp(uv, .5 / size, 1. - .5 / size);
+        uint2 center = min(uint2(clampedUV * size), uint2(size) - 1);
+        float4 expected = Occupied(int2(center / 64)) ? Reference.SampleLevel(LinearClamp, clampedUV, 0)
+                                                      : Opaque.SampleLevel(LinearClamp, clampedUV, 0);
         if (!all(isfinite(actual)) || any(abs(actual - expected) > .0001))
             InterlockedAdd(Failures[0], 1);
     }

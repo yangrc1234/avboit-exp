@@ -52,8 +52,9 @@ class NativeViewer : public app::IRenderPass
     avboit::TransparencyPipeline transparency;
     avboit::GpuProfiler profiler;
     bool detailedProfiling = true, profilingEnabled = false, profilerDirty = false, rebuildRequested = false;
-    ImVec2 uiCubic, uiSparse, uiFrost, uiSmoke, uiProfile, uiGlassPanes;
+    ImVec2 uiCubic, uiSparse, uiFrost, uiSmoke, uiProfile, uiGlassPanes, uiSlopeSplat;
     ImVec2 uiMipLow, uiMipHigh, uiBackground, uiDemoCase;
+    ImVec2 uiFrostTiling;
     ImVec2 uiOccupancy;
     std::array<ImVec2, 8> uiOccupancyChoices;
     int occupancyOverlay = 0, occupancySlice = 0;
@@ -61,7 +62,7 @@ class NativeViewer : public app::IRenderPass
     bool occupancyGrid = true;
     nvrhi::BufferHandle occupancySettings;
     std::array<ImVec2, 3> uiBackgroundChoices;
-    std::array<ImVec2, 19> uiDemoChoices;
+    std::array<ImVec2, avboit::StressPresetCount + 3> uiDemoChoices;
     float uiScrollRequest = 0; // UI interaction tests can request normal scrolling.
     ImVec2 uiVolume;
     std::array<ImVec2, 2> uiVolumeChoices;
@@ -120,6 +121,8 @@ class NativeViewer : public app::IRenderPass
     nvrhi::IBuffer *masks = nullptr, *warp = nullptr, *extinction = nullptr, *physicalMasks = nullptr;
     nvrhi::ITexture *lut = nullptr;
     nvrhi::TextureHandle opaque, depth;
+    nvrhi::TextureHandle frostNormal;
+    nvrhi::SamplerHandle frostSampler;
     nvrhi::ITexture *numerator = nullptr, *denominator = nullptr, *totalTau = nullptr;
     nvrhi::ITexture *backNumerator = nullptr;
     nvrhi::ITexture *blurPyramid = nullptr;
@@ -128,6 +131,8 @@ class NativeViewer : public app::IRenderPass
     bool fullBlur = false, sparseBlur = true;
     unsigned frostMipCount = 3;
     float maxFrostSigma = 24.f;
+    float frostDetailRadius = 24.f;
+    float frostNormalTiling = 1.f;
     unsigned maxBlurMip = 0;
     float planarIor = 1.3f, sphereIor = 1.5f, refractionStrength = 1.f;
     bool normalSphere = false;
@@ -148,13 +153,14 @@ class NativeViewer : public app::IRenderPass
     float vfxStrength = 20;
     nvrhi::FramebufferHandle opaqueFb;
     nvrhi::SamplerHandle linear;
-    bool denseExtinction = false, poisonExtinction = false;
+    bool denseExtinction = false, poisonExtinction = false, slopeSplat = true;
     Pass opaquePass;
     std::vector<nvrhi::GraphicsPipelineHandle> opaqueMaterialPipelines;
     unsigned opaqueVertices = 0, transparentVertices = 0, objectCount = 0;
     std::vector<F4> vertices, bounds;
     avboit::SampleCamera navigation;
     bool cubic = true, frost = true, vfx = false, vfxBehind = false, animate = false;
+    bool cubicTrilinear = false;
     float time = 0;
     std::array<F4, 10> camera;
     void UpdateCamera()
@@ -185,7 +191,7 @@ class NativeViewer : public app::IRenderPass
             maxBlurMip = chain.mipCount - 1;
         const auto eye = navigation.Eye(), right = navigation.Right(), up = navigation.Up(),
                    forward = navigation.Forward();
-        camera = {{{eye[0], eye[1], eye[2], float(cubic)},
+        camera = {{{eye[0], eye[1], eye[2], cubic ? (cubicTrilinear ? 2.f : 1.f) : 0.f},
                    {right[0], right[1], right[2], float(frost)},
                    {up[0], up[1], up[2], time},
                    {forward[0], forward[1], forward[2], vfx ? vfxStrength : 0.f},
@@ -195,7 +201,7 @@ class NativeViewer : public app::IRenderPass
                    {float(qBound), float(protectBackground), backgroundThreshold,
                     float((zeroTShortcut ? 1 : 0) | (zeroDepth ? 2 : 0) | (mirrorBlur ? 4 : 0) | (fullVfx ? 8 : 0))},
                    {float(chain.width), float(chain.height), float(chain.mipCount), tileResolve ? 0.f : 1.f},
-                   {0, 0, 0, 0}}};
+                   {float(slopeSplat), frostDetailRadius, frostNormalTiling, 0}}};
         auto projected = bounds;
         auto animatedBounds = bounds;
         {
@@ -263,11 +269,10 @@ class NativeViewer : public app::IRenderPass
             while (hasFrost && objectMip < maxBlurMip &&
                    chain.VarianceAt(objectMip) < std::pow(objectSigma * 1.001f, 2.f))
                 ++objectMip;
-            // Sharp B is only sampled by interfaces with sigma==0. Frost has
-            // its own source footprint, expanded by the scheduler.
+            // Mark special-surface kinds without expanding their screen bounds.
             projected[3 + object * 2][3] = float((material.value.ScalarExtinction() ? 0u : 1u) | (hasFrost ? 2u : 0u) |
                                                  ((!hasFrost && displacement > 0) ? 4u : 0u) | (objectMip << 3));
-            projected[4 + object * 2][3] = std::ceil(displacement);
+            projected[4 + object * 2][3] = 0;
             F3 low = {1e30f, 1e30f, 1e30f}, high = {-1e30f, -1e30f, -1e30f};
             if (std::find(viewObjects.begin(), viewObjects.end(), object) != viewObjects.end())
             {
@@ -442,6 +447,8 @@ class NativeViewer : public app::IRenderPass
   public:
     using IRenderPass::IRenderPass;
     void SetFrostChain(unsigned levels) { frostMipCount = levels; }
+    void SetFrostDetailRadius(float radius) { frostDetailRadius = std::clamp(radius, 0.f, 64.f); }
+    void SetFrostNormalTiling(float tiling) { frostNormalTiling = std::clamp(tiling, .25f, 64.f); }
     void SetPrecisionAndOrder(bool accumHalf, unsigned order, unsigned seed)
     {
         halfAccumulation = accumHalf;
@@ -449,6 +456,7 @@ class NativeViewer : public app::IRenderPass
         orderSeed = seed;
     }
     void SetSparseBlur(bool enabled) { sparseBlur = enabled; }
+    void SetCubicTrilinear(bool enabled) { cubicTrilinear = enabled; }
     void SetPoisonResolve(bool poison) { poisonResolve = poison; }
     void SetVfxMaterial(unsigned mode, float strength, unsigned layers)
     {
@@ -499,6 +507,12 @@ class NativeViewer : public app::IRenderPass
             eye[2] -= 14.f;
         if (preset == 5)
             heading = 3.14159265f;
+        if (preset >= 7 && preset <= 9)
+        {
+            // Orbit the crossing at z=4.5 without changing its projected center.
+            heading = (preset == 7 ? 30.f : preset == 8 ? 40.f : -30.f) * 3.14159265f / 180.f;
+            eye = {-4.5f * std::sin(heading), useSponza ? 1.75f : 0.f, 4.5f * (1.f - std::cos(heading))};
+        }
         navigation.SetPose(eye, heading, preset == 6 ? 1.57079632679f : 0.f);
     }
     void SetStress(unsigned preset, float fixtureTime)
@@ -585,10 +599,11 @@ class NativeViewer : public app::IRenderPass
         preserveMaterialsOnRebuild = true;
     }
     void SetHardwareDepth(bool enabled) { hardwareDepth = enabled; }
-    void SetExtinctionOptions(bool dense, bool poison)
+    void SetExtinctionOptions(bool dense, bool poison, bool slope)
     {
         denseExtinction = dense;
         poisonExtinction = poison;
+        slopeSplat = slope;
     }
     void Configure(bool useCubic, bool useFrost, bool sponza, bool vfxEnabled, bool behind, bool fullBlurReference,
                    unsigned preset, float sigmaLimit)
@@ -606,9 +621,9 @@ class NativeViewer : public app::IRenderPass
     unsigned CurrentDemoCase() const
     {
         if (stressPreset == 0 && glassSphere)
-            return sphereRoughness > 0 ? 17 : 16;
+            return avboit::StressPresetCount + (sphereRoughness > 0 ? 1u : 0u);
         if (stressPreset == 10 && vfx && vfxMode == 2)
-            return 18;
+            return avboit::StressPresetCount + 2;
         return stressPreset;
     }
     const char *DemoCaseName(unsigned index) const
@@ -622,26 +637,27 @@ class NativeViewer : public app::IRenderPass
     void SelectDemoCase(unsigned index)
     {
         stressPreset = index < avboit::StressPresetCount ? index : 0;
-        glassSphere = index == 16 || index == 17;
+        const unsigned sphereCase = avboit::StressPresetCount, shockCase = sphereCase + 2;
+        glassSphere = index == sphereCase || index == sphereCase + 1;
         rgbGlass = glassSphere;
         if (index == 0)
             sceneGlassPanes = true;
         if (glassSphere)
             sceneGlassPanes = false; // Sphere presets remain isolated; UI toggles are independent.
-        sphereRoughness = index == 17 ? .55f : 0.f;
+        sphereRoughness = index == sphereCase + 1 ? .55f : 0.f;
         calibrationBoard = glassSphere;
-        emissiveBalls = true;
+        emissiveBalls = index != 17;
         emissiveFront = false;
         showSmoke = true;
-        vfx = index == 18;
-        vfxMode = index == 18 ? 2 : 0;
+        vfx = index == shockCase;
+        vfxMode = index == shockCase ? 2 : 0;
         vfxLayers = 3;
         vfxBehind = false;
-        if (index == 18)
+        if (index == shockCase)
             stressPreset = 10;
         time = 0;
-        animate = index == 18;
-        ApplyCameraPreset(0);
+        animate = index == shockCase;
+        ApplyCameraPreset(index == 17 ? 8 : 0);
         rebuildRequested = true;
         preserveMaterialsOnRebuild = false;
     }
@@ -687,7 +703,7 @@ class NativeViewer : public app::IRenderPass
         uiDemoCase = itemCenter();
         if (demoOpen)
         {
-            for (unsigned choice = 0; choice < 19; ++choice)
+            for (unsigned choice = 0; choice < uiDemoChoices.size(); ++choice)
             {
                 if (ImGui::Selectable(DemoCaseName(choice), demo == choice))
                     SelectDemoCase(choice);
@@ -710,7 +726,7 @@ class NativeViewer : public app::IRenderPass
                                        "Transparent / main resolve",
                                        "Frost requests",
                                        "Sharp B requests",
-                                       "B prime cache tiles (+1px)",
+                                       "B prime cache tiles",
                                        "Extinction XY (any Z)",
                                        "Extinction physical Z slice"};
         ImGui::TextUnformatted("Occupancy overlay");
@@ -749,6 +765,17 @@ class NativeViewer : public app::IRenderPass
         ImGui::Separator();
         ImGui::Checkbox("Cubic reconstruction", &cubic);
         uiCubic = itemCenter();
+        if (cubic)
+        {
+            ImGui::Checkbox("4-tap cubic + trilinear (approximate)", &cubicTrilinear);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Share the finer mip's cubic offsets across both mip levels.\n"
+                                  "Off: exact 8-tap cubic. Compare highlights and roughness transitions.");
+        }
+        ImGui::Checkbox("Slope-aware extinction splat", &slopeSplat);
+        uiSlopeSplat = itemCenter();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Bounded slope push; occupancy reserves the same log-depth range.");
         int volumeChoice = volumeScale == 2 ? 0 : 1;
         const char *volumeLabels[] = {"1/2 resolution (reference)", "1/8 resolution (default)"};
         bool volumeOpen = ImGui::BeginCombo("Extinction XY", volumeLabels[volumeChoice]);
@@ -790,7 +817,18 @@ class NativeViewer : public app::IRenderPass
                     chain.width >> (frostMipCount - 1), frostMipCount);
         ImGui::SetNextItemWidth(135);
         ImGui::SliderFloat("Maximum sigma (1440p px)", &maxFrostSigma, 0.f, 24.f, "%.2f");
+        ImGui::SliderFloat("Post-blur offset (1440p px)", &frostDetailRadius, 0.f, 64.f, "%.1f");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Reserve this much of the material offset for the Gaussian lookup. Larger offsets remain "
+                              "in B. No new RT/pass.");
         ImGui::TextWrapped("No B-source radius/offset limit. Material sigma selects the available Gaussian levels.");
+        ImGui::SetNextItemWidth(135);
+        ImGui::SliderFloat("Frost normal tiling", &frostNormalTiling, .25f, 64.f, "%.2f", ImGuiSliderFlags_Logarithmic);
+        uiFrostTiling = ImGui::GetItemRectMin();
+        uiFrostTiling.x += 100;
+        uiFrostTiling.y = (uiFrostTiling.y + ImGui::GetItemRectMax().y) * .5f;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Normal-map repeats across a pane. Larger values make finer detail. Changes live.");
         ImGui::Text("Active levels: %u / %u (bounds may be empty)", maxBlurMip + 1, frostMipCount);
         ImGui::Checkbox("VFX distortion", &vfx);
         ImGui::SameLine();
@@ -873,7 +911,8 @@ class NativeViewer : public app::IRenderPass
             }
             int pose = int(cameraPreset);
             if (ImGui::Combo("Camera preset", &pose,
-                             "Default\0Right\0Left oblique\0Close oblique\0Far\0Reverse\0Sky\0"))
+                             "Default\0Right\0Left oblique\0Close oblique\0Far\0Reverse\0Sky\0"
+                             "Crossing +30 deg\0Crossing +40 deg\0Crossing -30 deg\0"))
                 ApplyCameraPreset(unsigned(pose));
             if (ImGui::Button("Reset camera preset"))
                 ApplyCameraPreset(cameraPreset);
@@ -881,7 +920,7 @@ class NativeViewer : public app::IRenderPass
         if (ImGui::CollapsingHeader("Resolve pipeline", ImGuiTreeNodeFlags_DefaultOpen))
         {
             ImGui::Checkbox("Cull empty resolve tiles", &tileResolve);
-            ImGui::TextWrapped("B prime on transparency tiles (+1px). Resolve into temporary color, then copy tiles to "
+            ImGui::TextWrapped("B prime on transparency tiles. Resolve into temporary color, then copy tiles to "
                                "SceneColor. q stays in registers; no I/R/q caches.");
         }
         if (ImGui::CollapsingHeader("OIT submission validation"))
@@ -1097,6 +1136,22 @@ class NativeViewer : public app::IRenderPass
                                                           app::GetDirectoryWithExecutable() / "shaders/avboit" /
                                                               app::GetShaderTypeName(device->getGraphicsAPI()));
         commands = device->createCommandList();
+        if (!frostNormal)
+        {
+            // Precomputed linear RG8 mips also work without Donut's scene passes.
+            engine::TextureCache cache(device, fs, nullptr);
+            auto path = app::GetDirectoryWithExecutable() / "textures/frost-normal.dds";
+            commands->open();
+            auto loaded = cache.LoadTextureFromFile(path, false, nullptr, commands);
+            if (!loaded || !loaded->texture)
+                throw std::runtime_error("Cannot load frost normal: " + path.string());
+            frostNormal = loaded->texture;
+            commands->close();
+            device->executeCommandList(commands);
+            device->waitForIdle();
+            frostSampler = device->createSampler(
+                nvrhi::SamplerDesc().setAllFilters(true).setAllAddressModes(nvrhi::SamplerAddressMode::Wrap));
+        }
         profiler.Initialize(device, detailedProfiling, profilingEnabled);
         cameraBuffer = Buffer(sizeof(camera), nvrhi::Format::RGBA32_FLOAT, false, "Camera and material controls");
         bounds = {{{float(Width), float(Height), float(volumeScale * 8), 64}},
@@ -1117,11 +1172,13 @@ class NativeViewer : public app::IRenderPass
                 float radius;
                 F3 radiance;
             };
-            const Sphere spheres[] = {{{-1.f, .63f, 5.f}, .12f, {18, 9, 2}},
-                                      {{-.48f, .05f, 5.3f}, .09f, {12, 12, 12}},
-                                      {{-.92f, -.5f, 5.7f}, .18f, {2, 8, 20}},
-                                      {{.15f, .43f, 6.4f}, .15f, {15, 2, 6}},
-                                      {{1.25f, -.25f, 5.6f}, .22f, {2, 12, 5}}};
+            std::vector<Sphere> spheres = {{{-1.f, .63f, 5.f}, .12f, {18, 9, 2}},
+                                           {{-.48f, .05f, 5.3f}, .09f, {12, 12, 12}},
+                                           {{-.92f, -.5f, 5.7f}, .18f, {2, 8, 20}},
+                                           {{.15f, .43f, 6.4f}, .15f, {15, 2, 6}},
+                                           {{1.25f, -.25f, 5.6f}, .22f, {2, 12, 5}}};
+            if (stressPreset == 18)
+                spheres = {{{-1.42f, .18f, 6.f}, .19f, {5, 6, 6}}, {{1.42f, .18f, 6.f}, .19f, {5, 6, 6}}};
             for (auto sphere : spheres)
             {
                 if (emissiveFront)
@@ -1335,6 +1392,8 @@ class NativeViewer : public app::IRenderPass
         inputs.opaqueColorDepth = opaque;
         inputs.opaqueHardwareDepth = depth;
         inputs.linear = linear;
+        inputs.frostNormal = frostNormal;
+        inputs.frostSampler = frostSampler;
         // The sample currently shares compiled shader programs. The renderer
         // receives a separate shader set per material, so an actor can replace
         // any pass shader without changing draw grouping or other actors.
@@ -1715,8 +1774,8 @@ class NativeViewer : public app::IRenderPass
             static_cast<const unsigned *>(GetDevice()->mapBuffer(scheduleReadback, nvrhi::CpuAccessMode::Read));
         if (!schedule)
             throw std::runtime_error("Blur schedule readback failed");
-        printf("Gaussian: direct dispatch with per-group mask; maximum active mip %u\n", maxBlurMip);
-        printf("B prime: transparency tiles (64x64) + 1px border; opaque fallback outside cache\n");
+        printf("Gaussian: masked base, full-screen reductions; maximum active mip %u\n", maxBlurMip);
+        printf("B prime: transparency tiles (64x64), zero-cleared; opaque fallback outside cache\n");
         unsigned validSlices = std::min(depthBudget, schedule[1] + 2);
         GetDevice()->unmapBuffer(scheduleReadback);
         size_t lutPitch = 0;
@@ -1961,7 +2020,10 @@ int main(int argc, const char **argv)
         viewer.SetSponzaPath(o.sponzaAssetPath);
         viewer.SetCsvPath(o.benchmarkPath);
         viewer.SetFrostChain(o.frostMipCount);
+        viewer.SetFrostDetailRadius(o.frostDetailRadius);
+        viewer.SetFrostNormalTiling(o.frostNormalTiling);
         viewer.SetSparseBlur(o.sparseBlur);
+        viewer.SetCubicTrilinear(o.cubicTrilinear);
         viewer.SetPoisonResolve(o.poisonResolve);
         viewer.SetVfxMaterial(o.vfxMode, o.vfxStrength, o.vfxLayers);
         viewer.SetVolumeScale(o.volumeScale);
@@ -1973,7 +2035,7 @@ int main(int argc, const char **argv)
         viewer.SetRedrawShadows(o.redrawShadows);
         viewer.SetFixtureOptions(o.emissiveBalls, o.showSmoke, o.glassSphere, o.rgbGlass, o.sphereRoughness);
         viewer.SetProfilingOptions(o.detailedProfiling, o.benchmarkFrames > 0 || !o.headless || o.uiCapture);
-        viewer.SetExtinctionOptions(o.denseExtinction, o.poisonExtinction);
+        viewer.SetExtinctionOptions(o.denseExtinction, o.poisonExtinction, o.slopeSplat);
         viewer.SetRenderSize(o.renderWidth, o.renderHeight);
         viewer.SetFollowWindow(o.followWindow);
         viewer.SetHardwareDepth(o.hardwareDepth);

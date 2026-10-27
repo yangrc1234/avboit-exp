@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "TransparencyCommon.hlsli"
 Texture2D<uint> ScreenTiles : register(t30);
-Fullscreen TileVertex(uint vertex, uint instance, uint requiredBit, bool force, float border = 0.)
+Fullscreen TileVertex(uint vertex, uint instance, uint requiredBit, bool force)
 {
     uint w, h;
     ScreenTiles.GetDimensions(w, h);
@@ -15,7 +15,7 @@ Fullscreen TileVertex(uint vertex, uint instance, uint requiredBit, bool force, 
     }
     static const float2 corner[6] = {float2(0, 0), float2(1, 0), float2(0, 1),
                                      float2(0, 1), float2(1, 0), float2(1, 1)};
-    float2 lo = max(float2(tile * 64) - border, 0.), hi = min(float2(tile * 64 + 64) + border, float2(WIDTH, HEIGHT));
+    float2 lo = float2(tile * 64), hi = min(float2(tile * 64 + 64), float2(WIDTH, HEIGHT));
     o.uv = lerp(lo, hi, corner[vertex]) / float2(WIDTH, HEIGHT);
     o.position = float4(o.uv * float2(2, -2) + float2(-1, 1), 0, 1);
     return o;
@@ -26,5 +26,5 @@ Fullscreen tileVertex(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
 }
 Fullscreen backgroundVertex(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
 {
-    return TileVertex(vertex, instance, 4u, false, 1.);
+    return TileVertex(vertex, instance, 4u, false);
 }

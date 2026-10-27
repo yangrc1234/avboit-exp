@@ -25,11 +25,11 @@ def work_domain(folder, stage):
     if stage == 10:
         tiles = texture(folder / "native-screen-tiles.r32u", "<u4", 1)[..., 0]
         domain = np.repeat(np.repeat((tiles & 4) != 0, 64, axis=0), 64, axis=1)[:h, :w]
-        padded = np.pad(domain, 1)
-        return np.logical_or.reduce(
-            [padded[y : y + h, x : x + w] for y in range(3) for x in range(3)]
-        )
+        return domain
     if capacity == 0:
+        if stage > 1 and stage < 10 and stage % 2:
+            rect = np.fromfile(folder / "native-regions.u32", "<u4").reshape(11, 4)[stage]
+            return np.full((h, w), bool(rect[2] > rect[0] and rect[3] > rect[1]))
         return np.zeros((h, w), dtype=bool)
     bits = np.fromfile(folder / "native-work-masks.u32", "<u4")[base + 1 : base + 1 + capacity]
     bits = bits.reshape((h + 3) // 4, (w + 3) // 4)
@@ -43,5 +43,7 @@ def image(path):
 def difference(a, b):
     d = np.abs(a - b)
     return dict(
-        max=float(d.max()), rms=float(np.sqrt(np.mean(d * d))), p99=float(np.percentile(d, 99))
+        max=float(d.max()),
+        rms=float(np.sqrt(np.mean(d * d))),
+        p99=float(np.percentile(d, 99)),
     )

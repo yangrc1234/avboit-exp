@@ -25,6 +25,7 @@ constexpr Flag Flags[] = {
     {"--ui-capture", &ViewerOptions::uiCapture, true},
     {"--ui-self-test", &ViewerOptions::uiSelfTest, true},
     {"--linear", &ViewerOptions::cubic, false},
+    {"--cubic-trilinear", &ViewerOptions::cubicTrilinear, true},
     {"--no-frost", &ViewerOptions::frost, false},
     {"--sparse-blur", &ViewerOptions::sparseBlur, true},
     {"--full-blur", &ViewerOptions::fullBlur, true},
@@ -39,6 +40,7 @@ constexpr Flag Flags[] = {
     {"--vfx-behind", &ViewerOptions::behind, true},
     {"--dense-extinction", &ViewerOptions::denseExtinction, true},
     {"--poison-extinction", &ViewerOptions::poisonExtinction, true},
+    {"--no-slope-splat", &ViewerOptions::slopeSplat, false},
     {"--profile-frame-only", &ViewerOptions::detailedProfiling, false},
     {"--redraw-shadows", &ViewerOptions::redrawShadows, true},
     {"--hardware-depth", &ViewerOptions::hardwareDepth, true},
@@ -145,13 +147,17 @@ ViewerOptions ParseViewerOptions(int argc, const char *const *argv)
             options.sphereRoughness = ReadFloat(arg, value(), 0, 1);
         else if (arg == "--max-frost-sigma")
             options.sigmaLimit = ReadFloat(arg, value(), 0, 24);
+        else if (arg == "--frost-detail-radius")
+            options.frostDetailRadius = ReadFloat(arg, value(), 0, 64);
+        else if (arg == "--frost-normal-tiling")
+            options.frostNormalTiling = ReadFloat(arg, value(), .25f, 64);
         else if (arg == "--time")
             options.fixtureTime =
                 ReadFloat(arg, value(), -std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
         else if (arg == "--stress")
-            options.stressPreset = ReadInteger(arg, value(), 0, 16);
+            options.stressPreset = ReadInteger(arg, value(), 0, 18);
         else if (arg == "--camera-preset")
-            options.cameraPreset = ReadInteger(arg, value(), 0, 6);
+            options.cameraPreset = ReadInteger(arg, value(), 0, 9);
         else if (arg == "--benchmark")
             options.benchmarkFrames = ReadInteger(arg, value(), 1, 600);
         else if (arg == "--emissive-gain")
@@ -217,7 +223,7 @@ Run and debug (benchmarks require Windows Developer Mode for StablePowerState):
   --ui-self-test             Exercise live ImGui controls and resource rebuilding
   --occupancy-overlay 0..7  Off / requests RGB / transparent / frost / sharp B / B work / volume XY / volume Z
   --occupancy-slice 0..127  Physical Z slice for overlay 7 (clamped to current Z budget)
-  --camera-preset 0..6        Deterministic camera (default 0; 6 looks at sky)
+  --camera-preset 0..9        Camera (6: sky; 7/8/9: crossing glass +30/+40/-30 degrees)
 
 Scene and materials:
   --vfx-mode 0..3            Oscillating ring / heat / expanding shock / dual shock; enables VFX
@@ -226,7 +232,7 @@ Scene and materials:
   --sponza                   Load Sponza through Donut (default scene backend)
   --legacy-scene             Old Sponza loader for calibration comparisons
   --sponza-path PATH          Explicit Sponza.gltf path; enables Sponza
-  --stress 0..16             Stress preset (0: manual, 16: uncovered foreground); also in ImGui Test case
+  --stress 0..18             Stress preset (18: textured frost); also in ImGui Test case
   --time SECONDS             Finite initial fixture time, default 0
   --glass-sphere             Replace default panes with a sphere
   --rgb-glass                Strong RGB absorption for sphere fixtures
@@ -244,8 +250,11 @@ Quality and references:
   --poison-resolve         Fill auxiliary outputs with poison before resolve (validation)
   --volume-scale 2|8         Extinction XY divisor, default 8
   --linear                  Bilinear reconstruction (default: cubic)
+  --cubic-trilinear         Approximate cubic: 4 trilinear taps instead of 8 bilinear taps
   --no-frost                Disable frost, preserve self-refraction
   --max-frost-sigma 0..24   Material sigma cap in 1440p reference pixels
+  --frost-detail-radius 0..64  Offset reserved for post-blur sampling, 1440p pixels (default 24)
+  --frost-normal-tiling .25..64  Normal-map repeats across a pane (default 1)
   --frost-mips 3..5          Fixed-screen chain; extra levels are finer (default 3)
   --dense-blur               64-tap first filter reference
   --no-tile-resolve          Draw every resolve tile (culling reference)
@@ -254,6 +263,7 @@ Quality and references:
   --full-blur                Full-screen/full-chain blur reference
   --dense-extinction         Dense clear/integration reference
   --poison-extinction        Fill unused extinction with garbage for tests
+  --no-slope-splat           Disable slope-aware extinction depth push (comparison)
   --donut-scene             Use Donut Sponza loading/forward shading and D32
   --composition-half       RGBA16F composition precision reference
   --vfx-full               Full-resolution VFX (default; --vfx-half experimental)

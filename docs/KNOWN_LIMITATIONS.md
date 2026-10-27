@@ -18,6 +18,18 @@ Passing the tests below does not establish physical correctness or paper parity.
 - **Low-resolution extinction.** Default XY is 1/8 raster coverage, with linear Z
   splatting and filtered XYZ LUT queries. Nearby layers can share bins, and sharp boundaries can
   differ from full-resolution sorted transparency.
+- **Slope-biased extinction is approximate.** The default splat pushes extinction
+  behind the triangle's XY bilinear footprint, using device-depth derivatives.
+  Splat and occupancy share a normalized log-Z push cap of 64/2048. Occupancy
+  reserves that interval before Adaptive Z, covering both global and per-tile
+  masks. No actor depth constant, RT/pass or extra LUT query is needed; the original
+  two-virtual-slice query bias remains. The reserve increases occupied work and can
+  reduce Adaptive Z resolution. Slopes beyond the cap can retain self-shadow.
+  This removes measured front-pane self-shadow in test case 17, but delays real
+  attenuation too: close/intersecting layers can mix incorrectly. The most grazing
+  view still fails the strict interior-error check. ImGui's slope-aware splat toggle
+  or `--no-slope-splat` selects the original behavior for comparison. See
+  [the diagnostic](VALIDATION.md#crossing-glass-quality-diagnostic).
 - **Packed RGB overflow.** Packed integer addition has finite guard capacity;
   adversarial overdraw can carry between channel fields. The GPU oracle reports
   this explicitly. The experiment does not promise correct arbitrary RGB overdraw.

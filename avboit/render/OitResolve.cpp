@@ -38,7 +38,9 @@ void OitResolve::Create(nvrhi::IDevice *device, const OitResolveInputs &inputs)
                                     .setHeight(inputs.height)
                                     .setFormat(nvrhi::Format::RGBA16_FLOAT)
                                     .setIsRenderTarget(true)
-                                    .setDebugName("Background B prime cache")
+                                    .setClearValue(nvrhi::Color(0))
+                                    .setUseClearValue(true)
+                                    .setDebugName("Refracted background B prime cache")
                                     .setInitialState(nvrhi::ResourceStates::ShaderResource)
                                     .setKeepInitialState(true));
     m_accumulation.framebuffer = device->createFramebuffer(
@@ -103,6 +105,7 @@ void OitResolve::Create(nvrhi::IDevice *device, const OitResolveInputs &inputs)
                                .addItem(B::Sampler(0, inputs.linear))
                                .addItem(B::Texture_SRV(7, inputs.interfaceDepth))
                                .addItem(B::Texture_SRV(8, inputs.interfaceSurface))
+                               .addItem(B::Texture_SRV(14, inputs.interfaceOffset))
                                .addItem(B::Texture_SRV(9, m_backNumerator))
                                .addItem(B::Texture_SRV(3, inputs.opaque))
                                .addItem(B::Texture_SRV(4, m_numerator))
@@ -145,8 +148,11 @@ void OitResolve::RecordAccumulation(nvrhi::ICommandList *commands, const std::ve
 }
 void OitResolve::RecordResolve(nvrhi::ICommandList *commands, bool poison) const
 {
+    // Poison old contents first to verify that the required clear covers them.
     if (poison)
         commands->clearTextureFloat(m_background, nvrhi::AllSubresources, nvrhi::Color(60000, 0, 60000, 1));
+    // No border: bilinear taps outside the cache contribute zero color/validity.
+    commands->clearTextureFloat(m_background, nvrhi::AllSubresources, nvrhi::Color(0));
     m_backgroundPass.Record(commands, 6, m_backgroundTiles);
 }
 } // namespace avboit

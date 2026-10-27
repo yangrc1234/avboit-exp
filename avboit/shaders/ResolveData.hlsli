@@ -29,12 +29,18 @@ float3 SampleResolveTransmittance(float2 uv, float viewDepth)
                ? float3(1, 1, 1)
                : TransmittanceLut.SampleLevel(LinearClamp, float3(uv, (mapped + .5) / float(SLICE_COUNT)), 0).rgb;
 }
-ResolveTerms GetResolveTerms(uint2 p, float2 uv)
+// Displaced sources use bilinear inputs; destination and zero-offset resolves
+// use exact loads. Each caller supplies a compile-time constant.
+float3 ReadResolveRgb(Texture2D<float3> texture, uint2 p, float2 uv, bool filterInputs)
+{
+    return filterInputs ? texture.SampleLevel(LinearClamp, uv, 0) : texture.Load(int3(p, 0));
+}
+ResolveTerms GetResolveTerms(uint2 p, float2 uv, bool filterInputs = false)
 {
     ResolveTerms o = (ResolveTerms)0;
     // Use the hardware depth (including zero-T quads) for source validity.
     float sceneDepth = OpaqueHardwareDepth.Load(int3(p, 0));
-    o.totalT = exp(-TotalTau.Load(int3(p, 0)));
+    o.totalT = exp(-ReadResolveRgb(TotalTau, p, uv, filterInputs));
     if ((uint(Camera[7].w) & 2u) != 0)
     {
         // Zero-T depth can cull layers whose unweighted tau would otherwise
@@ -45,7 +51,7 @@ ResolveTerms GetResolveTerms(uint2 p, float2 uv)
         if (all(SampleResolveTransmittance(uv, viewDepth) == 0))
             o.totalT = 0;
     }
-    o.normalization = (1. - o.totalT) / max(Denominator.Load(int3(p, 0)), .000001);
+    o.normalization = (1. - o.totalT) / max(ReadResolveRgb(Denominator, p, uv, filterInputs), .000001);
     float4 hit = LoadInterface(p);
     o.hasInterface = hit.a > 0;
     if (!o.hasInterface)
@@ -65,29 +71,32 @@ ResolveTerms GetResolveTerms(uint2 p, float2 uv)
         return o; // sharp refraction keeps its accepted foreground-sampling rule
     }
     float3 frontT = SampleResolveTransmittance(uv, hit.r);
-    float3 q = saturate(frontT * InterfaceSurface.Load(int3(p, 0)).rgb);
+    float3 interfaceT =
+        filterInputs ? InterfaceSurface.SampleLevel(LinearClamp, uv, 0).rgb : InterfaceSurface.Load(int3(p, 0)).rgb;
+    float3 q = saturate(frontT * interfaceT);
     if (Camera[7].x > 0)
         q = max(o.totalT, q);
     o.backgroundValid = Camera[7].y == 0 || min(q.r, min(q.g, q.b)) >= Camera[7].z;
     o.transmission = float4(q, 1);
     return o;
 }
-float3 ResolveOpaqueContribution(uint2 p, float3 totalT)
+float3 ResolveOpaqueContribution(uint2 p, float3 totalT, float2 uv = 0, bool filterInputs = false)
 {
     // Deferred hosts may skip lighting behind zero-T depth. Do not read that
     // color and multiply by zero: an undefined/NaN value would still propagate.
     [branch] if (all(totalT == 0)) return 0;
-    return Opaque.Load(int3(p, 0)).rgb * totalT;
+    float3 color = filterInputs ? Opaque.SampleLevel(LinearClamp, uv, 0).rgb : Opaque.Load(int3(p, 0)).rgb;
+    return color * totalT;
 }
-float4 ResolveBackground(uint2 p, float2 uv)
+float4 ResolveBackground(uint2 p, float2 uv, bool filterInputs = false)
 {
-    ResolveTerms t = GetResolveTerms(p, uv);
+    ResolveTerms t = GetResolveTerms(p, uv, filterInputs);
     if (!t.backgroundValid)
         return 0;
-    float3 opaqueContribution = ResolveOpaqueContribution(p, t.totalT);
+    float3 opaqueContribution = ResolveOpaqueContribution(p, t.totalT, uv, filterInputs);
     if (!t.hasInterface || t.opaqueOccluded)
-        return float4(Numerator.Load(int3(p, 0)) * t.normalization + opaqueContribution, 1);
-    float3 residual = BackNumerator.Load(int3(p, 0)) * t.normalization + opaqueContribution;
+        return float4(ReadResolveRgb(Numerator, p, uv, filterInputs) * t.normalization + opaqueContribution, 1);
+    float3 residual = ReadResolveRgb(BackNumerator, p, uv, filterInputs) * t.normalization + opaqueContribution;
     // q stays in registers: no intermediate texture or storage quantization.
     return float4(residual / max(t.transmission.rgb, .00001), 1);
 }

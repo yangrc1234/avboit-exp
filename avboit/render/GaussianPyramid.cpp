@@ -10,8 +10,6 @@ namespace avboit
 void GaussianPyramid::AllocateSchedule(nvrhi::IDevice *device, unsigned width, unsigned height, unsigned mipCount)
 {
     m_schedule = TileSchedule::Make(width, height, mipCount);
-    m_screenWidth = width;
-    m_screenHeight = height;
     auto scratch = [&](nvrhi::BufferHandle current, nvrhi::Format format, unsigned bytes, const char *name)
     {
         return ReuseBuffer(device, current,
@@ -25,8 +23,6 @@ void GaussianPyramid::AllocateSchedule(nvrhi::IDevice *device, unsigned width, u
                                .setKeepInitialState(true));
     };
     m_workMask = scratch(m_workMask, nvrhi::Format::R32_UINT, m_schedule.entries * 4, "Gaussian output masks");
-    m_footprints = scratch(m_footprints, nvrhi::Format::RGBA32_FLOAT, 25 * 16, "Frost producer footprints");
-    m_footprintsDirty = true;
     m_rectangles = ReuseBuffer(device, m_rectangles,
                                nvrhi::BufferDesc()
                                    .setByteSize(11 * 16)
@@ -70,12 +66,11 @@ void GaussianPyramid::Create(nvrhi::IDevice *device, const GaussianInputs &input
         return pass;
     };
     auto blur = [&](nvrhi::ITexture *source, unsigned sourceMip, nvrhi::ITexture *target, unsigned targetMip,
-                    unsigned stage, nvrhi::IShader *shader)
+                    nvrhi::IShader *shader)
     {
         return compute(D().addItem(B::TypedBuffer_SRV(15, inputs.camera))
                            .addItem(B::Texture_SRV(0, source, nvrhi::Format::UNKNOWN,
                                                    nvrhi::TextureSubresourceSet(sourceMip, 1, 0, 1)))
-                           .addItem(B::TypedBuffer_SRV(28, m_workMask, nvrhi::Format::UNKNOWN, WorkRange(stage)))
                            .addItem(B::Texture_UAV(0, target, nvrhi::Format::UNKNOWN,
                                                    nvrhi::TextureSubresourceSet(targetMip, 1, 0, 1)))
                            .addItem(B::Sampler(0, inputs.linearSampler)),
@@ -92,22 +87,16 @@ void GaussianPyramid::Create(nvrhi::IDevice *device, const GaussianInputs &input
             .addItem(B::Sampler(0, inputs.linearSampler)),
         inputs.sparseShader);
     for (unsigned level = 1; level < m_mipCount; ++level)
-        m_fused.push_back(blur(m_pyramid, level - 1, m_pyramid, level, level * 2 + 1, inputs.fusedShader));
+        m_fused.push_back(blur(m_pyramid, level - 1, m_pyramid, level, inputs.fusedShader));
 }
-void GaussianPyramid::ResetSchedule(nvrhi::ICommandList *commands, bool cubic) const
+void GaussianPyramid::ResetSchedule(nvrhi::ICommandList *commands, unsigned lastMip) const
 {
-    if (m_footprintsDirty || cubic != m_lastCubic)
-    {
-        const auto footprints = FrostChain::Make(m_screenWidth, m_screenHeight, m_mipCount)
-                                    .Footprints(m_screenWidth, m_screenHeight, cubic);
-        commands->writeBuffer(m_footprints, footprints.data(), sizeof(footprints));
-        m_footprintsDirty = false;
-        m_lastCubic = cubic;
-    }
     commands->clearBufferUInt(m_workMask, 0);
     std::array<std::array<unsigned, 4>, 11> envelopes{};
     for (unsigned i = 0; i < 11; ++i)
-        envelopes[i] = {m_schedule.width[i], m_schedule.height[i], 0, 0};
+        envelopes[i] = i > 1 && i < 10 && (i & 1) && i / 2 <= lastMip
+                           ? std::array<unsigned, 4>{0, 0, m_schedule.width[i], m_schedule.height[i]}
+                           : std::array<unsigned, 4>{m_schedule.width[i], m_schedule.height[i], 0, 0};
     commands->writeBuffer(m_rectangles, envelopes.data(), sizeof(envelopes));
 }
 void GaussianPyramid::RecordBlur(nvrhi::ICommandList *commands, unsigned lastMip, bool poison,
@@ -118,6 +107,8 @@ void GaussianPyramid::RecordBlur(nvrhi::ICommandList *commands, unsigned lastMip
         throw std::out_of_range("Gaussian last mip");
     if (poison)
         commands->clearTextureFloat(m_pyramid, nvrhi::AllSubresources, nvrhi::Color(60000, 0, 60000, 1));
+    // Masked base groups leave zero color/validity for the full-screen reductions.
+    commands->clearTextureFloat(m_pyramid, nvrhi::TextureSubresourceSet(0, 1, 0, 1), nvrhi::Color(0));
     auto dispatch = [&](unsigned level)
     {
         const auto &pass = level == 0 ? m_sparseBase : m_fused[level - 1];

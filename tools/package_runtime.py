@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Package only the viewer, runtime shaders and required notices; no external assets."""
+"""Package the viewer, runtime shaders, bundled CC0 normal and required notices."""
 
 import argparse
 import hashlib
@@ -27,6 +27,8 @@ def main():
         "assets/sponza.lock.json": ROOT / "assets/sponza.lock.json",
         "bin/avboit_viewer.exe": binaries / "avboit_viewer.exe",
         "licenses/ProggyClean.txt": ROOT / "licenses/ProggyClean.txt",
+        "bin/textures/frost-normal.dds": binaries / "textures/frost-normal.dds",
+        "assets/textures/README.md": ROOT / "assets/textures/README.md",
     }
     for path in (ROOT / "docs").glob("*.md"):
         files["docs/" + path.name] = path

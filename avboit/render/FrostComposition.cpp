@@ -29,8 +29,8 @@ void FrostComposition::Create(nvrhi::IDevice *device, const FrostCompositionInpu
                     .addItem(B::Texture_SRV(7, inputs.interfaceDepth))
                     .addItem(B::Texture_SRV(8, inputs.interfaceSurface))
                     .addItem(B::Texture_SRV(13, inputs.backgroundPyramid))
-                    .addItem(B::Texture_SRV(27, inputs.sharpBackground))
                     .addItem(B::Texture_SRV(14, inputs.interfaceOffset))
+                    .addItem(B::Texture_SRV(27, inputs.sharpBackground))
                     .addItem(B::Sampler(0, inputs.linear))
                     .addItem(B::TypedBuffer_SRV(15, inputs.camera))
                     .addItem(B::TypedBuffer_SRV(23, inputs.materials));

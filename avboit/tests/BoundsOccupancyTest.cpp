@@ -26,7 +26,7 @@ unsigned DepthSlice(float z)
     return std::min(2047u, unsigned(std::max(0.f, std::log2(1 + std::max(0.f, z)) / std::log2(81.f) * 2048)));
 }
 
-std::vector<unsigned> Reference(const std::vector<ObjectBounds> &objects)
+std::vector<unsigned> Reference(const std::vector<ObjectBounds> &objects, bool slopeSplat, float roundingTolerance = 0)
 {
     std::vector<unsigned> out(OutputWords);
     for (const auto &object : objects)
@@ -46,7 +46,7 @@ std::vector<unsigned> Reference(const std::vector<ObjectBounds> &objects)
                 {
                     float coord = (corner & (1u << axis)) ? hi[axis] : lo[axis];
                     float z = (corner & 4) ? hi[2] : lo[2];
-                    maximum = std::max(maximum, z * (1.f + 2.f / (axis ? Height : Width)) + sign * coord);
+                    maximum = std::max(maximum, z + sign * coord);
                 }
                 outside |= maximum < -1e-5f;
             }
@@ -68,17 +68,16 @@ std::vector<unsigned> Reference(const std::vector<ObjectBounds> &objects)
                 ymax = std::max(ymax, y);
             }
         }
-        float pad = std::max(hi[3], 0.f);
-        xmin = std::floor(xmin);
-        ymin = std::floor(ymin);
-        xmax = std::ceil(xmax);
-        ymax = std::ceil(ymax);
-        const unsigned first = DepthSlice(lo[2]), last = DepthSlice(hi[2]);
+        xmin = std::floor(xmin - roundingTolerance);
+        ymin = std::floor(ymin - roundingTolerance);
+        xmax = std::ceil(xmax + roundingTolerance);
+        ymax = std::ceil(ymax + roundingTolerance);
+        const unsigned first = DepthSlice(lo[2]), last = std::min(2047u, DepthSlice(hi[2]) + (slopeSplat ? 64u : 0u));
         for (unsigned y = 0; y < TilesY; ++y)
             for (unsigned x = 0; x < TilesX; ++x)
             {
-                if ((x + 1) * TilePixels <= xmin - 1 || x * TilePixels >= xmax + 1 ||
-                    (y + 1) * TilePixels <= ymin - 1 || y * TilePixels >= ymax + 1)
+                if ((x + 1) * TilePixels <= xmin || x * TilePixels >= xmax || (y + 1) * TilePixels <= ymin ||
+                    y * TilePixels >= ymax)
                     continue;
                 for (unsigned z = first; z <= last; ++z)
                 {
@@ -90,11 +89,11 @@ std::vector<unsigned> Reference(const std::vector<ObjectBounds> &objects)
         for (unsigned y = 0; y < BlurY; ++y)
             for (unsigned x = 0; x < BlurX; ++x)
             {
-                if (!((x + 1) * BlurPixels <= xmin - 1 || x * BlurPixels >= xmax + 1 ||
-                      (y + 1) * BlurPixels <= ymin - 1 || y * BlurPixels >= ymax + 1))
+                if (!((x + 1) * BlurPixels <= xmin || x * BlurPixels >= xmax || (y + 1) * BlurPixels <= ymin ||
+                      y * BlurPixels >= ymax))
                     out[BlurOffset + y * BlurX + x] |= 4u;
-                if ((x + 1) * BlurPixels <= xmin - pad || x * BlurPixels >= xmax + pad ||
-                    (y + 1) * BlurPixels <= ymin - pad || y * BlurPixels >= ymax + pad)
+                if ((x + 1) * BlurPixels <= xmin || x * BlurPixels >= xmax || (y + 1) * BlurPixels <= ymin ||
+                    y * BlurPixels >= ymax)
                     continue;
                 out[BlurOffset + y * BlurX + x] |=
                     ((unsigned(lo[3]) & 2) ? 1u : 0u) | ((unsigned(lo[3]) & 4) ? 2u : 0u);
@@ -140,8 +139,15 @@ bool RunBoundsTest(nvrhi::IDevice *device)
                                             .setInitialState(nvrhi::ResourceStates::UnorderedAccess)
                                             .setKeepInitialState(true));
     auto screenReadback = device->createStagingTexture(screen->getDesc(), nvrhi::CpuAccessMode::Read);
+    auto camera = device->createBuffer(nvrhi::BufferDesc()
+                                           .setByteSize(10 * 16)
+                                           .setCanHaveTypedViews(true)
+                                           .setFormat(nvrhi::Format::RGBA32_FLOAT)
+                                           .setInitialState(nvrhi::ResourceStates::CopyDest)
+                                           .setKeepInitialState(true));
     auto bindings = nvrhi::BindingSetDesc()
                         .addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(0, input))
+                        .addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(15, camera))
                         .addItem(nvrhi::BindingSetItem::TypedBuffer_UAV(0, output))
                         .addItem(nvrhi::BindingSetItem::Texture_UAV(1, screen));
     nvrhi::BindingLayoutHandle layout;
@@ -203,8 +209,10 @@ bool RunBoundsTest(nvrhi::IDevice *device)
         nvrhi::ComputePipelineDesc().setComputeShader(physicalShader).addBindingLayout(physicalLayout));
     auto commands = device->createCommandList();
     std::mt19937 random(531);
-    for (unsigned test = 0; test < 37; ++test)
+    for (unsigned run = 0; run < 76; ++run)
     {
+        const unsigned test = run % 38;
+        const bool slopeSplat = run >= 38;
         std::vector<ObjectBounds> objects;
         if (test == 0)
             objects.push_back({{-.8f, -.6f, 2, 3}, {.8f, .6f, 3, 96}}); // RGB frost
@@ -236,8 +244,14 @@ bool RunBoundsTest(nvrhi::IDevice *device)
             objects.push_back({{-.8f, 4.f, -1.f, 7}, {.8f, 5.f, 1.f, 8192}}); // Above, crossing near
         if (test == 36)
             objects.push_back({{-.1f, -.1f, -1.f, 7}, {.1f, .1f, 1.f, 8192}}); // Genuine near-plane crossing
+        if (test == 37)
+            objects.push_back({{-1.f, -1.f, 78.f, 1}, {1.f, 1.f, 82.f, 0}}); // Push capped at far grid endpoint
         // Every third frame is empty, testing old mask data cannot survive.
-        const auto expected = Reference(objects);
+        // CPU/GPU projection may straddle an integer pixel by a few ULPs.
+        // Bound that disagreement to 1/1000 pixel in the oracle only; production
+        // has no pixel padding. All depth payload bits still require exact matches.
+        const auto required = Reference(objects, slopeSplat, -.001f);
+        const auto allowed = Reference(objects, slopeSplat, .001f);
         std::vector<std::array<float, 4>> data = {
             {{Width, Height, TilePixels, BlurPixels}}, {{1, 1, .05f, 80}}, {{1, float(objects.size()), 0, 0}}};
         for (const auto &o : objects)
@@ -249,6 +263,9 @@ bool RunBoundsTest(nvrhi::IDevice *device)
         commands->clearTextureUInt(screen, nvrhi::AllSubresources, 0);
         commands->clearBufferUInt(output, 0);
         commands->writeBuffer(input, data.data(), data.size() * 16);
+        std::array<std::array<float, 4>, 10> cameraData{};
+        cameraData[9][0] = float(slopeSplat);
+        commands->writeBuffer(camera, cameraData.data(), sizeof(cameraData));
         if (!objects.empty())
         {
             commands->setComputeState(nvrhi::ComputeState().setPipeline(pipeline).addBindingSet(set));
@@ -281,17 +298,17 @@ bool RunBoundsTest(nvrhi::IDevice *device)
         device->unmapStagingTexture(screenReadback);
         unsigned mismatch = OutputWords;
         for (unsigned i = 0; i < OutputWords; ++i)
-            if (actual[i] != expected[i])
+            if ((actual[i] & required[i]) != required[i] || (actual[i] & ~allowed[i]) != 0)
             {
                 mismatch = i;
                 break;
             }
         if (mismatch != OutputWords)
-            printf("Bounds case %u mismatch word %u: GPU=%u CPU=%u\n", test, mismatch, actual[mismatch],
-                   expected[mismatch]);
+            printf("Bounds case %u mismatch word %u: GPU=%u required=%u allowed=%u\n", test, mismatch, actual[mismatch],
+                   required[mismatch], allowed[mismatch]);
         if (mismatch != OutputWords)
             return false;
-        auto warpExpected = avboit::BuildDepthWarp(std::vector<unsigned>(expected.begin(), expected.begin() + 2048));
+        auto warpExpected = avboit::BuildDepthWarp(std::vector<unsigned>(actual.begin(), actual.begin() + 2048));
         auto warpActual = static_cast<const unsigned *>(device->mapBuffer(warpReadback, nvrhi::CpuAccessMode::Read));
         bool warpMatches = warpActual && std::equal(warpExpected.begin(), warpExpected.end(), warpActual);
         if (warpActual)
@@ -307,7 +324,7 @@ bool RunBoundsTest(nvrhi::IDevice *device)
                 for (unsigned z = 0; z < 2048; ++z)
                 {
                     unsigned source = (kind ? RgbOffset : ScalarOffset) + tile * 64 + z / 32;
-                    if ((expected[source] & (1u << (z % 32))) == 0)
+                    if ((actual[source] & (1u << (z % 32))) == 0)
                         continue;
                     unsigned accepted = z / (2048 / warpExpected[0]);
                     unsigned first = std::min(126u, warpExpected[2 + accepted * 2]);
@@ -325,7 +342,7 @@ bool RunBoundsTest(nvrhi::IDevice *device)
             printf("Physical occupancy case %u FAILED\n", test);
             return false;
         }
-        printf("Bounds + frost -> Adaptive Z -> physical masks case %u PASS\n", test);
+        printf("Bounds + frost -> Adaptive Z -> physical masks case %u slope=%u PASS\n", test, unsigned(slopeSplat));
         device->runGarbageCollection();
     }
     return true;

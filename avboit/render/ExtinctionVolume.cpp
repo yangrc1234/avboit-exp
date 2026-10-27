@@ -102,7 +102,6 @@ void ExtinctionVolume::Create(nvrhi::IDevice *device, const ExtinctionInputs &in
     };
     m_boundsPass = compute(D().addItem(B::TypedBuffer_SRV(0, inputs.bounds))
                                .addItem(B::TypedBuffer_SRV(15, inputs.camera))
-                               .addItem(B::TypedBuffer_SRV(16, inputs.frostFootprints))
                                .addItem(B::TypedBuffer_UAV(2, inputs.frostWorkMask))
                                .addItem(B::TypedBuffer_UAV(5, inputs.frostRectangles, nvrhi::Format::R32_UINT))
                                .addItem(B::TypedBuffer_UAV(0, m_masks))

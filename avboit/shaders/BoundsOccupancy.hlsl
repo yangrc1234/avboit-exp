@@ -4,14 +4,15 @@
 // Header: (width,height,oitTilePixels,blurTilePixels),
 //         (projectionScaleX,projectionScaleY,nearDepth,farDepth),
 //         (logLinearization,objectCount,0,0).
-// Per object: (viewMin.xyz,flags), (viewMax.xyz,maximumOffsetPixels).
+// Per object: (viewMin.xyz,flags), (viewMax.xyz,reserved).
 // Flags: 1 RGB extinction, 2 frost, 4 sharp refraction; bits 3+ are the maximum mip.
-// FrostSchedule adds precomputed reconstruction/kernel/group halos directly to
-// the projected actor bounds. All rectangles are half-open pixel intervals.
+// Only the first Gaussian level is masked, directly from actor bounds.
+// All rectangles are half-open pixel intervals, without pixel borders.
 Buffer<float4> Bounds : register(t0);
 RWBuffer<uint> Masks : register(u0);
 RWTexture2D<uint> ScreenTiles : register(u1); // frost=1, sharp=2, transparency/B cache=4
 #include "FrostSchedule.hlsli"
+#include "DepthMapping.hlsli"
 #define VIRTUAL_SLICES 2048
 #define WORDS_PER_TILE 64
 
@@ -19,11 +20,10 @@ groupshared int4 projectedRectangle;
 groupshared uint2 sliceRange;
 groupshared uint objectFlags;
 groupshared uint rejected;
-groupshared float blurSupport;
 
 uint DepthSlice(float z, float nearLog, float farZ)
 {
-    return min(2047u, uint(max(0., log2(1. + max(z, 0.) / nearLog) / log2(1. + farZ / nearLog) * 2048.)));
+    return min(2047u, uint(NormalizedLogDepth(z, farZ, nearLog) * 2048.));
 }
 
 void RasterBounds(uint3 group, uint lane, bool schedule)
@@ -40,15 +40,10 @@ void RasterBounds(uint3 group, uint lane, bool schedule)
     {
         float4 lower = Bounds[3 + group.x * 2], upper = Bounds[4 + group.x * 2];
         objectFlags = uint(lower.w);
-        blurSupport = max(upper.w, 0.);
         rejected = upper.z < projection.z || lower.z > projection.w;
-        // Reject the actual target bounds BEFORE expanding any sampling halo.
-        // Near-plane crossing alone does not imply the object intersects the
-        // view: when looking up, a pane below the frustum can still straddle Z=0.
-        // Maximize each side-plane equation over the AABB; a one-pixel guard
-        // absorbs transform/raster rounding without turning off-screen effects
-        // into full-screen requests (even with large refraction offsets).
-        float2 sideZ = upper.z * (1. + 2. / screen.xy);
+        // Near-plane crossing alone does not imply intersection with the view.
+        // Maximize each side-plane equation over the AABB.
+        float2 sideZ = upper.z.xx;
         rejected |= any(sideZ + projection.xy * upper.xy < -1e-5) || any(sideZ - projection.xy * lower.xy < -1e-5);
         float2 low = float2(0, 0), high = screen.xy;
         // Near-plane crossing uses a full-screen conservative fallback.
@@ -69,15 +64,19 @@ void RasterBounds(uint3 group, uint lane, bool schedule)
         // Sampling expansion is only needed for potentially visible surfaces.
         sliceRange =
             uint2(DepthSlice(lower.z, Bounds[2].x, projection.w), DepthSlice(upper.z, Bounds[2].x, projection.w));
+        // Expand only Z. Both global warp occupancy and per-tile scalar/RGB masks
+        // consume this interval, so sparse clearing/integration cover every push.
+        if (Camera[9].x != 0)
+            sliceRange.y = min(VIRTUAL_SLICES - 1u, sliceRange.y + SlopeSplatGuardSlices);
     }
     GroupMemoryBarrierWithGroupSync();
     if (rejected != 0)
         return;
     if (schedule)
-        ScheduleFrost(projectedRectangle, objectFlags, blurSupport, lane);
+        ScheduleFrost(projectedRectangle, objectFlags, lane);
     // XY projection performed once. Tile raster uses one conservative rectangle.
-    int2 first = max(int2(0, 0), int2(floor((float2(projectedRectangle.xy) - 1.) / oitPitch)));
-    int2 end = min(int2(oitSize), int2(ceil((float2(projectedRectangle.zw) + 1.) / oitPitch)));
+    int2 first = max(int2(0, 0), int2(floor(float2(projectedRectangle.xy) / oitPitch)));
+    int2 end = min(int2(oitSize), int2(ceil(float2(projectedRectangle.zw) / oitPitch)));
     uint2 extent = uint2(max(end - first, 0));
     uint xyCount = extent.x * extent.y;
     if (xyCount > 0)
@@ -98,29 +97,17 @@ void RasterBounds(uint3 group, uint lane, bool schedule)
         }
     }
     // Includes zero-extinction special interfaces: their resolve is still needed.
-    int2 screenFirst = max(int2(0, 0), int2(floor((float2(projectedRectangle.xy) - 1.) / screen.w)));
-    int2 screenEnd = min(int2(blurSize), int2(ceil((float2(projectedRectangle.zw) + 1.) / screen.w)));
+    int2 screenFirst = max(int2(0, 0), int2(floor(float2(projectedRectangle.xy) / screen.w)));
+    int2 screenEnd = min(int2(blurSize), int2(ceil(float2(projectedRectangle.zw) / screen.w)));
     uint2 screenExtent = uint2(max(screenEnd - screenFirst, 0));
-    // Diagnostic envelope only. B prime draws these same tiles with a 1px
-    // producer border; no dedicated B mask or sampling-radius expansion.
+    // Diagnostic envelope only. B prime draws these exact tiles.
     if (schedule && lane == 0 && all(screenExtent > 0))
-        Envelope(10, int4(max(screenFirst * 64 - 1, 0), min(screenEnd * 64 + 1, int2(screen.xy))));
+        Envelope(10, int4(screenFirst * 64, min(screenEnd * 64, int2(screen.xy))));
     for (uint work = lane; work < screenExtent.x * screenExtent.y; work += 64)
     {
         uint2 tile = uint2(screenFirst) + uint2(work % screenExtent.x, work / screenExtent.x);
-        InterlockedOr(ScreenTiles[tile], 4u);
-    }
-    // Only once in XY, independent of the number of occupied Z words.
-    if ((objectFlags & 6) != 0)
-    {
-        int2 blurFirst = max(int2(0, 0), int2(floor((float2(projectedRectangle.xy) - blurSupport) / screen.w)));
-        int2 blurEnd = min(int2(blurSize), int2(ceil((float2(projectedRectangle.zw) + blurSupport) / screen.w)));
-        uint2 size = uint2(max(blurEnd - blurFirst, 0));
-        for (uint work = lane; work < size.x * size.y; work += 64)
-        {
-            uint2 tile = uint2(blurFirst) + uint2(work % size.x, work / size.x);
-            InterlockedOr(ScreenTiles[tile], ((objectFlags & 2) != 0 ? 1u : 0u) | ((objectFlags & 4) != 0 ? 2u : 0u));
-        }
+        uint bits = 4u | ((objectFlags & 2) != 0 ? 1u : 0u) | ((objectFlags & 4) != 0 ? 2u : 0u);
+        InterlockedOr(ScreenTiles[tile], bits);
     }
 }
 
@@ -133,7 +120,7 @@ void RasterBounds(uint3 group, uint lane, bool schedule)
     {
         uint flags = uint(Bounds[2].z);
         if ((flags & 1u) != 0)
-            ScheduleFrost(int4(0, 0, Camera[6].xy), 2u | (uint(Bounds[2].w) << 3), 0, lane);
+            ScheduleFrost(int4(0, 0, Camera[6].xy), 2u | (uint(Bounds[2].w) << 3), lane);
     }
     RasterBounds(group, lane, true);
 }
