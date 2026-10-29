@@ -21,10 +21,13 @@ struct TransparencyInputs
     unsigned depthBudget = 128;
     bool fixedDepth = false, hardwareDepth = false;
     bool halfAccumulation = false, fullVfx = true;
+    bool lowResolutionVolumes = false;
     nvrhi::BufferHandle vertices, bounds, camera, materials, interfaceIndices, geometryIndices;
     nvrhi::BufferRange transparentRange;
     nvrhi::TextureHandle opaqueColorDepth;
-    nvrhi::TextureHandle opaqueHardwareDepth;
+    nvrhi::TextureHandle opaqueHardwareDepth, volumeDensity;
+    nvrhi::BufferHandle volumeLights;
+    nvrhi::TextureHandle regularLightDepth, lightMoments, lightOpticalDepth;
     nvrhi::SamplerHandle linear;
     nvrhi::TextureHandle frostNormal;
     nvrhi::SamplerHandle frostSampler;

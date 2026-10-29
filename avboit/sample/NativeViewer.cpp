@@ -70,6 +70,12 @@ class NativeViewer : public app::IRenderPass
     avboit::SceneData scene;
     bool useDonutScene = false;
     std::unique_ptr<avboit::DonutSceneHost> donutScene;
+    avboit::VolumeLighting volumeLighting;
+    avboit::SceneLightingSettings sceneLighting;
+    bool lowResolutionVolumes = false, stochasticVolumeUpsample = false;
+    unsigned volumeSampleFrame = 0;
+    std::vector<avboit::StressVolume> localVolumes;
+    std::vector<unsigned> localVolumeRecords;
     bool halfAccumulation = false, halfComposition = false, fullVfx = true, allInterface = false, animateOrder = false;
     unsigned submissionOrder = 0, orderSeed = 1, orderFrame = 0, uploadedOrder = 0, uploadedOrderSeed = 1;
     unsigned depthBudget = 128;
@@ -121,7 +127,7 @@ class NativeViewer : public app::IRenderPass
     nvrhi::IBuffer *masks = nullptr, *warp = nullptr, *extinction = nullptr, *physicalMasks = nullptr;
     nvrhi::ITexture *lut = nullptr;
     nvrhi::TextureHandle opaque, depth;
-    nvrhi::TextureHandle frostNormal;
+    nvrhi::TextureHandle frostNormal, volumeDensity;
     nvrhi::SamplerHandle frostSampler;
     nvrhi::ITexture *numerator = nullptr, *denominator = nullptr, *totalTau = nullptr;
     nvrhi::ITexture *backNumerator = nullptr;
@@ -201,7 +207,8 @@ class NativeViewer : public app::IRenderPass
                    {float(qBound), float(protectBackground), backgroundThreshold,
                     float((zeroTShortcut ? 1 : 0) | (zeroDepth ? 2 : 0) | (mirrorBlur ? 4 : 0) | (fullVfx ? 8 : 0))},
                    {float(chain.width), float(chain.height), float(chain.mipCount), tileResolve ? 0.f : 1.f},
-                   {float(slopeSplat), frostDetailRadius, frostNormalTiling, 0}}};
+                   {float(slopeSplat), frostDetailRadius, frostNormalTiling,
+                    stochasticVolumeUpsample ? float(1 + (volumeSampleFrame++ % 4096)) : 0.f}}};
         auto projected = bounds;
         auto animatedBounds = bounds;
         {
@@ -361,7 +368,9 @@ class NativeViewer : public app::IRenderPass
         auto *permutations =
             (transparency || std::string(file) == "shaders/ZeroTransmittance.hlsl" ||
              std::string(file) == "shaders/OitResolve.hlsl" || std::string(file) == "shaders/FrostComposition.hlsl" ||
-             std::string(file) == "shaders/ResolveTiles.hlsl")
+             std::string(file) == "shaders/ResolveTiles.hlsl" ||
+             std::string(file) == "shaders/LocalVolumeExtinction.hlsl" ||
+             std::string(file) == "shaders/LocalVolumeAccumulation.hlsl")
                 ? &defines
                 : nullptr;
         auto shader = shaders->CreateShader(file, entry, permutations, type);
@@ -542,6 +551,17 @@ class NativeViewer : public app::IRenderPass
         emissiveGain = gain;
     }
     void SetEmissiveFront(bool front) { emissiveFront = front; }
+    void SetVolumeResolution(bool half, bool stochastic)
+    {
+        lowResolutionVolumes = half;
+        stochasticVolumeUpsample = stochastic;
+    }
+    void SetSceneLighting(float sun, float spot, bool shadows)
+    {
+        sceneLighting.sunIntensity = sun;
+        sceneLighting.spotIntensity = spot;
+        sceneLighting.volumeShadows = shadows;
+    }
     void SetDonutScene(bool enabled) { useDonutScene = enabled; }
     void SetCompactOptions(bool half, bool full, bool all)
     {
@@ -896,6 +916,18 @@ class NativeViewer : public app::IRenderPass
                 }
             }
         }
+        if (donutScene && ImGui::CollapsingHeader("Dynamic lighting / volume shadows"))
+        {
+            ImGui::Checkbox("Animate spot light", &sceneLighting.animateSpot);
+            ImGui::Checkbox("Volumetric moment shadows", &sceneLighting.volumeShadows);
+            ImGui::SliderFloat("Sun irradiance", &sceneLighting.sunIntensity, 0.f, 12.f);
+            ImGui::SliderFloat3("Sun direction", sceneLighting.sunDirection.data(), -1.f, 1.f);
+            ImGui::SliderFloat("Spot intensity", &sceneLighting.spotIntensity, 0.f, 500.f);
+            ImGui::DragFloat3("Spot position", sceneLighting.spotPosition.data(), .05f);
+            ImGui::DragFloat3("Spot target", sceneLighting.spotTarget.data(), .05f);
+            ImGui::TextWrapped("Regular depth shadows + independent volumetric moments. Sun: two 256px cascades. Spot: "
+                               "256px. Moments are evaluated only for lights overlapping volume bounds.");
+        }
         if (ImGui::CollapsingHeader("Custom resolution / camera"))
         {
             ImGui::InputInt2("Internal width / height", customRenderSize);
@@ -920,6 +952,12 @@ class NativeViewer : public app::IRenderPass
         if (ImGui::CollapsingHeader("Resolve pipeline", ImGuiTreeNodeFlags_DefaultOpen))
         {
             ImGui::Checkbox("Cull empty resolve tiles", &tileResolve);
+            ImGui::Checkbox("Stochastic volume upsample (requires TAA)", &stochasticVolumeUpsample);
+            if (ImGui::Checkbox("Half-resolution local volumes", &lowResolutionVolumes))
+            {
+                rebuildRequested = true;
+                preserveMaterialsOnRebuild = true;
+            }
             ImGui::TextWrapped("B prime on transparency tiles. Resolve into temporary color, then copy tiles to "
                                "SceneColor. q stays in registers; no I/R/q caches.");
         }
@@ -1152,6 +1190,21 @@ class NativeViewer : public app::IRenderPass
             frostSampler = device->createSampler(
                 nvrhi::SamplerDesc().setAllFilters(true).setAllAddressModes(nvrhi::SamplerAddressMode::Wrap));
         }
+        if (stressPreset >= 24 && !volumeDensity)
+        {
+            engine::TextureCache cache(device, fs, nullptr);
+            auto path = app::GetDirectoryWithExecutable() / "textures/smoke-volume.dds";
+            commands->open();
+            auto loaded = cache.LoadTextureFromFile(path, false, nullptr, commands);
+            if (!loaded || !loaded->texture)
+                throw std::runtime_error("Cannot load volume density: " + path.string());
+            volumeDensity = loaded->texture;
+            commands->close();
+            device->executeCommandList(commands);
+            device->waitForIdle();
+        }
+        if (stressPreset < 24)
+            volumeDensity = nullptr;
         profiler.Initialize(device, detailedProfiling, profilingEnabled);
         cameraBuffer = Buffer(sizeof(camera), nvrhi::Format::RGBA32_FLOAT, false, "Camera and material controls");
         bounds = {{{float(Width), float(Height), float(volumeScale * 8), 64}},
@@ -1241,6 +1294,28 @@ class NativeViewer : public app::IRenderPass
             if (q.motion != F3{})
                 fixtureMotions.push_back({first, object, q.motion, q.frequency});
         }
+        localVolumes.clear();
+        localVolumeRecords.clear();
+        for (auto volume : fixture.volumes)
+        {
+            if (useSponza)
+                volume.center[1] += 1.75f;
+            localVolumes.push_back(volume);
+            localVolumeRecords.push_back(unsigned(vertices.size()));
+            objectFirstRecords.push_back(unsigned(vertices.size()));
+            for (unsigned corner = 0; corner < 6; ++corner)
+            {
+                vertices.push_back({volume.center[0], volume.center[1], volume.center[2], volume.textured ? 6.f : 5.f});
+                vertices.push_back({volume.source[0], volume.source[1], volume.source[2], 1});
+                vertices.push_back({volume.extinction[0], volume.extinction[1], volume.extinction[2], 0});
+                vertices.push_back({volume.extent[0], volume.extent[1], volume.extent[2], float(corner)});
+            }
+            bounds.push_back({volume.center[0] - volume.extent[0], volume.center[1] - volume.extent[1],
+                              volume.center[2] - volume.extent[2], 1});
+            bounds.push_back({volume.center[0] + volume.extent[0], volume.center[1] + volume.extent[1],
+                              volume.center[2] + volume.extent[2], 0});
+            ++objectCount;
+        }
         transparentVertices = unsigned(vertices.size() / 4) - opaqueVertices;
         bounds[2][1] = float(objectCount);
         float pattern = float(vfxMode == 3 ? 2 : vfxMode);
@@ -1318,15 +1393,6 @@ class NativeViewer : public app::IRenderPass
         submittedVertices = vertices;
         interfaceIndices.clear();
         interfaceSelectionDirty = true;
-        CreateRenderResources();
-        commands->open();
-        commands->writeBuffer(vertexBuffer, vertices.data(), vertices.size() * 16);
-        commands->writeBuffer(boundsBuffer, bounds.data(), bounds.size() * 16);
-        if (!opaqueSubmission.indices.empty())
-            commands->writeBuffer(opaqueIndexBuffer, opaqueSubmission.indices.data(),
-                                  opaqueSubmission.indices.size() * 4);
-        commands->close();
-        device->executeCommandList(commands);
         if (useSponza)
         {
             if (useDonutScene && !donutScene)
@@ -1339,7 +1405,19 @@ class NativeViewer : public app::IRenderPass
                                  app::GetDirectoryWithExecutable() / "shaders/framework" /
                                      app::GetShaderTypeName(device->getGraphicsAPI()));
             }
-            else if (!useDonutScene)
+        }
+        CreateRenderResources();
+        commands->open();
+        commands->writeBuffer(vertexBuffer, vertices.data(), vertices.size() * 16);
+        commands->writeBuffer(boundsBuffer, bounds.data(), bounds.size() * 16);
+        if (!opaqueSubmission.indices.empty())
+            commands->writeBuffer(opaqueIndexBuffer, opaqueSubmission.indices.data(),
+                                  opaqueSubmission.indices.size() * 4);
+        commands->close();
+        device->executeCommandList(commands);
+        if (useSponza)
+        {
+            if (!useDonutScene)
                 LoadScene();
         }
         return true;
@@ -1369,6 +1447,10 @@ class NativeViewer : public app::IRenderPass
             device->createFramebuffer(nvrhi::FramebufferDesc().addColorAttachment(opaque).setDepthAttachment(depth));
         using B = nvrhi::BindingSetItem;
         using D = nvrhi::BindingSetDesc;
+        volumeLighting.Create(device, Shader("main", nvrhi::ShaderType::Compute, "shaders/VolumeShadow.hlsl"),
+                              volumeDensity, linear, unsigned(localVolumes.size()), donutScene != nullptr);
+        if (donutScene)
+            donutScene->SetVolumeLighting(volumeLighting);
         avboit::TransparencyInputs inputs;
         inputs.applyVfx = HasVfxDraws();
         inputs.hardwareDepth = hardwareDepth;
@@ -1380,6 +1462,7 @@ class NativeViewer : public app::IRenderPass
         inputs.volumeHeight = volumeHeight;
         inputs.objectCount = objectCount;
         inputs.halfAccumulation = halfAccumulation;
+        inputs.lowResolutionVolumes = lowResolutionVolumes;
         inputs.frostMipCount = frostMipCount;
         inputs.fullVfx = fullVfx;
         inputs.interfaceIndices = interfaceIndexBuffer;
@@ -1393,6 +1476,11 @@ class NativeViewer : public app::IRenderPass
         inputs.opaqueHardwareDepth = depth;
         inputs.linear = linear;
         inputs.frostNormal = frostNormal;
+        inputs.volumeDensity = volumeDensity;
+        inputs.volumeLights = volumeLighting.lights;
+        inputs.regularLightDepth = donutScene ? donutScene->ShadowTexture() : volumeLighting.fallbackDepth.Get();
+        inputs.lightMoments = volumeLighting.moments;
+        inputs.lightOpticalDepth = volumeLighting.opticalDepth;
         inputs.frostSampler = frostSampler;
         // The sample currently shares compiled shader programs. The renderer
         // receives a separate shader set per material, so an actor can replace
@@ -1408,6 +1496,19 @@ class NativeViewer : public app::IRenderPass
         {
             auto shaders = commonShaders;
             shaders.cullMode = material.kind == 4 ? nvrhi::RasterCullMode::Back : nvrhi::RasterCullMode::None;
+            if (material.kind == 5 || material.kind == 6)
+            {
+                shaders.extinctionVertex =
+                    Shader("volumeVertex", nvrhi::ShaderType::Vertex, "shaders/LocalVolumeExtinction.hlsl");
+                shaders.accumulationVertex = shaders.extinctionVertex;
+                shaders.halfResolutionPixel =
+                    Shader(material.kind == 6 ? "texturedAccumulationHalf" : "volumeAccumulationHalf",
+                           nvrhi::ShaderType::Pixel, "shaders/LocalVolumeAccumulation.hlsl");
+                shaders.extinctionPixel = Shader(material.kind == 6 ? "texturedExtinction" : "volumeExtinction",
+                                                 nvrhi::ShaderType::Pixel, "shaders/LocalVolumeExtinction.hlsl");
+                shaders.accumulationPixel = Shader(material.kind == 6 ? "texturedAccumulation" : "volumeAccumulation",
+                                                   nvrhi::ShaderType::Pixel, "shaders/LocalVolumeAccumulation.hlsl");
+            }
             inputs.materialShaders.push_back(std::move(shaders));
         }
         const unsigned vfxByteOffset = (opaqueVertices + transparentVertices) * 64;
@@ -1628,7 +1729,18 @@ class NativeViewer : public app::IRenderPass
             {
                 AVBOIT_GPU_SCOPE(commands, "Shadow", profiler.Route(commands, Stage::Shadow));
                 if (donutScene)
+                {
+                    donutScene->UpdateLights(time, navigation.Eye(), sceneLighting);
                     donutScene->RecordShadow(commands, redrawShadows);
+                }
+                for (unsigned actor = 0; actor < localVolumes.size(); ++actor)
+                {
+                    const auto &material = materials.entries[unsigned(vertices[localVolumeRecords[actor] + 1][3])];
+                    for (unsigned c = 0; c < 3; ++c)
+                        localVolumes[actor].extinction[c] = material.transmission[c];
+                }
+                volumeLighting.Record(commands, donutScene ? donutScene->LightingData() : avboit::VolumeLightData{},
+                                      localVolumes);
                 // The current shadow casters, alpha masks and directional-light matrix
                 // are static. Camera motion and transparent fixtures do not invalidate
                 // this map. Init/scene rebuilding always resets shadowDirty.
@@ -1818,19 +1930,22 @@ class NativeViewer : public app::IRenderPass
         GetDevice()->unmapStagingTexture(vfxReadback);
         {
             // Diagnostic captures are outside rendering/timing.
-            auto captureRaw = [&](nvrhi::ITexture *source, const char *filename, unsigned bytesPerPixel)
+            auto captureRaw =
+                [&](nvrhi::ITexture *source, const char *filename, unsigned bytesPerPixel, unsigned slice = 0)
             {
                 if (!source)
                     return;
                 auto readback = GetDevice()->createStagingTexture(source->getDesc(), nvrhi::CpuAccessMode::Read);
                 commands->open();
-                commands->copyTexture(readback, {}, source, {});
+                nvrhi::TextureSlice subresource;
+                subresource.arraySlice = slice;
+                commands->copyTexture(readback, subresource, source, subresource);
                 commands->close();
                 GetDevice()->executeCommandList(commands);
                 GetDevice()->waitForIdle();
                 size_t rowPitch = 0;
                 auto bytes = static_cast<const char *>(
-                    GetDevice()->mapStagingTexture(readback, {}, nvrhi::CpuAccessMode::Read, &rowPitch));
+                    GetDevice()->mapStagingTexture(readback, subresource, nvrhi::CpuAccessMode::Read, &rowPitch));
                 if (!bytes)
                     throw std::runtime_error("Depth ABI readback failed");
                 std::ofstream file(filename, std::ios::binary);
@@ -1932,6 +2047,15 @@ class NativeViewer : public app::IRenderPass
                 file.write(static_cast<const char *>(bytes), source->getDesc().byteSize);
                 GetDevice()->unmapBuffer(readback);
             };
+            captureBuffer(volumeLighting.lights, "native-volume-lights.f32");
+            if (donutScene && !localVolumes.empty() && sceneLighting.volumeShadows)
+                for (unsigned slice = 0; slice < 3; ++slice)
+                {
+                    const std::string suffix = std::to_string(slice);
+                    captureRaw(volumeLighting.moments, ("native-light-moments-" + suffix + ".unorm16").c_str(), 8,
+                               slice);
+                    captureRaw(volumeLighting.opticalDepth, ("native-light-tau-" + suffix + ".f16").c_str(), 2, slice);
+                }
             captureBuffer(warp, "native-warp.u32");
             captureBuffer(transparency.Volume().ZeroDrawArgs(), "native-zero-draw-args.u32");
             captureBuffer(transparency.Volume().ZeroCandidates(), "native-zero-candidates.u32");
@@ -2040,6 +2164,8 @@ int main(int argc, const char **argv)
         viewer.SetFollowWindow(o.followWindow);
         viewer.SetHardwareDepth(o.hardwareDepth);
         viewer.SetDonutScene(o.donutScene);
+        viewer.SetSceneLighting(o.sunIntensity, o.spotIntensity, o.volumeShadows);
+        viewer.SetVolumeResolution(o.lowResolutionVolumes, o.stochasticVolumeUpsample);
         viewer.SetCalibration(o.calibrationBoard, o.emissiveGain);
         viewer.SetEmissiveFront(o.emissiveFront);
         viewer.SetOccupancyOverlay(o.occupancyOverlay, o.occupancySlice);

@@ -20,7 +20,8 @@ struct ExtinctionInputs
     nvrhi::BufferHandle frostWorkMask, frostRectangles;
     nvrhi::BufferRange vertexRange;
     nvrhi::TextureHandle opaqueColorDepth;
-    nvrhi::TextureHandle opaqueHardwareDepth;
+    nvrhi::TextureHandle opaqueHardwareDepth, volumeDensity;
+    nvrhi::SamplerHandle linear;
     ExtinctionShaders shaders;
     std::vector<MaterialShaders> materialShaders;
 };

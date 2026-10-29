@@ -12,6 +12,9 @@ void OitResolve::Create(nvrhi::IDevice *device, const OitResolveInputs &inputs)
 {
     m_accumulation = {};
     m_backgroundPass = {};
+    m_lowAccumulation = {};
+    m_upsample = {};
+    m_lowPipelines.clear();
     m_backgroundTiles = ((inputs.width + 63) / 64) * ((inputs.height + 63) / 64);
     auto texture = [&](const nvrhi::TextureHandle &current, nvrhi::Format format, const char *name)
     {
@@ -56,6 +59,15 @@ void OitResolve::Create(nvrhi::IDevice *device, const OitResolveInputs &inputs)
         desc.addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(15, inputs.camera));
         desc.addItem(nvrhi::BindingSetItem::Texture_SRV(24, inputs.opaqueHardwareDepth));
         desc.addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(23, inputs.materials));
+        if (additive && inputs.volumeDensity)
+            desc.addItem(nvrhi::BindingSetItem::Texture_SRV(26, inputs.volumeDensity));
+        if (additive && inputs.volumeLights)
+        {
+            desc.addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(27, inputs.volumeLights));
+            desc.addItem(nvrhi::BindingSetItem::Texture_SRV(28, inputs.regularLightDepth));
+            desc.addItem(nvrhi::BindingSetItem::Texture_SRV(29, inputs.lightMoments));
+            desc.addItem(nvrhi::BindingSetItem::Texture_SRV(31, inputs.lightOpticalDepth));
+        }
         pass.layout = nullptr;
         pass.bindings = nullptr;
         if (!nvrhi::utils::CreateBindingSetAndLayout(device, nvrhi::ShaderType::AllGraphics, 0, desc, pass.layout,
@@ -80,7 +92,7 @@ void OitResolve::Create(nvrhi::IDevice *device, const OitResolveInputs &inputs)
             m_accumulationPipelines.clear();
             for (const auto &material : inputs.materialShaders)
             {
-                pipeline.VS = material.vertex;
+                pipeline.VS = material.accumulationVertex ? material.accumulationVertex : material.vertex;
                 pipeline.PS = material.accumulationPixel;
                 pipeline.renderState.rasterState.cullMode = material.cullMode;
                 m_accumulationPipelines.push_back(
@@ -100,6 +112,59 @@ void OitResolve::Create(nvrhi::IDevice *device, const OitResolveInputs &inputs)
                .addItem(B::Texture_SRV(7, inputs.interfaceDepth))
                .addItem(B::Sampler(0, inputs.linear)),
            nullptr, nullptr, true);
+    if (inputs.lowResolutionVolumes)
+    {
+        nvrhi::FramebufferDesc fb;
+        for (unsigned j = 0; j < 4; ++j)
+        {
+            m_lowTargets[j] = ReuseTexture(device, m_lowTargets[j],
+                                           nvrhi::TextureDesc()
+                                               .setWidth(inputs.width / 2)
+                                               .setHeight(inputs.height / 2)
+                                               .setFormat(accumFormat)
+                                               .setIsRenderTarget(true)
+                                               .setClearValue(nvrhi::Color(0))
+                                               .setUseClearValue(true)
+                                               .setInitialState(nvrhi::ResourceStates::RenderTarget)
+                                               .setKeepInitialState(true)
+                                               .setDebugName("Half-resolution volume accumulation"));
+            fb.addColorAttachment(m_lowTargets[j]);
+        }
+        m_lowAccumulation.framebuffer = device->createFramebuffer(fb);
+        m_lowAccumulation.bindings = m_accumulation.bindings;
+        for (const auto &material : inputs.materialShaders)
+        {
+            nvrhi::GraphicsPipelineHandle low;
+            if (material.halfResolutionPixel)
+            {
+                nvrhi::GraphicsPipelineDesc p;
+                p.VS = material.accumulationVertex ? material.accumulationVertex : material.vertex;
+                p.PS = material.halfResolutionPixel;
+                p.bindingLayouts = {m_accumulation.layout};
+                p.renderState.depthStencilState.depthTestEnable = false;
+                p.renderState.depthStencilState.depthWriteEnable = false;
+                p.renderState.rasterState.cullMode = material.cullMode;
+                for (unsigned j = 0; j < 4; ++j)
+                    p.renderState.blendState.targets[j]
+                        .setBlendEnable(true)
+                        .setSrcBlend(nvrhi::BlendFactor::One)
+                        .setDestBlend(nvrhi::BlendFactor::One);
+                low = device->createGraphicsPipeline(p, m_lowAccumulation.framebuffer->getFramebufferInfo());
+            }
+            m_lowPipelines.push_back(low);
+        }
+        m_upsample.framebuffer = m_accumulation.framebuffer;
+        create(m_upsample,
+               D().addItem(B::Texture_SRV(3, inputs.opaque))
+                   .addItem(B::Texture_SRV(4, m_lowTargets[0]))
+                   .addItem(B::Texture_SRV(5, m_lowTargets[1]))
+                   .addItem(B::Texture_SRV(6, m_lowTargets[2]))
+                   .addItem(B::Texture_SRV(9, m_lowTargets[3]))
+                   .addItem(B::Texture_SRV(7, inputs.interfaceDepth)),
+               inputs.upsampleVertex, inputs.upsamplePixel, false);
+    }
+    else
+        m_lowTargets = {};
     auto resolveBindings = D().addItem(B::TypedBuffer_SRV(1, inputs.warp))
                                .addItem(B::Texture_SRV(2, inputs.lut))
                                .addItem(B::Sampler(0, inputs.linear))
@@ -130,21 +195,45 @@ void OitResolve::RecordAccumulation(nvrhi::ICommandList *commands, const std::ve
 {
     for (auto texture : {m_numerator, m_denominator, m_totalTau, m_backNumerator})
         commands->clearTextureFloat(texture, nvrhi::AllSubresources, nvrhi::Color(0));
-    nvrhi::GraphicsState state;
-    state.framebuffer = m_accumulation.framebuffer;
-    state.bindings = {m_accumulation.bindings};
-    state.viewport.addViewportAndScissorRect(m_accumulation.framebuffer->getFramebufferInfo().getViewport());
-    state.indexBuffer = nvrhi::IndexBufferBinding().setBuffer(m_indices).setFormat(nvrhi::Format::R32_UINT);
-    for (const auto &draw : draws)
+    auto drawPass = [&](bool low)
     {
-        char label[96];
-        snprintf(label, sizeof(label), "Accumulation actor %u / material %u", draw.actor, draw.material);
-        AVBOIT_GPU_SCOPE(commands, label);
-        state.pipeline = m_accumulationPipelines.at(draw.material);
-        commands->setGraphicsState(state);
-        commands->drawIndexed(
-            nvrhi::DrawArguments().setStartIndexLocation(draw.firstIndex).setVertexCount(draw.indexCount));
+        const auto &pass = low ? m_lowAccumulation : m_accumulation;
+        nvrhi::GraphicsState state;
+        state.framebuffer = pass.framebuffer;
+        state.bindings = {pass.bindings};
+        state.viewport.addViewportAndScissorRect(pass.framebuffer->getFramebufferInfo().getViewport());
+        state.indexBuffer = nvrhi::IndexBufferBinding().setBuffer(m_indices).setFormat(nvrhi::Format::R32_UINT);
+        for (const auto &draw : draws)
+        {
+            bool eligible = !m_lowPipelines.empty() && m_lowPipelines.at(draw.material);
+            if (eligible != low)
+                continue;
+            char label[96];
+            snprintf(label, sizeof(label), "Accumulation actor %u / material %u", draw.actor, draw.material);
+            AVBOIT_GPU_SCOPE(commands, label);
+            state.pipeline = low ? m_lowPipelines.at(draw.material) : m_accumulationPipelines.at(draw.material);
+            commands->setGraphicsState(state);
+            commands->drawIndexed(
+                nvrhi::DrawArguments().setStartIndexLocation(draw.firstIndex).setVertexCount(draw.indexCount));
+        }
+    };
+    bool hasLow = false;
+    for (const auto &draw : draws)
+        hasLow |= !m_lowPipelines.empty() && m_lowPipelines.at(draw.material);
+    if (hasLow)
+    {
+        {
+            AVBOIT_GPU_SCOPE(commands, "Half-resolution volume accumulation");
+            for (const auto &target : m_lowTargets)
+                commands->clearTextureFloat(target, nvrhi::AllSubresources, nvrhi::Color(0));
+            drawPass(true);
+        }
+        {
+            AVBOIT_GPU_SCOPE(commands, "Volume bilateral upsample");
+            m_upsample.Record(commands, 3);
+        }
     }
+    drawPass(false);
 }
 void OitResolve::RecordResolve(nvrhi::ICommandList *commands, bool poison) const
 {

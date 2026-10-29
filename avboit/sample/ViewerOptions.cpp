@@ -151,11 +151,21 @@ ViewerOptions ParseViewerOptions(int argc, const char *const *argv)
             options.frostDetailRadius = ReadFloat(arg, value(), 0, 64);
         else if (arg == "--frost-normal-tiling")
             options.frostNormalTiling = ReadFloat(arg, value(), .25f, 64);
+        else if (arg == "--sun-intensity")
+            options.sunIntensity = ReadFloat(arg, value(), 0, 12);
+        else if (arg == "--spot-intensity")
+            options.spotIntensity = ReadFloat(arg, value(), 0, 500);
+        else if (arg == "--volume-stochastic-upsample")
+            options.stochasticVolumeUpsample = true;
+        else if (arg == "--volume-half-res")
+            options.lowResolutionVolumes = true;
+        else if (arg == "--no-volume-shadows")
+            options.volumeShadows = false;
         else if (arg == "--time")
             options.fixtureTime =
                 ReadFloat(arg, value(), -std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
         else if (arg == "--stress")
-            options.stressPreset = ReadInteger(arg, value(), 0, 18);
+            options.stressPreset = ReadInteger(arg, value(), 0, 25);
         else if (arg == "--camera-preset")
             options.cameraPreset = ReadInteger(arg, value(), 0, 9);
         else if (arg == "--benchmark")
@@ -232,7 +242,12 @@ Scene and materials:
   --sponza                   Load Sponza through Donut (default scene backend)
   --legacy-scene             Old Sponza loader for calibration comparisons
   --sponza-path PATH          Explicit Sponza.gltf path; enables Sponza
-  --stress 0..18             Stress preset (18: textured frost); also in ImGui Test case
+  --stress 0..25             Stress preset (19..23: volumes; 24..25: OpenVDB smoke); also in ImGui Test case
+  --sun-intensity N          Sponza sun irradiance (0..12), default 2
+  --spot-intensity N         Sponza dynamic spotlight intensity (0..500), default 80
+  --volume-stochastic-upsample  Experimental blue-noise upsample for final TAA
+  --volume-half-res         Half-resolution local volume accumulation + bilateral upsample
+  --no-volume-shadows        Disable local volume moment shadows for comparison
   --time SECONDS             Finite initial fixture time, default 0
   --glass-sphere             Replace default panes with a sphere
   --rgb-glass                Strong RGB absorption for sphere fixtures

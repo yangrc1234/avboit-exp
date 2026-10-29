@@ -4,6 +4,7 @@
 #include "GeometryDraw.h"
 #include "MaterialShaders.h"
 #include <vector>
+#include <array>
 
 namespace avboit
 {
@@ -11,12 +12,15 @@ struct OitResolveInputs
 {
     unsigned width = 0, height = 0;
     bool halfAccumulation = false;
+    bool lowResolutionVolumes = false;
     nvrhi::BufferHandle vertices, indices, camera, materials, warp;
     nvrhi::BufferRange vertexRange;
     nvrhi::TextureHandle lut, opaque, interfaceDepth, interfaceSurface, interfaceOffset, screenTiles;
-    nvrhi::TextureHandle opaqueHardwareDepth;
+    nvrhi::TextureHandle opaqueHardwareDepth, volumeDensity;
+    nvrhi::BufferHandle volumeLights;
+    nvrhi::TextureHandle regularLightDepth, lightMoments, lightOpticalDepth;
     nvrhi::SamplerHandle linear;
-    nvrhi::ShaderHandle backgroundVertex, backgroundPixel;
+    nvrhi::ShaderHandle backgroundVertex, backgroundPixel, upsampleVertex, upsamplePixel;
     std::vector<MaterialShaders> materialShaders;
 };
 
@@ -45,7 +49,9 @@ class OitResolve
     };
     nvrhi::TextureHandle m_numerator, m_denominator, m_totalTau, m_backNumerator;
     nvrhi::TextureHandle m_background;
-    Pass m_accumulation, m_backgroundPass;
+    Pass m_accumulation, m_backgroundPass, m_lowAccumulation, m_upsample;
+    std::array<nvrhi::TextureHandle, 4> m_lowTargets;
+    std::vector<nvrhi::GraphicsPipelineHandle> m_lowPipelines;
     nvrhi::BufferHandle m_indices;
     std::vector<nvrhi::GraphicsPipelineHandle> m_accumulationPipelines;
     unsigned m_backgroundTiles = 0;

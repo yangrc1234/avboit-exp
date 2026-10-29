@@ -133,6 +133,12 @@ remain a local validation step. See [validation](docs/VALIDATION.md) and
 The runtime package contains the viewer, required shaders and licenses. It does
 not contain tests, build tools or external assets. Its paths are relocatable.
 
+Local-volume experiments are available as ImGui test cases 19-25, including an
+imported OpenVDB smoke sample (24) and its intersection with frosted glass (25).
+See [local volumes](docs/LOCAL_VOLUMES.md) for the AVBOIT integration and limits.
+Use `--sponza --stress 24` for dynamic sun/spot lighting with separate volumetric
+moment shadows, or case 25 to include frosted glass. Light controls are live in ImGui.
+
 ## Scope and licensing
 
 This is a readable experiment rather than a production renderer. Single-interface

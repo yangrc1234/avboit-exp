@@ -16,12 +16,18 @@ struct StressQuad
     float frequency = 1;
     std::array<float, 2> localX = {0, 1}; // material-coordinate center and half-span
 };
+struct StressVolume
+{
+    std::array<float, 3> center, extent, extinction, source;
+    bool textured = false;
+};
 struct StressFixture
 {
     std::vector<StressQuad> opaque, transparent;
+    std::vector<StressVolume> volumes;
     bool sphere = false;
 };
-constexpr unsigned StressPresetCount = 19;
+constexpr unsigned StressPresetCount = 26;
 const char *StressPresetName(unsigned preset);
 StressFixture BuildStressFixture(unsigned preset);
 // View-space prototype receiver: opaque frame and three optical skin panels.

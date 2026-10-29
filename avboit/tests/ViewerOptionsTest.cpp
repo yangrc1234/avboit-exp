@@ -27,6 +27,9 @@ int main()
         Require(defaults.slopeSplat && !Parse({"--no-slope-splat"}).slopeSplat);
         Require(defaults.volumeScale == 8 && Parse({"--camera-preset", "6"}).cameraPreset == 6);
         Require(defaults.occupancyOverlay == 0);
+        Require(!defaults.lowResolutionVolumes && !defaults.stochasticVolumeUpsample);
+        Require(Parse({"--volume-half-res"}).lowResolutionVolumes);
+        Require(Parse({"--volume-stochastic-upsample"}).stochasticVolumeUpsample);
         Require(Parse({"--occupancy-overlay", "7", "--occupancy-slice", "127"}).occupancySlice == 127);
         Require(Parse({"--emissive-front"}).emissiveFront && Parse({"--emissive-front"}).emissiveBalls);
         Require(defaults.fpsLimit == 120 && Parse({"--fps-limit", "0"}).fpsLimit == 0 &&
@@ -94,7 +97,7 @@ int main()
                                                                 {"--sphere-ior", "0.9"},
                                                                 {"--refraction-gain", "5"},
                                                                 {"--stress", "-1"},
-                                                                {"--stress", "19"},
+                                                                {"--stress", "26"},
                                                                 {"--frost-detail-radius", "65"},
                                                                 {"--frost-detail-radius", "-1"},
                                                                 {"--stress", "1.5"},

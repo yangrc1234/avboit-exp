@@ -25,7 +25,14 @@ const char *StressPresetName(unsigned preset)
                                   "Separated frost / refraction tiles",
                                   "Frost edge / uncovered foreground",
                                   "90-degree crossing glass / LUT self-shadow",
-                                  "Textured frost / smooth left, detail right"};
+                                  "Textured frost / smooth left, detail right",
+                                  "Volume / homogeneous box",
+                                  "Volume / overlapping half-density actors",
+                                  "Volume / adjacent depth halves",
+                                  "Volume / intersecting RGB frost",
+                                  "Volume / overlapping colored media",
+                                  "OpenVDB smoke / imported density",
+                                  "OpenVDB smoke / intersecting frost"};
     return names[preset < StressPresetCount ? preset : 0];
 }
 StressFixture BuildStressFixture(unsigned preset)
@@ -215,6 +222,43 @@ StressFixture BuildStressFixture(unsigned preset)
         pane({-.48f, 0, 4}, {.9f, 0, .2f}, {0, .95f, 0}, {.25f, .8f, .95f}, .75f).shape = .3f;
         pane({.5f, 0, 4.3f}, {.85f, 0, -.3f}, {0, .9f, 0}, {.95f, .35f, .2f}, 0, 18);
         smoke({0, .05f, 3}, .25f, {.8f, .8f, .8f, .5f});
+    }
+    if (preset >= 19 && preset <= 23)
+    {
+        StressVolume box{{0, 0, 4.5f}, {1.3f, 1.f, 1.2f}, {.7f, .7f, .7f}, {.4f, .65f, 1.2f}};
+        result.opaque.push_back({{0, 0, 7}, {4, 0, 0}, {0, 3, 0}, {.08f, .08f, .08f, 1}, {0, 0, 0}, 0});
+        if (preset == 20)
+        {
+            box.extinction = {.35f, .35f, .35f};
+            result.volumes = {box, box};
+        }
+        else if (preset == 21)
+        {
+            box.extent[2] = .6f;
+            box.center[2] = 3.9f;
+            result.volumes.push_back(box);
+            box.center[2] = 5.1f;
+            result.volumes.push_back(box);
+        }
+        else
+        {
+            result.volumes.push_back(box);
+            if (preset == 22)
+                pane({0, 0, 4.5f}, {1.45f, 0, .3f}, {0, 1.1f, 0}, {.35f, .75f, .92f}, .55f);
+            if (preset == 23)
+            {
+                box.center = {.6f, .25f, 5.1f};
+                box.extinction = {.9f, .3f, .15f};
+                box.source = {2.f, .4f, .08f};
+                result.volumes.push_back(box);
+            }
+        }
+    }
+    if (preset >= 24)
+    {
+        result.volumes.push_back({{0, 0, 4.5f}, {.85f, 1.7f, .85f}, {3.f, 3.f, 3.f}, {2.f, 2.2f, 2.5f}, true});
+        if (preset == 25)
+            pane({-.45f, 0, 4.5f}, {.7f, 0, .15f}, {0, 1.8f, 0}, {.7f, .85f, .93f}, .55f);
     }
     return result;
 }

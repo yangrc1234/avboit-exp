@@ -22,6 +22,9 @@ struct ViewerOptions
     bool followWindow = false;
     bool redrawShadows = false, hardwareDepth = false, donutScene = false, legacyScene = false;
     float sphereRoughness = 0, planarIor = 1.3f, sphereIor = 1.5f, refractionStrength = 1;
+    float sunIntensity = 2.f, spotIntensity = 80.f;
+    bool volumeShadows = true;
+    bool lowResolutionVolumes = false, stochasticVolumeUpsample = false;
     float fixtureTime = 0, sigmaLimit = 24;
     float frostDetailRadius = 24;
     float frostNormalTiling = 1;

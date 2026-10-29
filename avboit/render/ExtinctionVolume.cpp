@@ -135,6 +135,8 @@ void ExtinctionVolume::Create(nvrhi::IDevice *device, const ExtinctionInputs &in
                      .addItem(B::Texture_SRV(24, inputs.opaqueHardwareDepth))
                      .addItem(B::TypedBuffer_SRV(15, inputs.camera))
                      .addItem(B::TypedBuffer_SRV(23, inputs.materials));
+    if (inputs.volumeDensity)
+        splat.addItem(B::Texture_SRV(26, inputs.volumeDensity)).addItem(B::Sampler(0, inputs.linear));
     m_splatLayout = nullptr;
     m_splatBindings = nullptr;
     if (!nvrhi::utils::CreateBindingSetAndLayout(device, nvrhi::ShaderType::AllGraphics, 0, splat, m_splatLayout,
@@ -147,7 +149,7 @@ void ExtinctionVolume::Create(nvrhi::IDevice *device, const ExtinctionInputs &in
     m_splatPipelines.clear();
     for (const auto &material : inputs.materialShaders)
     {
-        pipeline.VS = material.vertex;
+        pipeline.VS = material.extinctionVertex ? material.extinctionVertex : material.vertex;
         pipeline.PS = material.extinctionPixel;
         pipeline.renderState.rasterState.cullMode = material.cullMode;
         m_splatPipelines.push_back(device->createGraphicsPipeline(pipeline, m_framebuffer->getFramebufferInfo()));

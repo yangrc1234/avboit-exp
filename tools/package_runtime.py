@@ -27,6 +27,7 @@ def main():
         "assets/sponza.lock.json": ROOT / "assets/sponza.lock.json",
         "bin/avboit_viewer.exe": binaries / "avboit_viewer.exe",
         "licenses/ProggyClean.txt": ROOT / "licenses/ProggyClean.txt",
+        "bin/textures/smoke-volume.dds": binaries / "textures/smoke-volume.dds",
         "bin/textures/frost-normal.dds": binaries / "textures/frost-normal.dds",
         "assets/textures/README.md": ROOT / "assets/textures/README.md",
     }

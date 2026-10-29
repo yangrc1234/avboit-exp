@@ -122,6 +122,7 @@ void DrawMaterialEditor(MaterialTable &materials, const MaterialDefaults &defaul
                                        (kind == 1   ? "Smoke"
                                         : kind == 2 ? "Glass"
                                         : kind == 3 ? "VFX"
+                                        : kind >= 5 ? "Local volume"
                                                     : "Sphere");
                     if (ImGui::Selectable(name.c_str(), selectedMaterial == int(index)))
                         selectedMaterial = int(index);
@@ -131,7 +132,14 @@ void DrawMaterialEditor(MaterialTable &materials, const MaterialDefaults &defaul
             auto &material = materials.entries[selectedMaterial];
             ImGui::TextWrapped("Shared by matching fixture surfaces. Edits apply immediately; geometry changes in "
                                "Scene fixtures reset materials.");
-            if (material.kind != 3)
+            if (material.kind >= 5)
+            {
+                ImGui::ColorEdit3("Volume source radiance", material.color.data(),
+                                  ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
+                ImGui::SliderFloat3("Extinction / world unit", material.transmission.data(), 0, 8);
+                ImGui::TextWrapped("Source is lighting divided by extinction. Each actor has its own proxy draw.");
+            }
+            else if (material.kind != 3)
             {
                 if (material.kind != 4)
                     ImGui::ColorEdit3("Radiance", material.color.data(),

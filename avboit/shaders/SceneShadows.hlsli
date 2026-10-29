@@ -57,6 +57,10 @@ float2 EvaluateShadowGather16(Texture2DArray shadowMap, SamplerState shadowSampl
     float sum = dot(wx.xyyx, wy.yyxx * nw) + dot(wx.zwwz, wy.yyxx * ne) + dot(wx.xyyx, wy.wwzz * sw) +
                 dot(wx.zwwz, wy.wwzz * se);
     float weight = dot(wx.xyyx, wy.yyxx) + dot(wx.zwwz, wy.yyxx) + dot(wx.xyyx, wy.wwzz) + dot(wx.zwwz, wy.wwzz);
-    return float2(saturate(sum / weight) * fade, fade);
+    float visibility = saturate(sum / weight);
+#ifdef AVBOIT_SCENE_VOLUME_SHADOWS
+    visibility *= shadow.shadowMapArrayIndex == 0 ? SunVolumeShadow(world) : SampleVolumeShadow(world, 2);
+#endif
+    return float2(visibility * fade, fade);
 }
 #endif

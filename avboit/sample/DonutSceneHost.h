@@ -4,6 +4,7 @@
 #include <array>
 #include <filesystem>
 #include <memory>
+#include "VolumeLighting.h"
 
 namespace avboit
 {
@@ -18,6 +19,9 @@ class DonutSceneHost
     void Record(nvrhi::ICommandList *commands, nvrhi::IFramebuffer *target,
                 const std::array<std::array<float, 4>, 10> &camera);
     void RecordShadow(nvrhi::ICommandList *commands, bool forceRedraw = false);
+    void UpdateLights(float time, const std::array<float, 3> &eye, const SceneLightingSettings &settings);
+    const VolumeLightData &LightingData() const;
+    void SetVolumeLighting(const VolumeLighting &lighting);
     nvrhi::ITexture *ShadowTexture() const;
 
   private:

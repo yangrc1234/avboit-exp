@@ -20,7 +20,7 @@ add_library(avboit_render STATIC
 )
 target_link_libraries(avboit_render PUBLIC nvrhi)
 
-add_executable(avboit_viewer sample/NativeViewer.cpp sample/DonutSceneHost.cpp sample/ViewerOptions.cpp sample/MaterialTable.cpp sample/SubmissionOrder.cpp sample/SceneLoader.cpp debug/GpuProfiler.cpp sample/FixtureGeometry.cpp sample/StressFixtures.cpp sample/ViewerUi.cpp)
+add_executable(avboit_viewer sample/NativeViewer.cpp sample/DonutSceneHost.cpp sample/VolumeLighting.cpp sample/ViewerOptions.cpp sample/MaterialTable.cpp sample/SubmissionOrder.cpp sample/SceneLoader.cpp debug/GpuProfiler.cpp sample/FixtureGeometry.cpp sample/StressFixtures.cpp sample/ViewerUi.cpp)
 target_link_libraries(avboit_viewer avboit_render donut_app donut_engine donut_render cgltf)
 target_sources(avboit_viewer PRIVATE debug/StablePowerState.cpp)
 target_link_libraries(avboit_viewer advapi32)
@@ -31,7 +31,10 @@ add_custom_target(avboit_textures
     COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/textures"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/assets/textures/frost-normal.dds"
-        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/textures/frost-normal.dds")
+        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/textures/frost-normal.dds"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/textures/smoke-volume.dds"
+        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/textures/smoke-volume.dds")
 add_dependencies(avboit_viewer avboit_textures)
 
 
@@ -82,6 +85,8 @@ if(BUILD_TESTING)
     add_test(NAME native_heat_wave COMMAND avboit_viewer --headless --vfx-mode 1 --time 0.7)
     add_test(NAME native_dual_shock COMMAND avboit_viewer --headless --vfx-mode 3 --stress 8 --time 0.15)
     add_test(NAME viewer_help COMMAND avboit_viewer --help)
+    add_test(NAME native_local_volume COMMAND avboit_viewer --headless --hardware-depth --stress 19 --render-width 2560 --render-height 1440)
+    add_test(NAME native_volume_frost COMMAND avboit_viewer --headless --hardware-depth --stress 22 --render-width 2560 --render-height 1440 --poison-extinction --poison-resolve)
     add_test(NAME native_half_extinction COMMAND avboit_viewer --headless --volume-scale 2 --stress 4 --time 2)
     add_test(NAME native_eighth_extinction COMMAND avboit_viewer --headless --volume-scale 8 --stress 10 --poison-extinction)
 

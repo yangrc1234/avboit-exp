@@ -173,3 +173,22 @@ the same schedule, verifies zero color/validity outside B/base producer domains,
 and exercises sparse/dense filtering, cubic/bilinear and maximum post offset.
 The older ROI/full-blur equality checks assume expanded producer halos and are
 no longer an equivalence contract: full base filtering is a quality reference.
+
+## Local volumes
+
+The [local-volume prototype](LOCAL_VOLUMES.md) has a 2K analytic and partition
+regression in `avboit/tests/check_local_volumes.py`. Native local-volume CTests
+exercise default packed accumulation, including poisoned frost/intersection data.
+
+`avboit/tests/check_volume_lighting.py` checks dynamic lighting and separate
+volumetric moment shadows in Sponza at 2560x1440: MSM on/off, moving spotlight,
+world-space sun/shadow direction alignment under a rotated scene root, smoke
+shadows on opaque receivers, and no spot lighting outside its shadow cone,
+frost, finite moments and inactive projections when no local volume exists.
+
+
+`avboit/tests/check_volume_resolution.py` compares full and half-resolution volume
+accumulation at 2560x1440, including empty eligibility, homogeneous volume, RGB
+frost intersection and Sponza smoke. It checks finite nonnegative statistics,
+unchanged interface depth and the no-volume identity case. Stochastic upsampling
+is experimental: these spatial captures do not validate final TAA behavior.

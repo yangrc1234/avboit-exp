@@ -10,6 +10,8 @@ namespace avboit
 struct MaterialShaders
 {
     nvrhi::ShaderHandle vertex, opaquePixel, extinctionPixel, interfacePixel, accumulationPixel, distortionPixel;
+    nvrhi::ShaderHandle extinctionVertex, accumulationVertex; // Optional volume proxy programs.
+    nvrhi::ShaderHandle halfResolutionPixel;                  // Optional opt-in accumulation program.
     nvrhi::RasterCullMode cullMode = nvrhi::RasterCullMode::None;
 };
 } // namespace avboit

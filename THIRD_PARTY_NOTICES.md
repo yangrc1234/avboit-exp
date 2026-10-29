@@ -64,3 +64,20 @@ the same map at `bin/textures/frost-normal.dds`.
   organization; its profiler code is not vendored. See [profiling](docs/PROFILING.md).
 
 The papers and third-party repositories are references, not relicensed copies.
+
+## Bundled OpenVDB smoke sample
+
+`assets/textures/smoke-volume.dds` derives from the OpenVDB project's official
+`smoke.vdb`, distributed by the Academy Software Foundation / OpenVDB contributors
+under the [resource repository's CC BY 4.0 license](https://github.com/AcademySoftwareFoundation/openvdb-website/blob/master/LICENSE.txt).
+The cropped/resampled density and derived vertical light integral retain CC BY 4.0.
+See [source, hash and conversion](assets/textures/README.md). The optional offline
+converter uses the MIT `openvdb@0.5.1` JavaScript package; its code is not vendored.
+
+## Moment quantization
+
+`avboit/shaders/VolumeMomentEncoding.hlsli` adapts the four-power-moment
+quantization/dequantization transform from the MBOIT authors (Cedrick Münstermann,
+Stefan Krumpen, Reinhard Klein, Christoph Peters), released under CC0.
+See the [reference shader archive](https://momentsingraphics.de/Media/I3D2018/Muenstermann2018-MBOITCode.zip)
+and the author's [CC0 statement](https://momentsingraphics.de/MissingTMBOITCode.html).
