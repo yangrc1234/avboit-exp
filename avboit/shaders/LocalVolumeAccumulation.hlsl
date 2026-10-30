@@ -25,7 +25,7 @@ float3 SampleVolumeTransmittance(float2 uv, float viewZ)
     return TransmittanceLut.SampleLevel(LinearClamp, float3(uv, (mapped - .5) / float(SLICE_COUNT)), 0).rgb;
 }
 void AccumulateVolumeSegment(float2 segment, float sampleFraction, float rayZ, VolumeVaryings i, bool behind,
-                             bool textured, float2 uv, inout VolumeAccumulation o)
+                             bool textured, float2 uv, float3 beginT, float3 endT, inout VolumeAccumulation o)
 {
     if (segment.y <= segment.x)
         return;
@@ -35,7 +35,12 @@ void AccumulateVolumeSegment(float2 segment, float sampleFraction, float rayZ, V
     float sampleZ = lerp(segment.x, segment.y, sampleFraction);
     if (textured)
     {
-        float2 data = SampleVolumeData(i, uv, sampleZ, rayZ);
+        // Integrate density more finely than lighting. A single 50cm sample
+        // can miss the visible skin while the LUT already sees opaque smoke.
+        // Four stratified taps share one lighting evaluation and one LUT interval.
+        float2 data = 0;
+        [unroll] for (uint tap = 0; tap < 4; ++tap) data +=
+            SampleVolumeData(i, uv, lerp(segment.x, segment.y, (float(tap) + sampleFraction) * .25), rayZ) * .25;
         tau *= data.r;
         if (VolumeLights[4].y == 0.)
             i.source *= .18 + .82 * exp(-i.sigma * data.g * (2. * i.extent.y));
@@ -47,7 +52,10 @@ void AccumulateVolumeSegment(float2 segment, float sampleFraction, float rayZ, V
         float3 world = Camera[0].xyz + WorldRay(uv) * (sampleZ / rayZ);
         i.source *= EvaluateVolumeLighting(world);
     }
-    float3 weight = tau * SampleVolumeTransmittance(uv, sampleZ);
+    // Integrate the visibility over the segment instead of allowing a random
+    // point behind the quantized zero frontier to erase the entire interval.
+    float3 meanT = .5 * (beginT + endT);
+    float3 weight = tau * meanT;
     // Differential weights are additive under actor partition. AVBOIT's common
     // (1-exp(-totalTau))/denominator normalization supplies integrated opacity.
     float3 radiance = i.source * weight;
@@ -63,8 +71,16 @@ VolumeAccumulation ShadeVolume(VolumeVaryings i, bool textured, bool halfResolut
     uint2 pixel = uint2(i.position.xy);
     float2 uv = i.position.xy / float2(WIDTH, HEIGHT), interval;
     float rayZ;
-    if (!VolumeInterval(i, uv, LoadOpaqueViewDepth(pixel), interval, rayZ))
+    if (!VolumeInterval(i, uv, Camera[5].w, interval, rayZ))
         return o;
+    float stopZ = min(interval.y, LoadOpaqueViewDepth(pixel));
+    if (stopZ <= interval.x)
+        return o;
+    // A quantized zero frontier may stop subsequent steps, but must not move
+    // quadrature/lighting points inside the last fixed-size step. Real opaque
+    // surfaces with nonzero transmission still clip the integration interval.
+    if (any(SampleVolumeTransmittance(uv, stopZ) > 0.))
+        interval.y = stopZ;
     float interfaceDevice = InterfaceDepth.Load(int3(pixel, 0));
     float interfaceZ = interfaceDevice > 0 ? ViewDepthFromDevice(interfaceDevice) : Camera[5].w;
     float baseStep = Camera[10].x;
@@ -84,9 +100,9 @@ VolumeAccumulation ShadeVolume(VolumeVaryings i, bool textured, bool halfResolut
         phase = (phase + uint(Camera[9].w - 1.)) & 3u;
     jitter = (float(phase) + jitter) * .25;
     float z = interval.x;
-    [loop] for (uint step = 0; step < maxSteps && z < interval.y; ++step)
+    float3 t = SampleVolumeTransmittance(uv, z);
+    [loop] for (uint step = 0; step < maxSteps && z < stopZ; ++step)
     {
-        float3 t = SampleVolumeTransmittance(uv, z);
         float visibleT = max(t.r, max(t.g, t.b));
         float lowT = 1. - smoothstep(0., Camera[10].y, visibleT);
         float ds = baseStep * lerp(1., Camera[10].z, lowT);
@@ -95,9 +111,12 @@ VolumeAccumulation ShadeVolume(VolumeVaryings i, bool textured, bool halfResolut
         ds = max(ds, (interval.y - z) / (rayZ * float(maxSteps - step)));
         float endZ = min(z + ds * rayZ, interval.y);
         float split = clamp(interfaceZ, z, endZ);
-        AccumulateVolumeSegment(float2(z, split), jitter, rayZ, i, false, textured, uv, o);
-        AccumulateVolumeSegment(float2(split, endZ), jitter, rayZ, i, true, textured, uv, o);
+        float3 endT = SampleVolumeTransmittance(uv, endZ);
+        float3 splitT = split <= z ? t : (split >= endZ ? endT : SampleVolumeTransmittance(uv, split));
+        AccumulateVolumeSegment(float2(z, split), jitter, rayZ, i, false, textured, uv, t, splitT, o);
+        AccumulateVolumeSegment(float2(split, endZ), jitter, rayZ, i, true, textured, uv, splitT, endT, o);
         z = endZ;
+        t = endT;
     }
     return o;
 }

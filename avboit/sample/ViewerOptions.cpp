@@ -155,8 +155,10 @@ ViewerOptions ParseViewerOptions(int argc, const char *const *argv)
             options.sunIntensity = ReadFloat(arg, value(), 0, 12);
         else if (arg == "--spot-intensity")
             options.spotIntensity = ReadFloat(arg, value(), 0, 500);
-        else if (arg == "--volume-stochastic-upsample")
-            options.stochasticVolumeUpsample = true;
+        else if (arg == "--volume-temporal-dither" || arg == "--volume-stochastic-upsample")
+            options.temporalVolumeDithering = true;
+        else if (arg == "--volume-extinction")
+            options.initialVolumeExtinction = ReadFloat(arg, value(), 0.f, 128.f);
         else if (arg == "--volume-step")
             options.volumeStepSize = ReadFloat(arg, value(), .005f, 2.f);
         else if (arg == "--volume-low-t")
@@ -257,7 +259,8 @@ Scene and materials:
   --stress 0..25             Stress preset (19..23: volumes; 24..25: OpenVDB smoke); also in ImGui Test case
   --sun-intensity N          Sponza sun irradiance (0..12), default 2
   --spot-intensity N         Sponza dynamic spotlight intensity (0..500), default 80
-  --volume-stochastic-upsample  Experimental blue-noise upsample for final TAA
+  --volume-temporal-dither  Animate raymarch sample phases (requires final TAA)
+  --volume-extinction N    Initial volume material extinction, 0..128 per world unit
   --volume-step N           World-space accumulation step (default .5)
   --volume-low-t N          Grow steps below this max-RGB T (default .1)
   --volume-step-scale N     Maximum low-T step multiplier, 1..8 (default 4)

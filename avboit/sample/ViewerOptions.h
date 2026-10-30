@@ -24,7 +24,8 @@ struct ViewerOptions
     float sphereRoughness = 0, planarIor = 1.3f, sphereIor = 1.5f, refractionStrength = 1;
     float sunIntensity = 2.f, spotIntensity = 80.f;
     bool volumeShadows = true;
-    bool lowResolutionVolumes = false, stochasticVolumeUpsample = false;
+    bool lowResolutionVolumes = false, temporalVolumeDithering = false;
+    float initialVolumeExtinction = -1.f;
     float volumeStepSize = .5f, volumeLowT = .1f, volumeStepScale = 4.f;
     int volumeMaxSteps = 256;
     float fixtureTime = 0, sigmaLimit = 24;

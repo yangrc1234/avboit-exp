@@ -48,10 +48,13 @@ ImGui 的 Resolve pipeline 中可切换 `Half-resolution local volumes`，或使
 没有可靠权重时使用深度最接近的候选。没有全分辨率补算，细遮挡与界面边缘允许近似。
 禁用后释放四张半分辨率 RT。2K packed 格式额外占用约 14.06 MiB（不含驱动对齐）。
 
-`Stochastic volume upsample (requires TAA)` / `--volume-stochastic-upsample`
-是实验选项，给 full-resolution 像素使用独立的蓝噪声偏移，再执行相同的 bilateral 重建。
+上采样使用固定的四 tap bilateral footprint，不额外抖动屏幕采样地址；
+原来随机改变重建 footprint 会把额外噪声带入后续非线性 resolve。
+`Temporal volume dithering (requires TAA)` / `--volume-temporal-dither`
+只改变 raymarch 的时域采样相位，用于接入宿主自己的 TAA。
+旧参数 `--volume-stochastic-upsample` 仅保留为别名，不再抖动 upsample 地址。
 32×32 rank tile 由 `tools/generate_volume_blue_noise.py` 确定性生成，无第三方素材。
-本示例没有为此新增 TAA 或体积历史缓冲；默认关闭此选项。单帧与有限性检查不代表
+本示例可启用下述最终 HDR TAA，但没有独立体积历史缓冲。单帧与有限性检查不代表
 已验证 UE4 TAA / DLSS 的时域质量，需在目标工程中测试移动、显露和动态灯光。
 
 
@@ -62,7 +65,15 @@ ImGui 的 Resolve pipeline 中可切换 `Half-resolution local volumes`，或使
 默认最多 256 步；长射线会增大有效步长覆盖完整区间，不会直接丢弃剩余光学厚度。
 Interface 仍切分前后段。每个 2×2 quad 的四条射线分配四个步内深度相位，层内用共享蓝噪声偏移，积分区间与长度不变。
 半分辨率模式按低分辨率像素组成 quad。这是交错采样，没有新增空间／时域重建 pass。
-默认只做稳定的空间抖动；启用 TAA 实验选项后也随帧改变采样相位，本 demo 没有时域累积。
+默认只做稳定的空间抖动；启用 TAA 后随帧改变采样相位，并累积最终 HDR 图像。
+每段采用 4 次分层密度采样和 1 次光照计算；可见性使用区间两端 T 的梯形平均，
+避免单个随机点落入 T=0 区域就丢掉整段的可见散射。相邻步复用共享端点的 T 查询。
+这仍是数值近似，并非逐段精确 Beer 积分。
+
+Zero-T 深度只终止后续步，不挪动最后一步内的密度／光照采样点。
+若截止位置的 T 已归零，最后一步保留原来的完整区间；普通不透明表面且 T 非零时仍裁剪区间。
+否则开关 Zero-T 会改变前方仍可见烟雾的积分位置，浓烟底部尤其容易出现黑斑。
+可用 `--volume-extinction 64` 或 `128` 重现高消光场景。
 
 ImGui 的 Resolve pipeline 可实时调整步长、低 T 阈值、最大倍率和步数预算；倍率设为 1
 即禁用低 T 加速。对应命令行：`--volume-step`、`--volume-low-t`、
@@ -86,10 +97,18 @@ ImGui 的 Resolve pipeline 可实时调整步长、低 T 阈值、最大倍率�
 `--taa` 或 ImGui 的 **Resolve pipeline → TAA** 启用 Donut TAA，与相邻 ADS demo
 使用同一个库实现。TAA 在透明合成与 VFX distortion 后、tonemap 前处理 HDR；
 Halton 投影 jitter 同时用于 opaque、透明几何、occupancy 投影和体积射线。
-启用时自动开启体积 quad 的时域相位轮换和半分辨率随机重建。
+启用时自动开启体积 quad 的时域相位轮换；半分辨率重建保持固定 footprint。
 关闭时释放 TAA history、motion 和 output RT；默认关闭，便于保留无 TAA 的算法对比。
 
 当前 motion 由场景深度与前后帧相机生成，支持相机移动，但没有透明物体自身的运动矢量，
 也没有为体积积分结果定义独立代表深度。移动透明物体、烟雾与折射区域仍可能拖影；
 这是用于观察采样收敛的基线，不是完整的透明 temporal reconstruction。
 切换视角、重建资源和编辑 actor 材质会重置 history。GPU profiler 单独列出 `taa`。
+
+这不是完整的 [RDR2 云重建方案](https://advances.realtimerendering.com/s2019/slides_public_release.pptx)：
+原分享第 51–56 页还有低分辨率缺失射线的历史重建、深度邻域与射线位置选择，
+以及用透射率加权体积深度指导 upsample；当前 demo 尚未实现这些部分。
+
+`python avboit/tests/check_dense_volume.py` 在 2K、packed RT 下检查高消光 Zero-T 开关差异、
+底部零权重黑洞和半分辨率 TAA 有限值。仍允许少量孤立像素的截止差异，
+不能据此宣称任意运动下的时域质量已经通过验证。

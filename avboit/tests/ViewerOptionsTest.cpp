@@ -27,14 +27,16 @@ int main()
         Require(defaults.slopeSplat && !Parse({"--no-slope-splat"}).slopeSplat);
         Require(defaults.volumeScale == 8 && Parse({"--camera-preset", "6"}).cameraPreset == 6);
         Require(defaults.occupancyOverlay == 0);
-        Require(!defaults.lowResolutionVolumes && !defaults.stochasticVolumeUpsample);
+        Require(!defaults.lowResolutionVolumes && !defaults.temporalVolumeDithering);
         Require(Parse({"--volume-half-res"}).lowResolutionVolumes);
         auto march = Parse(
             {"--volume-step", ".025", "--volume-low-t", ".05", "--volume-step-scale", "2", "--volume-max-steps", "64"});
         Require(march.volumeStepSize == .025f && march.volumeLowT == .05f && march.volumeStepScale == 2.f &&
                 march.volumeMaxSteps == 64);
-        Require(Parse({"--volume-stochastic-upsample"}).stochasticVolumeUpsample);
+        Require(Parse({"--volume-stochastic-upsample"}).temporalVolumeDithering);
         Require(!defaults.taa && Parse({"--taa"}).taa);
+        Require(Parse({"--volume-temporal-dither"}).temporalVolumeDithering);
+        Require(Parse({"--volume-extinction", "64"}).initialVolumeExtinction == 64.f);
         Require(Parse({"--occupancy-overlay", "7", "--occupancy-slice", "127"}).occupancySlice == 127);
         Require(Parse({"--emissive-front"}).emissiveFront && Parse({"--emissive-front"}).emissiveBalls);
         Require(defaults.fpsLimit == 120 && Parse({"--fps-limit", "0"}).fpsLimit == 0 &&

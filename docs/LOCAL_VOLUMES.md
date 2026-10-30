@@ -40,11 +40,14 @@ rounding many tiny segments separately. Different actors still quantize separate
 
 ## Accumulation convention
 
-This prototype uses differential AVBOIT weights `w = deltaTau * T(samplePosition)`:
+This prototype uses differential AVBOIT weights
+`w = deltaTau * (T(segmentBegin) + T(segmentEnd)) / 2`:
 `A += w`, `N += source * w`, `totalTau += deltaTau`. The existing resolve multiplies
 N by `(1-exp(-totalTau))/A`. This makes a constant source function reproduce the
 homogeneous analytic result, while keeping contributions additive under actor
-partitioning. It is an AVBOIT approximation, not independent Beer integration of
+partitioning. The endpoint mean is trapezoidal quadrature: it avoids letting one
+random point behind the quantized zero frontier erase a whole visible interval.
+It is an AVBOIT approximation, not independent Beer integration of
 each actor followed by another normalization.
 
 The selected interface splits each segment into front/back pieces, evaluated at
@@ -57,14 +60,21 @@ Accumulation uses a .5 world-unit base step, independent of adaptive Z. At each
 step start, max(R,G,B) of the global T-LUT controls a smooth increase below T=.1,
 up to 4x at T=0. A 256-step budget coarsens long intervals to cover the complete
 ray, rather than dropping the remaining optical depth. Interface depth still
-splits steps into front/back pieces. Density and lighting use four stratified depth phases per 2x2 pixel quad,
+splits steps into front/back pieces. Ray phases use four stratified depth phases per 2x2 pixel quad,
 with a shared 32x32 blue-noise offset inside each stratum. Half-resolution draws
 form quads in low-resolution coordinates; integration bounds and segment lengths are unchanged.
-Spatial dithering is stable by default. The existing TAA-oriented stochastic
-option also animates the march phase; this demo has no temporal accumulation.
+Each piece averages four stratified density taps but evaluates lighting only once.
+Adjacent steps reuse their shared T endpoint. Spatial dithering is stable by default;
+`--taa` also animates the march phase and accumulates the final HDR image.
+
+Zero-T depth stops subsequent steps without moving density or lighting sample
+positions in the last step. If transmission at the depth cutoff is already zero,
+that last step keeps its original extent. Ordinary opaque cutoffs with nonzero T
+still clip the interval. This avoids changing visible smoke just by enabling Zero-T.
 
 ImGui exposes all four parameters without rebuilding resources. CLI equivalents:
 `--volume-step`, `--volume-low-t`, `--volume-step-scale`, `--volume-max-steps`.
+`--volume-extinction 64` overrides the initial smoke density coefficient for captures.
 Set the multiplier to 1 for fixed steps throughout. Extinction injection remains
 bin-aligned; light-space MSM retains its independent 96/32-step integration.
 
@@ -86,7 +96,8 @@ bin-aligned; light-space MSM retains its independent 96/32-step integration.
 - The LUT lookup interpolates cumulative transmittance linearly. Large steps
   can miss thin density/lighting features; low-T coarsening also approximates tau.
 - Lighting work scales with projected coverage times march steps times overlapping
-  actors. There is no hierarchy, temporal reconstruction or early ray termination.
+  actors. There is no hierarchy or dedicated volume-history reconstruction;
+  Zero-T depth can terminate the march, but there is no independent opacity cutoff.
   This baseline is not a low-end performance claim.
 
 ## Dynamic lighting and volumetric shadows
@@ -153,6 +164,11 @@ behavior: analytic homogeneous color/tau, overlapping and adjacent actor partiti
 submission order and an oblique view. Captures and numerical results go under
 `build/local-volume-check`. Separate native CTests exercise default packed RTs.
 
+`python avboit/tests/check_dense_volume.py` checks packed 2K Sponza smoke at
+extinction 64/128 with Zero-T on/off, bottom-region zero-weight holes, and finite
+half-resolution TAA output. A few isolated cutoff differences remain; this is not
+a pixel-exact Zero-T equivalence or a guarantee of stability under arbitrary motion.
+
 `python avboit/tests/check_volume_lighting.py` checks 2K Sponza captures with MSM
 on/off, moving spot illumination, frost, and no volumes. It verifies finite,
 bounded moment data, source attenuation and the inactive projection flags.
@@ -163,8 +179,10 @@ bounded moment data, source attenuation and the inactive projection flags.
 Enable `--taa` or **Resolve pipeline → TAA** in ImGui. This uses the same Donut
 TAA pass as the neighboring ADS demo, after transparency/VFX distortion and before
 tonemapping. Halton projection jitter is shared by opaque and transparent geometry,
-occupancy projection and volume rays. TAA also enables temporal quad phase rotation
-and stochastic half-resolution reconstruction. Disabling it releases its history,
+occupancy projection and volume rays. TAA also enables temporal quad phase rotation.
+Half-resolution reconstruction uses a fixed four-tap bilateral footprint; adding
+independent screen-space address noise here made the nonlinear resolve less stable.
+Disabling TAA releases its history,
 motion and output textures. It defaults off to preserve non-temporal comparisons.
 
 Motion is reconstructed from scene depth and camera transforms. There are no
@@ -173,3 +191,12 @@ transparency, volumes and refraction can ghost. Camera cuts, resource recreation
 and actor material edits reset history. The GPU profiler reports a separate `taa`
 stage. Headless `--taa` also checks toggling, motion, cuts, resizing and finite HDR
 output before capturing a converged frame.
+
+This is not the full [RDR2 cloud reconstruction](https://advances.realtimerendering.com/s2019/slides_public_release.pptx).
+That presentation also reconstructs skipped low-resolution rays from history,
+uses depth-aware neighborhoods and ray placement, and guides upsampling with a
+transmittance-weighted volume depth (slides 51–56). Those stages are absent here.
+`--volume-temporal-dither` animates ray phases without enabling the demo's TAA,
+for hosts providing their own temporal accumulation. The former
+`--volume-stochastic-upsample` spelling remains an alias; it no longer jitters
+upsample addresses.

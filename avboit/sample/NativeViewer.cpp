@@ -74,10 +74,11 @@ class NativeViewer : public app::IRenderPass
     std::unique_ptr<avboit::DonutSceneHost> donutScene;
     avboit::VolumeLighting volumeLighting;
     avboit::SceneLightingSettings sceneLighting;
-    bool lowResolutionVolumes = false, stochasticVolumeUpsample = false;
+    bool lowResolutionVolumes = false, temporalVolumeDithering = false;
     unsigned volumeSampleFrame = 0;
     bool taaEnabled = false;
     std::unique_ptr<avboit::TemporalAA> temporalAA;
+    float initialVolumeExtinction = -1.f;
     float volumeStepSize = .5f, volumeLowT = .1f, volumeStepScale = 4.f;
     int volumeMaxSteps = 256;
     std::vector<avboit::StressVolume> localVolumes;
@@ -370,7 +371,7 @@ class NativeViewer : public app::IRenderPass
                     float((zeroTShortcut ? 1 : 0) | (zeroDepth ? 2 : 0) | (mirrorBlur ? 4 : 0) | (fullVfx ? 8 : 0))},
                    {float(chain.width), float(chain.height), float(chain.mipCount), tileResolve ? 0.f : 1.f},
                    {float(slopeSplat), frostDetailRadius, frostNormalTiling,
-                    (stochasticVolumeUpsample || taaEnabled) ? float(1 + (volumeSampleFrame++ % 4096)) : 0.f},
+                    (temporalVolumeDithering || taaEnabled) ? float(1 + (volumeSampleFrame++ % 4096)) : 0.f},
                    {volumeStepSize, volumeLowT, volumeStepScale, float(volumeMaxSteps)},
                    {0, 0, 0, 0}}};
         if (temporalAA)
@@ -730,10 +731,10 @@ class NativeViewer : public app::IRenderPass
         volumeStepScale = scale;
         volumeMaxSteps = budget;
     }
-    void SetVolumeResolution(bool half, bool stochastic)
+    void SetVolumeResolution(bool half, bool temporalDithering)
     {
         lowResolutionVolumes = half;
-        stochasticVolumeUpsample = stochastic;
+        temporalVolumeDithering = temporalDithering;
     }
     void SetSceneLighting(float sun, float spot, bool shadows)
     {
@@ -797,6 +798,7 @@ class NativeViewer : public app::IRenderPass
         rebuildRequested = true;
         preserveMaterialsOnRebuild = true;
     }
+    void SetInitialVolumeExtinction(float value) { initialVolumeExtinction = value; }
     void SetTaa(bool enabled) { taaEnabled = enabled; }
     void SetHardwareDepth(bool enabled) { hardwareDepth = enabled; }
     void SetExtinctionOptions(bool dense, bool poison, bool slope)
@@ -1187,7 +1189,7 @@ class NativeViewer : public app::IRenderPass
             }
             ImGui::TextDisabled("Camera motion only; moving transparency may leave trails.");
             if (!taaEnabled)
-                ImGui::Checkbox("Temporal volume dithering / upsample (requires TAA)", &stochasticVolumeUpsample);
+                ImGui::Checkbox("Temporal volume dithering (requires TAA)", &temporalVolumeDithering);
             ImGui::SliderFloat("Volume step (world units)", &volumeStepSize, .005f, 2.f, "%.3f",
                                ImGuiSliderFlags_Logarithmic);
             ImGui::SliderFloat("Volume low-T threshold", &volumeLowT, .001f, .5f, "%.3f", ImGuiSliderFlags_Logarithmic);
@@ -1558,6 +1560,11 @@ class NativeViewer : public app::IRenderPass
             vfxVertices = 12;
         }
         materials.Build(vertices, MaterialDefaults());
+        if (initialVolumeExtinction >= 0)
+            for (auto &material : materials.entries)
+                if (material.kind == 5 || material.kind == 6)
+                    for (unsigned c = 0; c < 3; ++c)
+                        material.transmission[c] = initialVolumeExtinction;
         emissiveMaterials.clear();
         for (unsigned v = emissiveFirst; v < emissiveEnd; v += 4)
         {
@@ -2427,8 +2434,9 @@ int main(int argc, const char **argv)
         viewer.SetHardwareDepth(o.hardwareDepth);
         viewer.SetDonutScene(o.donutScene);
         viewer.SetSceneLighting(o.sunIntensity, o.spotIntensity, o.volumeShadows);
-        viewer.SetVolumeResolution(o.lowResolutionVolumes, o.stochasticVolumeUpsample);
+        viewer.SetVolumeResolution(o.lowResolutionVolumes, o.temporalVolumeDithering);
         viewer.SetTaa(o.taa);
+        viewer.SetInitialVolumeExtinction(o.initialVolumeExtinction);
         viewer.SetVolumeMarch(o.volumeStepSize, o.volumeLowT, o.volumeStepScale, o.volumeMaxSteps);
         viewer.SetCalibration(o.calibrationBoard, o.emissiveGain);
         viewer.SetEmissiveFront(o.emissiveFront);

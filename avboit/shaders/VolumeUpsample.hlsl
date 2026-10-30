@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 #include "TransparencyCommon.hlsli"
-#include "VolumeBlueNoise.hlsli"
 Texture2D<float3> LowN : register(t4);
 Texture2D<float3> LowA : register(t5);
 Texture2D<float3> LowTau : register(t6);
@@ -31,14 +30,8 @@ Accumulation upsamplePixel(float4 position : SV_Position)
     float interfaceZ = InterfaceDepth.Load(int3(pixel, 0));
     // Low rays use the bottom-right full-resolution texel of each 2x2 block.
     float2 location = (position.xy - 1.5) * .5;
-    if (Camera[9].w > 0.)
-    {
-        uint2 p = pixel & 31u;
-        uint2 q = (pixel + uint2(13, 7)) & 31u;
-        float2 noise = (float2(VolumeBlueNoise[p.y * 32 + p.x], VolumeBlueNoise[q.y * 32 + q.x]) + .5) / 1024.;
-        noise = frac(noise + (Camera[9].w - 1.) * float2(.754877666, .569840296));
-        location += noise - .5;
-    }
+    // Keep reconstruction fixed. Temporal sampling belongs to the rays;
+    // randomizing this footprint adds noise before nonlinear OIT resolve.
     int2 base = int2(floor(location));
     float2 f = frac(location);
     float weights[4];
