@@ -34,6 +34,7 @@ class GpuProfiler
         Composition,
         Vfx,
         VfxApply,
+        TemporalAA,
         Display,
         Count
     };

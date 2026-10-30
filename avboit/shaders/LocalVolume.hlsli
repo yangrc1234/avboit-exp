@@ -29,6 +29,7 @@ VolumeVaryings volumeVertex(uint id : SV_VertexID)
         float3 v = float3(dot(d, Camera[1].xyz), dot(d, Camera[2].xyz), dot(d, Camera[3].xyz));
         nearCrossing |= v.z <= Camera[5].z;
         float2 ndc = v.xy / max(v.z, Camera[5].z) / float2(float(WIDTH) / HEIGHT * .57735027, .57735027);
+        ndc += Camera[11].xy * float2(2., -2.) / Camera[6].xy;
         low = min(low, ndc);
         high = max(high, ndc);
     }

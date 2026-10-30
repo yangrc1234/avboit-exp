@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""2K GPU checks for bin-aligned local media, partition invariance and frost split."""
+"""2K GPU checks for local media, world-space marching and frost split."""
 import json
 from pathlib import Path
 import subprocess
@@ -71,7 +71,10 @@ def main():
         folder = capture(name, preset, *flags)
         other = texture(folder / "native-scene-color.rgba16f", "<f2", 4)[..., :3].astype("f4")
         error = abs(other - color)
-        report[name] = {"max": float(error.max()), "rms": float(np.sqrt(np.mean(error * error)))}
+        report[name] = {
+            "max": float(error.max()),
+            "rms": float(np.sqrt(np.mean(error * error))),
+        }
         assert error.max() < 0.008, (name, report[name])
     frost = capture("frost", 22)
     n = texture(frost / "native-numerator.raw", "<f2", 4)[720, 1280, :3].astype("f4")
@@ -96,6 +99,23 @@ def main():
     imported = capture("imported-smoke", 24)
     smoke_tau = texture(imported / "native-total-tau.raw", "<f2", 4)[..., :3]
     assert smoke_tau.max() > 1 and np.count_nonzero(smoke_tau) > 1000
+    # March density at fixed world positions regardless of the adaptive Z budget.
+    fixed = capture("world-fixed", 24, "--volume-step-scale", "1")
+    low_budget = capture(
+        "world-fixed-budget16", 24, "--volume-step-scale", "1", "--depth-budget", "16"
+    )
+    fixed_tau = texture(fixed / "native-total-tau.raw", "<f2", 4).astype("f4")
+    other_tau = texture(low_budget / "native-total-tau.raw", "<f2", 4).astype("f4")
+    report["world_step_tau_budget_error"] = float(abs(fixed_tau - other_tau).max())
+    assert report["world_step_tau_budget_error"] == 0
+    # Exhausting the budget must coarsen the whole interval, not truncate it.
+    limited = capture("world-step-cap", 19, "--volume-step", ".005", "--volume-max-steps", "16")
+    limited_tau = texture(limited / "native-total-tau.raw", "<f2", 4)[720, 1280, :3]
+    assert abs(limited_tau - expected_tau).max() < 0.003
+    limited_color = texture(limited / "native-scene-color.rgba16f", "<f2", 4)[720, 1280, :3].astype(
+        "f4"
+    )
+    assert abs(limited_color - expected).max() < 0.003
     imported_frost = capture("imported-frost", 25)
     poisoned = capture("imported-frost-poison", 25, "--poison-extinction", "--poison-resolve")
     for file in ("native-lut.rgba8", "native-scene-color.rgba16f"):

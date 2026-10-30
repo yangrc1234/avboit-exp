@@ -27,9 +27,9 @@ Light-space moment shadows have separate resources, described below.
    occupied adaptive virtual intervals, and injects `sigma * physicalLength`
    directly into their physical RGB bins. There is no surface splat push.
 3. Existing integration combines surface and volume extinction in one LUT.
-4. A full-resolution proxy draw repeats the intersections and samples LUT entry/
-   exit transmittance. It accumulates all segment contributions in registers and
-   writes N/A/totalTau/BackN once per covered pixel.
+4. A full- or half-resolution proxy draw repeats the intersections and marches
+   with an independent world-space step. It accumulates segment contributions in
+   registers and writes N/A/totalTau/BackN once per covered pixel.
 5. Existing B generation, Gaussian and final composition consume those outputs.
 
 Camera-space Z intervals are divided by the ray's forward component to obtain
@@ -40,7 +40,7 @@ rounding many tiny segments separately. Different actors still quantize separate
 
 ## Accumulation convention
 
-This prototype uses differential AVBOIT weights `w = deltaTau * T(midpoint)`:
+This prototype uses differential AVBOIT weights `w = deltaTau * T(samplePosition)`:
 `A += w`, `N += source * w`, `totalTau += deltaTau`. The existing resolve multiplies
 N by `(1-exp(-totalTau))/A`. This makes a constant source function reproduce the
 homogeneous analytic result, while keeping contributions additive under actor
@@ -48,8 +48,25 @@ partitioning. It is an AVBOIT approximation, not independent Beer integration of
 each actor followed by another normalization.
 
 The selected interface splits each segment into front/back pieces, evaluated at
-their respective midpoints. Back pieces also contribute to BackN. No running
+jittered positions within each piece using the same pixel phase. Back pieces also contribute to BackN. No running
 front-to-back color integral is retained by the ray marcher.
+
+## World-space accumulation steps
+
+Accumulation uses a .5 world-unit base step, independent of adaptive Z. At each
+step start, max(R,G,B) of the global T-LUT controls a smooth increase below T=.1,
+up to 4x at T=0. A 256-step budget coarsens long intervals to cover the complete
+ray, rather than dropping the remaining optical depth. Interface depth still
+splits steps into front/back pieces. Density and lighting use four stratified depth phases per 2x2 pixel quad,
+with a shared 32x32 blue-noise offset inside each stratum. Half-resolution draws
+form quads in low-resolution coordinates; integration bounds and segment lengths are unchanged.
+Spatial dithering is stable by default. The existing TAA-oriented stochastic
+option also animates the march phase; this demo has no temporal accumulation.
+
+ImGui exposes all four parameters without rebuilding resources. CLI equivalents:
+`--volume-step`, `--volume-low-t`, `--volume-step-scale`, `--volume-max-steps`.
+Set the multiplier to 1 for fixed steps throughout. Extinction injection remains
+bin-aligned; light-space MSM retains its independent 96/32-step integration.
 
 ## Current limits
 
@@ -66,9 +83,9 @@ front-to-back color integral is retained by the ray marcher.
 - Overlapping heterogeneous sources and surface/media mixing remain approximate.
   LUT XY filtering, finite bin size, existing surface visibility bias, packed
   quantization and common normalization can alter their relative contributions.
-- The midpoint LUT lookup interpolates cumulative transmittance linearly. The
-  homogeneous test does not prove accurate lighting variation within a bin.
-- Lighting work scales with projected coverage times active bins times overlapping
+- The LUT lookup interpolates cumulative transmittance linearly. Large steps
+  can miss thin density/lighting features; low-T coarsening also approximates tau.
+- Lighting work scales with projected coverage times march steps times overlapping
   actors. There is no hierarchy, temporal reconstruction or early ray termination.
   This baseline is not a low-end performance claim.
 
@@ -139,3 +156,20 @@ submission order and an oblique view. Captures and numerical results go under
 `python avboit/tests/check_volume_lighting.py` checks 2K Sponza captures with MSM
 on/off, moving spot illumination, frost, and no volumes. It verifies finite,
 bounded moment data, source attenuation and the inactive projection flags.
+
+
+### Demo TAA
+
+Enable `--taa` or **Resolve pipeline → TAA** in ImGui. This uses the same Donut
+TAA pass as the neighboring ADS demo, after transparency/VFX distortion and before
+tonemapping. Halton projection jitter is shared by opaque and transparent geometry,
+occupancy projection and volume rays. TAA also enables temporal quad phase rotation
+and stochastic half-resolution reconstruction. Disabling it releases its history,
+motion and output textures. It defaults off to preserve non-temporal comparisons.
+
+Motion is reconstructed from scene depth and camera transforms. There are no
+transparent-object motion vectors or volume representative depths yet, so moving
+transparency, volumes and refraction can ghost. Camera cuts, resource recreation
+and actor material edits reset history. The GPU profiler reports a separate `taa`
+stage. Headless `--taa` also checks toggling, motion, cuts, resizing and finite HDR
+output before capturing a converged frame.

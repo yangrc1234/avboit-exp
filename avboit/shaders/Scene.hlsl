@@ -31,6 +31,7 @@ VertexOutput sceneVertex(uint id : SV_VertexID)
     float3 view = float3(dot(delta, Camera[1].xyz), dot(delta, Camera[2].xyz), dot(delta, Camera[3].xyz));
     o.position =
         float4(view.x / (Camera[6].x / Camera[6].y * .57735027), view.y / .57735027, ClipDepthFromView(view.z), view.z);
+    o.position.xy += Camera[11].xy * float2(2., -2.) / Camera[6].xy * o.position.w;
     o.depth = view.z;
     o.normal = SceneVertices[id * 5 + 1].xyz;
     o.cutoff = SceneVertices[id * 5 + 1].w;

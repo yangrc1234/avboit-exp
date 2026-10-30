@@ -20,7 +20,7 @@ add_library(avboit_render STATIC
 )
 target_link_libraries(avboit_render PUBLIC nvrhi)
 
-add_executable(avboit_viewer sample/NativeViewer.cpp sample/DonutSceneHost.cpp sample/VolumeLighting.cpp sample/ViewerOptions.cpp sample/MaterialTable.cpp sample/SubmissionOrder.cpp sample/SceneLoader.cpp debug/GpuProfiler.cpp sample/FixtureGeometry.cpp sample/StressFixtures.cpp sample/ViewerUi.cpp)
+add_executable(avboit_viewer sample/NativeViewer.cpp sample/TemporalAA.cpp sample/TranslationGizmo.cpp sample/DonutSceneHost.cpp sample/VolumeLighting.cpp sample/ViewerOptions.cpp sample/MaterialTable.cpp sample/SubmissionOrder.cpp sample/SceneLoader.cpp debug/GpuProfiler.cpp sample/FixtureGeometry.cpp sample/StressFixtures.cpp sample/ViewerUi.cpp)
 target_link_libraries(avboit_viewer avboit_render donut_app donut_engine donut_render cgltf)
 target_sources(avboit_viewer PRIVATE debug/StablePowerState.cpp)
 target_link_libraries(avboit_viewer advapi32)

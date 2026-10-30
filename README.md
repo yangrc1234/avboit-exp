@@ -98,6 +98,16 @@ right mouse looks, Home resets, B changes reconstruction, G toggles frost, V
 toggles VFX and Space pauses animation. Fixture controls apply immediately.
 `bin/avboit_viewer.exe --help` lists the CLI, including headless captures.
 
+In **Scene actors**, select a glass pane, sphere or smoke actor to edit its material
+and position. Drag the XYZ handles to move along an axis, or the white center to
+move in the screen plane. Ctrl-click the XYZ fields for exact coordinates;
+**Reset position** restores the fixture placement. Esc cancels a drag. Quality
+changes preserve edits; changing the scene preset resets them. Translation also
+updates occupancy bounds and local-volume shadow proxies. Gizmos are editor
+only and do not enter HDR/TAA. Axis handles aligned with the view are hidden;
+use the numeric position fields or rotate the camera to edit those axes.
+
+
 ## Code map
 
 | Directory | Responsibility |

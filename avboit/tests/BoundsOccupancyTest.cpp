@@ -263,7 +263,7 @@ bool RunBoundsTest(nvrhi::IDevice *device)
         commands->clearTextureUInt(screen, nvrhi::AllSubresources, 0);
         commands->clearBufferUInt(output, 0);
         commands->writeBuffer(input, data.data(), data.size() * 16);
-        std::array<std::array<float, 4>, 10> cameraData{};
+        std::array<std::array<float, 4>, 12> cameraData{};
         cameraData[9][0] = float(slopeSplat);
         commands->writeBuffer(camera, cameraData.data(), sizeof(cameraData));
         if (!objects.empty())

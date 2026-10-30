@@ -43,7 +43,8 @@ void RasterBounds(uint3 group, uint lane, bool schedule)
         rejected = upper.z < projection.z || lower.z > projection.w;
         // Near-plane crossing alone does not imply intersection with the view.
         // Maximize each side-plane equation over the AABB.
-        float2 sideZ = upper.z.xx;
+        // Include the subpixel projection offset in the conservative side planes.
+        float2 sideZ = upper.z.xx * (1. + 2. * abs(Camera[11].xy) / screen.xy);
         rejected |= any(sideZ + projection.xy * upper.xy < -1e-5) || any(sideZ - projection.xy * lower.xy < -1e-5);
         float2 low = float2(0, 0), high = screen.xy;
         // Near-plane crossing uses a full-screen conservative fallback.
@@ -55,7 +56,7 @@ void RasterBounds(uint3 group, uint lane, bool schedule)
             {
                 float3 v = float3((corner & 1) ? upper.x : lower.x, (corner & 2) ? upper.y : lower.y,
                                   (corner & 4) ? upper.z : lower.z);
-                float2 pixel = (v.xy / v.z * projection.xy * float2(.5, -.5) + .5) * screen.xy;
+                float2 pixel = (v.xy / v.z * projection.xy * float2(.5, -.5) + .5) * screen.xy + Camera[11].xy;
                 low = min(low, pixel);
                 high = max(high, pixel);
             }

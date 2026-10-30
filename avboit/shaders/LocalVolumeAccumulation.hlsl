@@ -2,6 +2,7 @@
 #include "LocalVolume.hlsli"
 #include "ResolveData.hlsli"
 #include "VolumeLighting.hlsli"
+#include "VolumeBlueNoise.hlsli"
 struct VolumeAccumulation
 {
     float3 numerator : SV_Target0;
@@ -9,16 +10,32 @@ struct VolumeAccumulation
     float3 totalTau : SV_Target2;
     float3 backNumerator : SV_Target3;
 };
-void AccumulateVolumeSegment(float2 segment, uint cell, uint count, float rayZ, float3 entryT, float3 exitT,
-                             VolumeVaryings i, bool behind, bool textured, float2 uv, inout VolumeAccumulation o)
+// Volume samples have no thin-surface depth push. LUT texel k stores bin k's
+// exit, so the continuous coordinate starts at the preceding endpoint.
+float3 SampleVolumeTransmittance(float2 uv, float viewZ)
+{
+    float mapped = MapAdaptiveDepth(DepthWarp, viewZ, 80., 1., 0.);
+    if (mapped <= 0.)
+        return 1.;
+    if (mapped < 1.)
+    {
+        float3 first = TransmittanceLut.SampleLevel(LinearClamp, float3(uv, .5 / float(SLICE_COUNT)), 0).rgb;
+        return lerp(float3(1, 1, 1), first, mapped);
+    }
+    return TransmittanceLut.SampleLevel(LinearClamp, float3(uv, (mapped - .5) / float(SLICE_COUNT)), 0).rgb;
+}
+void AccumulateVolumeSegment(float2 segment, float sampleFraction, float rayZ, VolumeVaryings i, bool behind,
+                             bool textured, float2 uv, inout VolumeAccumulation o)
 {
     if (segment.y <= segment.x)
         return;
-    float3 tau = i.sigma * max(segment.y - segment.x, 0.) / rayZ;
-    float middle = (segment.x + segment.y) * .5;
+    // Jitter the quadrature point, not the integration bounds: the complete
+    // interval still contributes tau, including the first and last partial step.
+    float3 tau = i.sigma * (segment.y - segment.x) / rayZ;
+    float sampleZ = lerp(segment.x, segment.y, sampleFraction);
     if (textured)
     {
-        float2 data = SampleVolumeData(i, uv, middle, rayZ);
+        float2 data = SampleVolumeData(i, uv, sampleZ, rayZ);
         tau *= data.r;
         if (VolumeLights[4].y == 0.)
             i.source *= .18 + .82 * exp(-i.sigma * data.g * (2. * i.extent.y));
@@ -27,11 +44,10 @@ void AccumulateVolumeSegment(float2 segment, uint cell, uint count, float rayZ, 
         return;
     if (VolumeLights[4].y > 0.)
     {
-        float3 world = Camera[0].xyz + WorldRay(uv) * (middle / rayZ);
+        float3 world = Camera[0].xyz + WorldRay(uv) * (sampleZ / rayZ);
         i.source *= EvaluateVolumeLighting(world);
     }
-    float fraction = saturate(NormalizedLogDepth(middle, 80., 1.) * count - cell);
-    float3 weight = tau * lerp(entryT, exitT, fraction);
+    float3 weight = tau * SampleVolumeTransmittance(uv, sampleZ);
     // Differential weights are additive under actor partition. AVBOIT's common
     // (1-exp(-totalTau))/denominator normalization supplies integrated opacity.
     float3 radiance = i.source * weight;
@@ -41,7 +57,7 @@ void AccumulateVolumeSegment(float2 segment, uint cell, uint count, float rayZ, 
     if (behind)
         o.backNumerator += radiance;
 }
-VolumeAccumulation ShadeVolume(VolumeVaryings i, bool textured)
+VolumeAccumulation ShadeVolume(VolumeVaryings i, bool textured, bool halfResolution = false)
 {
     VolumeAccumulation o = (VolumeAccumulation)0;
     uint2 pixel = uint2(i.position.xy);
@@ -49,26 +65,39 @@ VolumeAccumulation ShadeVolume(VolumeVaryings i, bool textured)
     float rayZ;
     if (!VolumeInterval(i, uv, LoadOpaqueViewDepth(pixel), interval, rayZ))
         return o;
-    uint count = DepthWarp[0];
-    uint2 range = VolumeVirtualRange(interval, count);
     float interfaceDevice = InterfaceDepth.Load(int3(pixel, 0));
     float interfaceZ = interfaceDevice > 0 ? ViewDepthFromDevice(interfaceDevice) : Camera[5].w;
-    for (uint cell = range.x; cell < range.y; ++cell)
+    float baseStep = Camera[10].x;
+    uint maxSteps = uint(Camera[10].w);
+    // Stratify four neighboring rays into four depth phases. In the half-res
+    // path use low-res pixel coordinates, not the all-odd full-res guide texels.
+    uint2 marchPixel = halfResolution ? pixel / 2u : pixel;
+    uint2 noisePixel = (marchPixel / 2u) & 31u;
+    float jitter = (VolumeBlueNoise[noisePixel.y * 32 + noisePixel.x] + .5) / 1024.;
+    // Stable spatial dithering by default; use the existing TAA-oriented option
+    // to vary the phase over time when a host provides temporal accumulation.
+    if (Camera[9].w > 0.)
+        jitter = frac(jitter + (Camera[9].w - 1.) * .618033989);
+    uint phase = (marchPixel.x & 1u) * 2u;
+    phase = (marchPixel.y & 1u) ? 3u - phase : phase; // [0,2;3,1]
+    if (Camera[9].w > 0.)
+        phase = (phase + uint(Camera[9].w - 1.)) & 3u;
+    jitter = (float(phase) + jitter) * .25;
+    float z = interval.x;
+    [loop] for (uint step = 0; step < maxSteps && z < interval.y; ++step)
     {
-        uint slice = DepthWarp[2 + cell * 2];
-        if (!(DepthWarp[3 + cell * 2] & 1u) || slice >= SLICE_COUNT)
-            continue;
-        // Integrated texel k is the EXIT of bin k. Interpolate from the preceding
-        // endpoint, without the thin-surface two-slice push/bias.
-        float3 exitT = TransmittanceLut.SampleLevel(LinearClamp, float3(uv, (slice + .5) / float(SLICE_COUNT)), 0).rgb;
-        float3 entryT =
-            slice == 0
-                ? float3(1, 1, 1)
-                : TransmittanceLut.SampleLevel(LinearClamp, float3(uv, (slice - .5) / float(SLICE_COUNT)), 0).rgb;
-        float2 segment = VolumeSegment(cell, count, interval);
-        float split = clamp(interfaceZ, segment.x, segment.y);
-        AccumulateVolumeSegment(float2(segment.x, split), cell, count, rayZ, entryT, exitT, i, false, textured, uv, o);
-        AccumulateVolumeSegment(float2(split, segment.y), cell, count, rayZ, entryT, exitT, i, true, textured, uv, o);
+        float3 t = SampleVolumeTransmittance(uv, z);
+        float visibleT = max(t.r, max(t.g, t.b));
+        float lowT = 1. - smoothstep(0., Camera[10].y, visibleT);
+        float ds = baseStep * lerp(1., Camera[10].z, lowT);
+        // A budget limit coarsens the remaining interval rather than dropping
+        // its density/tau and accidentally making long volumes transparent.
+        ds = max(ds, (interval.y - z) / (rayZ * float(maxSteps - step)));
+        float endZ = min(z + ds * rayZ, interval.y);
+        float split = clamp(interfaceZ, z, endZ);
+        AccumulateVolumeSegment(float2(z, split), jitter, rayZ, i, false, textured, uv, o);
+        AccumulateVolumeSegment(float2(split, endZ), jitter, rayZ, i, true, textured, uv, o);
+        z = endZ;
     }
     return o;
 }
@@ -84,10 +113,10 @@ VolumeAccumulation ShadeVolume(VolumeVaryings i, bool textured)
 VolumeAccumulation volumeAccumulationHalf(VolumeVaryings i)
 {
     i.position.xy = floor(i.position.xy) * 2. + 1.5;
-    return ShadeVolume(i, false);
+    return ShadeVolume(i, false, true);
 }
 VolumeAccumulation texturedAccumulationHalf(VolumeVaryings i)
 {
     i.position.xy = floor(i.position.xy) * 2. + 1.5;
-    return ShadeVolume(i, true);
+    return ShadeVolume(i, true, true);
 }

@@ -53,3 +53,43 @@ ImGui 的 Resolve pipeline 中可切换 `Half-resolution local volumes`，或使
 32×32 rank tile 由 `tools/generate_volume_blue_noise.py` 确定性生成，无第三方素材。
 本示例没有为此新增 TAA 或体积历史缓冲；默认关闭此选项。单帧与有限性检查不代表
 已验证 UE4 TAA / DLSS 的时域质量，需在目标工程中测试移动、显露和动态灯光。
+
+
+## Accumulation 步长与抖动
+
+主视角 accumulation 采用独立的世界空间步长，默认 0.5，不再逐个 Z bin 采样。
+每步起点查询 T-LUT，RGB 最大透射率低于 0.1 时平滑增大步长，T=0 时达到 4 倍。
+默认最多 256 步；长射线会增大有效步长覆盖完整区间，不会直接丢弃剩余光学厚度。
+Interface 仍切分前后段。每个 2×2 quad 的四条射线分配四个步内深度相位，层内用共享蓝噪声偏移，积分区间与长度不变。
+半分辨率模式按低分辨率像素组成 quad。这是交错采样，没有新增空间／时域重建 pass。
+默认只做稳定的空间抖动；启用 TAA 实验选项后也随帧改变采样相位，本 demo 没有时域累积。
+
+ImGui 的 Resolve pipeline 可实时调整步长、低 T 阈值、最大倍率和步数预算；倍率设为 1
+即禁用低 T 加速。对应命令行：`--volume-step`、`--volume-low-t`、
+`--volume-step-scale`、`--volume-max-steps`。不新增 RT 或 pass。
+大步长会近似密度／光照和 totalTau，可能漏掉细结构。Extinction 注入仍逐 Z bin 积分；
+光源侧 MSM 仍使用原有独立的 96／32 步。
+
+
+## 选择 actor 和调整材质
+
+面板顶部 **Scene actors** 列出透明 actor；也可左键点击场景中的 bounds 选中。
+重叠／被挡住的 actor 可从列表选择。烟雾默认被选中，**Extinction**
+同时调整 RGB 消光系数（0～128 / world unit），**RGB extinction** 支持分通道编辑。
+修改立即影响相机消光、散射和体积阴影；沿用共享材质的 actor 会联动。
+玻璃的颜色、透射率、粗糙度、IOR、折射位移也在同一编辑区。
+**Shared material defaults** 收纳共用折射默认值、磨砂细节偏移、法线 tiling 和 VFX 强度。
+
+
+### Demo TAA
+
+`--taa` 或 ImGui 的 **Resolve pipeline → TAA** 启用 Donut TAA，与相邻 ADS demo
+使用同一个库实现。TAA 在透明合成与 VFX distortion 后、tonemap 前处理 HDR；
+Halton 投影 jitter 同时用于 opaque、透明几何、occupancy 投影和体积射线。
+启用时自动开启体积 quad 的时域相位轮换和半分辨率随机重建。
+关闭时释放 TAA history、motion 和 output RT；默认关闭，便于保留无 TAA 的算法对比。
+
+当前 motion 由场景深度与前后帧相机生成，支持相机移动，但没有透明物体自身的运动矢量，
+也没有为体积积分结果定义独立代表深度。移动透明物体、烟雾与折射区域仍可能拖影；
+这是用于观察采样收敛的基线，不是完整的透明 temporal reconstruction。
+切换视角、重建资源和编辑 actor 材质会重置 history。GPU profiler 单独列出 `taa`。

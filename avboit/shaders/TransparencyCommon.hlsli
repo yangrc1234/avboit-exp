@@ -46,6 +46,7 @@ Varyings meshVertex(uint id : SV_VertexID)
         p.xyz = float3(dot(delta, Camera[1].xyz), dot(delta, Camera[2].xyz), dot(delta, Camera[3].xyz));
     } // Negative position.w marks geometry already in view space.
     o.position = float4(p.x / (float(WIDTH) / HEIGHT * .57735027), p.y / .57735027, ClipDepthFromView(p.z), p.z);
+    o.position.xy += Camera[11].xy * float2(2., -2.) / Camera[6].xy * o.position.w;
     uint material = uint(Vertices[id * 4 + 1].w) * 4;
     o.depth = p.z;
     o.color = Materials[material];
@@ -89,6 +90,7 @@ float3 Opacity(Varyings i)
 }
 float3 WorldRay(float2 uv)
 {
+    uv -= Camera[11].xy / Camera[6].xy;
     return normalize(Camera[3].xyz + Camera[1].xyz * ((uv.x * 2. - 1.) * (float(WIDTH) / HEIGHT) * .57735027) +
                      Camera[2].xyz * ((1. - uv.y * 2.) * .57735027));
 }

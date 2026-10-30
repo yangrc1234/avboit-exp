@@ -11,13 +11,15 @@ class ViewerUi : public donut::app::ImGui_Renderer
 {
   public:
     ViewerUi(donut::app::DeviceManager *manager, std::function<void()> controls);
+    unsigned ErrorCount() const { return errorCount; }
 
   protected:
     void buildUI() override;
 
   private:
     std::function<void()> drawControls;
+    unsigned errorCount = 0;
 };
 void DrawGpuProfiler(GpuProfiler &profiler);
-void DrawMaterialEditor(MaterialTable &materials, const MaterialDefaults &defaults, bool &visible, int &selected);
+void DrawMaterialEditor(MaterialTable &materials, const MaterialDefaults &defaults, int selected);
 } // namespace avboit

@@ -17,7 +17,7 @@ class DonutSceneHost
     void Load(nvrhi::IDevice *device, const std::filesystem::path &scenePath,
               const std::filesystem::path &frameworkShaders);
     void Record(nvrhi::ICommandList *commands, nvrhi::IFramebuffer *target,
-                const std::array<std::array<float, 4>, 10> &camera);
+                const std::array<std::array<float, 4>, 12> &camera);
     void RecordShadow(nvrhi::ICommandList *commands, bool forceRedraw = false);
     void UpdateLights(float time, const std::array<float, 3> &eye, const SceneLightingSettings &settings);
     const VolumeLightData &LightingData() const;

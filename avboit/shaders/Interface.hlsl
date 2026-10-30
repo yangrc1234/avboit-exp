@@ -41,6 +41,7 @@ float2 SolidSphereOffset(Varyings i, float2 uv)
         return 0;
     float2 targetUV = .5 + float2(dot(target, Camera[1].xyz) / (float(WIDTH) / HEIGHT), -dot(target, Camera[2].xyz)) /
                                (z * 1.15470054);
+    targetUV += Camera[11].xy / Camera[6].xy;
     // UV is clamped at consumption, not the material's refraction magnitude.
     return (targetUV - uv) * float2(WIDTH, HEIGHT) * i.optics.y;
 }

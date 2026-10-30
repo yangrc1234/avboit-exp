@@ -29,7 +29,12 @@ int main()
         Require(defaults.occupancyOverlay == 0);
         Require(!defaults.lowResolutionVolumes && !defaults.stochasticVolumeUpsample);
         Require(Parse({"--volume-half-res"}).lowResolutionVolumes);
+        auto march = Parse(
+            {"--volume-step", ".025", "--volume-low-t", ".05", "--volume-step-scale", "2", "--volume-max-steps", "64"});
+        Require(march.volumeStepSize == .025f && march.volumeLowT == .05f && march.volumeStepScale == 2.f &&
+                march.volumeMaxSteps == 64);
         Require(Parse({"--volume-stochastic-upsample"}).stochasticVolumeUpsample);
+        Require(!defaults.taa && Parse({"--taa"}).taa);
         Require(Parse({"--occupancy-overlay", "7", "--occupancy-slice", "127"}).occupancySlice == 127);
         Require(Parse({"--emissive-front"}).emissiveFront && Parse({"--emissive-front"}).emissiveBalls);
         Require(defaults.fpsLimit == 120 && Parse({"--fps-limit", "0"}).fpsLimit == 0 &&

@@ -241,7 +241,7 @@ void DonutSceneHost::Load(nvrhi::IDevice *device, const std::filesystem::path &s
 }
 
 void DonutSceneHost::Record(nvrhi::ICommandList *commands, nvrhi::IFramebuffer *target,
-                            const std::array<std::array<float, 4>, 10> &camera)
+                            const std::array<std::array<float, 4>, 12> &camera)
 {
     auto &state = *m_impl;
     auto v = [&](unsigned index) { return math::float3(camera[index][0], camera[index][1], camera[index][2]); };
@@ -250,6 +250,7 @@ void DonutSceneHost::Record(nvrhi::ICommandList *commands, nvrhi::IFramebuffer *
         right, up, forward, math::float3(-math::dot(eye, right), -math::dot(eye, up), -math::dot(eye, forward)));
     const auto &info = target->getFramebufferInfo();
     state.view.SetViewport(info.getViewport());
+    state.view.SetPixelOffset(math::float2(camera[11][0], camera[11][1]));
     const float yScale = 1.f / .57735027f, xScale = yScale * info.height / info.width;
     state.view.SetMatrices(
         worldToView, math::float4x4(xScale, 0, 0, 0, 0, yScale, 0, 0, 0, 0, camera[5][0], 1, 0, 0, camera[5][1], 0));

@@ -6,6 +6,8 @@
 #include <donut/core/vfs/VFS.h>
 #include <donut/engine/ShaderFactory.h>
 #include <imgui.h>
+#include <imgui_internal.h>
+#include <cstdio>
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -13,6 +15,17 @@
 
 namespace avboit
 {
+namespace
+{
+class ScopedItemWidth
+{
+  public:
+    explicit ScopedItemWidth(float width) { ImGui::PushItemWidth(width); }
+    ~ScopedItemWidth() { ImGui::PopItemWidth(); }
+    ScopedItemWidth(const ScopedItemWidth &) = delete;
+    ScopedItemWidth &operator=(const ScopedItemWidth &) = delete;
+};
+} // namespace
 ViewerUi::ViewerUi(donut::app::DeviceManager *manager, std::function<void()> controls)
     : ImGui_Renderer(manager), drawControls(std::move(controls))
 {
@@ -22,6 +35,15 @@ ViewerUi::ViewerUi(donut::app::DeviceManager *manager, std::function<void()> con
     if (!Init(factory))
         throw std::runtime_error("ImGui renderer initialization failed");
     ImGui::GetIO().IniFilename = nullptr;
+    // Recovery can display a warning and keep rendering. Make such errors visible
+    // to headless UI checks instead of accepting a successful screenshot alone.
+    auto *context = ImGui::GetCurrentContext();
+    context->ErrorCallbackUserData = this;
+    context->ErrorCallback = [](ImGuiContext *, void *user, const char *message)
+    {
+        ++static_cast<ViewerUi *>(user)->errorCount;
+        std::fprintf(stderr, "ImGui error: %s\n", message);
+    };
 }
 void ViewerUi::buildUI()
 {
@@ -103,83 +125,72 @@ void DrawGpuProfiler(GpuProfiler &profiler)
 
 namespace avboit
 {
-void DrawMaterialEditor(MaterialTable &materials, const MaterialDefaults &defaults, bool &materialEditor,
-                        int &selectedMaterial)
+void DrawMaterialEditor(MaterialTable &materials, const MaterialDefaults &defaults, int selectedMaterial)
 {
-    if (materialEditor && !materials.entries.empty())
+    if (selectedMaterial < 0 || size_t(selectedMaterial) >= materials.entries.size())
+        return;
+    const ScopedItemWidth itemWidth(160);
+    auto &material = materials.entries[selectedMaterial];
+    ImGui::TextWrapped("Shared by matching fixture surfaces. Edits apply immediately; geometry changes in "
+                       "Scene fixtures reset materials.");
+    if (material.kind >= 5)
     {
-        ImGui::SetNextWindowSize(ImVec2(420, 460), ImGuiCond_FirstUseEver);
-        if (ImGui::Begin("Transparent materials", &materialEditor))
+        ImGui::ColorEdit3("Source radiance", material.color.data(),
+                          ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
+        float extinction = (material.transmission[0] + material.transmission[1] + material.transmission[2]) / 3.f;
+        if (ImGui::SliderFloat("Extinction", &extinction, 0.f, 128.f, "%.3f / world unit",
+                               ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp))
+            material.transmission[0] = material.transmission[1] = material.transmission[2] = extinction;
+        ImGui::TextWrapped("Higher extinction makes smoke denser. Uniform sets all RGB channels together.");
+        if (ImGui::TreeNode("RGB extinction"))
         {
-            if (ImGui::BeginCombo("Material", ("Material " + std::to_string(selectedMaterial)).c_str()))
-            {
-                for (unsigned index = 0; index < materials.entries.size(); ++index)
-                {
-                    const auto kind = materials.entries[index].kind;
-                    if (kind == 0)
-                        continue;
-                    std::string name = "Material " + std::to_string(index) + " / " +
-                                       (kind == 1   ? "Smoke"
-                                        : kind == 2 ? "Glass"
-                                        : kind == 3 ? "VFX"
-                                        : kind >= 5 ? "Local volume"
-                                                    : "Sphere");
-                    if (ImGui::Selectable(name.c_str(), selectedMaterial == int(index)))
-                        selectedMaterial = int(index);
-                }
-                ImGui::EndCombo();
-            }
-            auto &material = materials.entries[selectedMaterial];
-            ImGui::TextWrapped("Shared by matching fixture surfaces. Edits apply immediately; geometry changes in "
-                               "Scene fixtures reset materials.");
-            if (material.kind >= 5)
-            {
-                ImGui::ColorEdit3("Volume source radiance", material.color.data(),
-                                  ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
-                ImGui::SliderFloat3("Extinction / world unit", material.transmission.data(), 0, 8);
-                ImGui::TextWrapped("Source is lighting divided by extinction. Each actor has its own proxy draw.");
-            }
-            else if (material.kind != 3)
-            {
-                if (material.kind != 4)
-                    ImGui::ColorEdit3("Radiance", material.color.data(),
-                                      ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
-                ImGui::SliderFloat("Coverage", &material.color[3], 0, 1);
-                ImGui::SliderFloat3("RGB transmission", material.transmission.data(), 0, 1);
-            }
-            if (material.kind == 3)
-            {
-                int pattern = int(material.vfxPattern);
-                if (ImGui::Combo("Pattern", &pattern, "Oscillating ring\0Heat wave\0Expanding shock\0"))
-                    material.vfxPattern = unsigned(pattern);
-                ImGui::SliderFloat("Phase (cycles)", &material.vfxPhase, 0, 1);
-            }
-            if (material.kind == 2 || material.kind == 4)
-            {
-                ImGui::SliderFloat("Roughness", &material.transmission[3], 0, 1);
-                if (material.kind == 2)
-                    ImGui::SliderFloat("Displacement (px)", &material.displacement, -64, 64);
-            }
-            auto effective = materials.Resolve(unsigned(selectedMaterial), defaults);
-            if (ImGui::Checkbox("Inherit scene optics", &material.inheritOptics) && !material.inheritOptics)
-            {
-                material.ior = effective.value.ior;
-                material.gain = effective.value.gain;
-                material.normalSphere = effective.value.normalSphere;
-            }
-            ImGui::BeginDisabled(material.inheritOptics);
-            ImGui::SliderFloat("IOR", &material.ior, 1, 2.5f);
-            ImGui::SliderFloat("Displacement gain", &material.gain, 0, 4);
-            if (material.kind == 4)
-                ImGui::Checkbox("Normal-driven refraction", &material.normalSphere);
-            ImGui::EndDisabled();
-            ImGui::Text("Extinction lane: %s", material.ScalarExtinction() ? "scalar" : "RGB");
-            if (std::isfinite(effective.MaximumDisplacement()))
-                ImGui::Text("Conservative offset bound: %.1f px", effective.MaximumDisplacement());
-            else
-                ImGui::TextUnformatted("Analytic refraction: full-screen Gaussian coverage");
+            ImGui::DragFloat3("Extinction RGB", material.transmission.data(), .05f, 0.f, 128.f, "%.3f",
+                              ImGuiSliderFlags_AlwaysClamp);
+            ImGui::TreePop();
         }
-        ImGui::End();
+        ImGui::TextWrapped("Source is lighting divided by extinction. Each actor has its own proxy draw.");
+    }
+    else if (material.kind != 3)
+    {
+        if (material.kind != 4)
+            ImGui::ColorEdit3("Radiance", material.color.data(), ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
+        ImGui::SliderFloat("Coverage", &material.color[3], 0, 1);
+        ImGui::SliderFloat3("RGB transmission", material.transmission.data(), 0, 1);
+    }
+    if (material.kind == 3)
+    {
+        int pattern = int(material.vfxPattern);
+        if (ImGui::Combo("Pattern", &pattern, "Oscillating ring\0Heat wave\0Expanding shock\0"))
+            material.vfxPattern = unsigned(pattern);
+        ImGui::SliderFloat("Phase (cycles)", &material.vfxPhase, 0, 1);
+    }
+    if (material.kind == 2 || material.kind == 4)
+    {
+        ImGui::SliderFloat("Roughness", &material.transmission[3], 0, 1);
+        if (material.kind == 2)
+            ImGui::SliderFloat("Displacement (px)", &material.displacement, -64, 64);
+    }
+    if (material.kind < 5)
+    {
+        auto effective = materials.Resolve(unsigned(selectedMaterial), defaults);
+        if (ImGui::Checkbox("Inherit scene optics", &material.inheritOptics) && !material.inheritOptics)
+        {
+            material.ior = effective.value.ior;
+            material.gain = effective.value.gain;
+            material.normalSphere = effective.value.normalSphere;
+        }
+        ImGui::BeginDisabled(material.inheritOptics);
+        ImGui::SliderFloat("IOR", &material.ior, 1, 2.5f);
+        ImGui::SliderFloat("Displacement gain", &material.gain, 0, 4);
+        if (material.kind == 4)
+            ImGui::Checkbox("Normal-driven refraction", &material.normalSphere);
+        ImGui::EndDisabled();
+        ImGui::Text("Extinction lane: %s", material.ScalarExtinction() ? "scalar" : "RGB");
+        if (std::isfinite(effective.MaximumDisplacement()))
+            ImGui::Text("Conservative offset bound: %.1f px", effective.MaximumDisplacement());
+        else
+            ImGui::TextUnformatted("Analytic refraction: full-screen Gaussian coverage");
     }
 }
+
 } // namespace avboit

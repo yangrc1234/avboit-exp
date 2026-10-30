@@ -9,6 +9,8 @@ void NativeViewer::TestUiInteractions(avboit::ViewerUi &ui, nvrhi::IFramebuffer 
         GetDevice()->waitForIdle();
         ui.Animate(1.f / 60.f);
         ui.Render(framebuffer);
+        if (ui.ErrorCount())
+            throw std::runtime_error("ImGui reported errors during UI interaction test");
     };
     auto click = [&](const ImVec2 &position)
     {
@@ -233,12 +235,14 @@ void NativeViewer::TestUiInteractions(avboit::ViewerUi &ui, nvrhi::IFramebuffer 
     click(uiCubic);
     if (cubic == initialCubic)
         throw std::runtime_error("ImGui cubic toggle failed");
+    click(uiSharedMaterials);
     const float initialTiling = frostNormalTiling;
     click(uiFrostTiling);
     if (frostNormalTiling == initialTiling || camera[9][2] != frostNormalTiling || vertexBuffer != initialVertices ||
         materialBuffer != initialMaterials)
         throw std::runtime_error("ImGui normal tiling did not update live or rebuilt scene data");
     frostNormalTiling = initialTiling;
+    click(uiSharedMaterials);
     bool initialSparse = sparseBlur;
     click(uiSparse);
     if (sparseBlur == initialSparse)
@@ -284,9 +288,10 @@ void NativeViewer::TestUiInteractions(avboit::ViewerUi &ui, nvrhi::IFramebuffer 
         }
     }
     TestMaterialEdits(framebuffer);
-    materialEditor = true;
+    SelectActor(0);
     pump();
-    materialEditor = false;
+    if (selectedActor != 0 || selectedMaterial != int(objectMaterials[0]))
+        throw std::runtime_error("Actor selection did not open its material");
     bool originalAccum = halfAccumulation;
     auto materialIndex = objectMaterials.front();
     auto originalMaterial = materials.entries[materialIndex];
@@ -469,4 +474,149 @@ void NativeViewer::TestMaterialEdits(nvrhi::IFramebuffer *framebuffer)
     fullBlur = oldFull;
     Render(framebuffer);
     printf("Live material edits, colored smoke and conservative sparse work checks PASS\n");
+}
+
+// Exercise the same resource-rebuild path as the live checkbox, and validate HDR
+// history after static frames, a moving camera, a camera cut and a size change.
+void NativeViewer::TestTemporalAA(nvrhi::IFramebuffer *framebuffer)
+{
+    const unsigned savedWidth = Width, savedPreset = cameraPreset;
+    auto validate = [&]()
+    {
+        auto *texture = temporalAA->Output();
+        auto staging = GetDevice()->createStagingTexture(texture->getDesc(), nvrhi::CpuAccessMode::Read);
+        commands->open();
+        commands->copyTexture(staging, {}, texture, {});
+        commands->close();
+        GetDevice()->executeCommandList(commands);
+        GetDevice()->waitForIdle();
+        size_t pitch = 0;
+        auto *data = static_cast<const unsigned char *>(
+            GetDevice()->mapStagingTexture(staging, {}, nvrhi::CpuAccessMode::Read, &pitch));
+        if (!data)
+            throw std::runtime_error("TAA readback failed");
+        bool finite = true, nonzero = false;
+        for (unsigned y = 0; y < Height; ++y)
+        {
+            auto *row = reinterpret_cast<const uint16_t *>(data + pitch * y);
+            for (unsigned x = 0; x < Width; ++x)
+                for (unsigned c = 0; c < 3; ++c)
+                {
+                    auto bits = row[4 * x + c];
+                    finite &= (bits & 0x7c00) != 0x7c00;
+                    nonzero |= (bits & 0x7fff) != 0;
+                }
+        }
+        GetDevice()->unmapStagingTexture(staging);
+        if (!finite || !nonzero)
+            throw std::runtime_error("TAA produced invalid or empty HDR output");
+    };
+    taaEnabled = false;
+    rebuildRequested = preserveMaterialsOnRebuild = true;
+    Render(framebuffer);
+    if (temporalAA || camera[11][0] != 0 || camera[11][1] != 0)
+        throw std::runtime_error("Disabling TAA retained resources or jitter");
+    taaEnabled = true;
+    rebuildRequested = preserveMaterialsOnRebuild = true;
+    for (unsigned frame = 0; frame < 8; ++frame)
+        Render(framebuffer);
+    validate();
+    const auto eye = navigation.Eye();
+    for (unsigned frame = 0; frame < 8; ++frame)
+    {
+        navigation.SetPose({eye[0] + float(frame) * .025f, eye[1], eye[2]}, float(frame) * .003f);
+        Render(framebuffer);
+    }
+    validate();
+    ApplyCameraPreset((savedPreset + 2) % 6);
+    Render(framebuffer);
+    validate();
+    Width += 4;
+    rebuildRequested = preserveMaterialsOnRebuild = true;
+    Render(framebuffer);
+    if (temporalAA->Output()->getDesc().width != Width)
+        throw std::runtime_error("TAA resize kept old history dimensions");
+    validate();
+    Width = savedWidth;
+    rebuildRequested = preserveMaterialsOnRebuild = true;
+    ApplyCameraPreset(savedPreset);
+    Render(framebuffer);
+    validate();
+    printf("TAA toggle, moving camera, cut, resize and finite HDR checks PASS\n");
+}
+
+void NativeViewer::TestActorEditing(nvrhi::IFramebuffer *framebuffer)
+{
+    if (objectCount == 0)
+        throw std::runtime_error("Actor test needs transparent actors");
+    const auto savedVertices = vertices, savedBounds = bounds;
+    const auto savedVolumes = localVolumes;
+    auto readColor = [&]()
+    {
+        auto *texture = framebuffer->getDesc().colorAttachments[0].texture;
+        auto staging = GetDevice()->createStagingTexture(texture->getDesc(), nvrhi::CpuAccessMode::Read);
+        commands->open();
+        commands->copyTexture(staging, {}, texture, {});
+        commands->close();
+        GetDevice()->executeCommandList(commands);
+        GetDevice()->waitForIdle();
+        size_t pitch;
+        auto *data = static_cast<const unsigned char *>(
+            GetDevice()->mapStagingTexture(staging, {}, nvrhi::CpuAccessMode::Read, &pitch));
+        if (!data)
+            throw std::runtime_error("Actor color readback failed");
+        std::vector<unsigned char> image;
+        for (unsigned y = 0; y < texture->getDesc().height; ++y)
+            image.insert(image.end(), data + y * pitch, data + y * pitch + texture->getDesc().width * 4);
+        GetDevice()->unmapStagingTexture(staging);
+        return image;
+    };
+    Render(framebuffer);
+    const auto before = readColor();
+    for (unsigned actor = 0; actor < objectCount; ++actor)
+    {
+        const F3 delta = {1.25f + actor * .1f, .3f, .5f};
+        TranslateActor(actor, delta);
+        auto center = ActorCenter(actor);
+        for (unsigned a = 0; a < 3; ++a)
+            if (std::abs(center[a] - actorHomeCenters[actor][a] - delta[a]) > 1e-5f)
+                throw std::runtime_error("Actor bounds did not move with geometry");
+        const unsigned end =
+            actor + 1 < objectCount ? objectFirstRecords[actor + 1] : (opaqueVertices + transparentVertices) * 4;
+        for (unsigned v = objectFirstRecords[actor]; v < end; v += 4)
+        {
+            for (unsigned a = 0; a < 3; ++a)
+                if (std::abs(vertices[v][a] - savedVertices[v][a] - delta[a]) > 1e-5f)
+                    throw std::runtime_error("Actor translation corrupted mesh positions");
+            for (unsigned r = 1; r < 4; ++r)
+                if (vertices[v + r] != savedVertices[v + r])
+                    throw std::runtime_error("Translation changed material, sphere normals or volume extents");
+        }
+        for (unsigned volume = 0; volume < localVolumeRecords.size(); ++volume)
+            if (localVolumeRecords[volume] == objectFirstRecords[actor])
+                for (unsigned a = 0; a < 3; ++a)
+                    if (std::abs(localVolumes[volume].center[a] - savedVolumes[volume].center[a] - delta[a]) > 1e-5f)
+                        throw std::runtime_error("Volume shadow proxy did not follow actor");
+    }
+    Render(framebuffer);
+    if (before == readColor())
+        throw std::runtime_error("Moving actors did not change the rendered image");
+    const auto movedBounds = bounds;
+    rebuildRequested = preserveMaterialsOnRebuild = true;
+    Render(framebuffer);
+    if (bounds != movedBounds)
+        throw std::runtime_error("Quality rebuild lost actor positions");
+    for (unsigned actor = 0; actor < objectCount; ++actor)
+        SetActorPosition(actor, actorHomeCenters[actor]);
+    for (unsigned v = 0; v < vertices.size(); ++v)
+        for (unsigned a = 0; a < 4; ++a)
+            if (std::abs(vertices[v][a] - savedVertices[v][a]) > 1e-5f)
+                throw std::runtime_error("Reset actor position failed");
+    // Restore exact test inputs after checking the floating-point round trip.
+    vertices = savedVertices;
+    bounds = savedBounds;
+    localVolumes = savedVolumes;
+    actorGeometryDirty = true;
+    Render(framebuffer);
+    printf("Actor translation, geometry/bounds, shadow proxies, rebuild and reset PASS\n");
 }

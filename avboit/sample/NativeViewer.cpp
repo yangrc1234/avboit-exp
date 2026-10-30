@@ -23,6 +23,8 @@
 #include "sample/StressFixtures.h"
 #include "sample/ViewerUi.h"
 #include "sample/ViewerOptions.h"
+#include "sample/TemporalAA.h"
+#include "sample/TranslationGizmo.h"
 #include "sample/MaterialTable.h"
 #include "sample/GeometrySubmission.h"
 #include "sample/SubmissionOrder.h"
@@ -54,7 +56,7 @@ class NativeViewer : public app::IRenderPass
     bool detailedProfiling = true, profilingEnabled = false, profilerDirty = false, rebuildRequested = false;
     ImVec2 uiCubic, uiSparse, uiFrost, uiSmoke, uiProfile, uiGlassPanes, uiSlopeSplat;
     ImVec2 uiMipLow, uiMipHigh, uiBackground, uiDemoCase;
-    ImVec2 uiFrostTiling;
+    ImVec2 uiFrostTiling, uiSharedMaterials;
     ImVec2 uiOccupancy;
     std::array<ImVec2, 8> uiOccupancyChoices;
     int occupancyOverlay = 0, occupancySlice = 0;
@@ -74,6 +76,10 @@ class NativeViewer : public app::IRenderPass
     avboit::SceneLightingSettings sceneLighting;
     bool lowResolutionVolumes = false, stochasticVolumeUpsample = false;
     unsigned volumeSampleFrame = 0;
+    bool taaEnabled = false;
+    std::unique_ptr<avboit::TemporalAA> temporalAA;
+    float volumeStepSize = .5f, volumeLowT = .1f, volumeStepScale = 4.f;
+    int volumeMaxSteps = 256;
     std::vector<avboit::StressVolume> localVolumes;
     std::vector<unsigned> localVolumeRecords;
     bool halfAccumulation = false, halfComposition = false, fullVfx = true, allInterface = false, animateOrder = false;
@@ -146,8 +152,162 @@ class NativeViewer : public app::IRenderPass
     nvrhi::BufferHandle materialBuffer;
     std::vector<unsigned> objectFirstRecords, objectMaterials;
     std::vector<F4> uploadedMaterials;
-    int selectedMaterial = 0;
-    bool materialEditor = false, preserveMaterialsOnRebuild = false;
+    int selectedMaterial = 0, selectedActor = -1;
+    avboit::TranslationGizmo actorGizmo;
+    bool showActorGizmo = true, actorGeometryDirty = false;
+    std::vector<F3> actorHomeCenters;
+    F3 ActorCenter(unsigned actor) const
+    {
+        F3 center;
+        for (unsigned a = 0; a < 3; ++a)
+            center[a] = (bounds[3 + actor * 2][a] + bounds[4 + actor * 2][a]) * .5f;
+        return center;
+    }
+    void TranslateActor(unsigned actor, F3 delta)
+    {
+        if (actor >= objectFirstRecords.size() || delta == F3{})
+            return;
+        for (float x : delta)
+            if (!std::isfinite(x))
+                return;
+        const unsigned first = objectFirstRecords[actor];
+        const unsigned end = actor + 1 < objectFirstRecords.size() ? objectFirstRecords[actor + 1]
+                                                                   : (opaqueVertices + transparentVertices) * 4;
+        for (unsigned a = 0; a < 3; ++a)
+        {
+            bounds[3 + actor * 2][a] += delta[a];
+            bounds[4 + actor * 2][a] += delta[a];
+            for (unsigned v = first; v < end; v += 4)
+                vertices[v][a] += delta[a];
+        }
+        // The light-space density integration uses a separate volume proxy list.
+        for (unsigned v = 0; v < localVolumeRecords.size(); ++v)
+            if (localVolumeRecords[v] == first)
+                for (unsigned a = 0; a < 3; ++a)
+                    localVolumes[v].center[a] += delta[a];
+        actorGeometryDirty = true;
+        if (temporalAA)
+            temporalAA->Invalidate();
+    }
+    void SetActorPosition(unsigned actor, F3 position)
+    {
+        const auto center = ActorCenter(actor);
+        for (unsigned a = 0; a < 3; ++a)
+            position[a] -= center[a];
+        TranslateActor(actor, position);
+    }
+    void DrawActorGizmo()
+    {
+        if (!showActorGizmo || selectedActor < 0 || unsigned(selectedActor) >= objectMaterials.size() ||
+            std::find(viewObjects.begin(), viewObjects.end(), unsigned(selectedActor)) != viewObjects.end())
+        {
+            actorGizmo.Reset();
+            return;
+        }
+        const unsigned actor = unsigned(selectedActor);
+        F3 low, high, center, delta;
+        for (unsigned a = 0; a < 3; ++a)
+        {
+            float offset = 0;
+            for (const auto &motion : fixtureMotions)
+                if (motion.object == actor)
+                    offset += motion.amplitude[a] * std::sin(time * motion.frequency);
+            low[a] = bounds[3 + actor * 2][a] + offset;
+            high[a] = bounds[4 + actor * 2][a] + offset;
+            center[a] = (low[a] + high[a]) * .5f;
+        }
+        avboit::TranslationGizmo::View view{navigation.Eye(),     navigation.Right(),         navigation.Up(),
+                                            navigation.Forward(), ImGui::GetIO().DisplaySize, float(Width) / Height};
+        if (actorGizmo.Draw(view, center, low, high, delta))
+            TranslateActor(actor, delta);
+        if (actorGizmo.Active())
+            animate = false;
+    }
+    double pointerX = 0, pointerY = 0;
+    bool preserveMaterialsOnRebuild = false;
+    std::string ActorLabel(unsigned actor) const
+    {
+        unsigned kind = materials.entries[objectMaterials[actor]].kind;
+        const char *type = kind == 6   ? "Volume smoke"
+                           : kind == 5 ? "Homogeneous volume"
+                           : kind == 1 ? "Smoke card"
+                           : kind == 4 ? "Glass sphere"
+                                       : "Glass";
+        return std::string(type) + " / Actor " + std::to_string(actor);
+    }
+    void SelectActor(unsigned actor)
+    {
+        if (actor >= objectMaterials.size())
+            return;
+        actorGizmo.Reset();
+        selectedActor = int(actor);
+        selectedMaterial = int(objectMaterials[actor]);
+    }
+    void PickActor()
+    {
+        if (!ImGui::GetCurrentContext() || ImGui::GetIO().WantCaptureMouse ||
+            actorGizmo.HitTest(ImVec2(float(pointerX), float(pointerY))))
+            return;
+        const auto size = ImGui::GetIO().DisplaySize;
+        if (size.x <= 0 || size.y <= 0)
+            return;
+        const float x = (float(pointerX) / size.x * 2.f - 1.f) * (float(Width) / Height) * .57735027f;
+        const float y = (1.f - float(pointerY) / size.y * 2.f) * .57735027f;
+        const auto eye = navigation.Eye(), right = navigation.Right(), up = navigation.Up(),
+                   forward = navigation.Forward();
+        F3 direction;
+        for (unsigned axis = 0; axis < 3; ++axis)
+            direction[axis] = forward[axis] + x * right[axis] + y * up[axis];
+        float nearest = 80.f;
+        int hit = -1;
+        // Bounds picking also works for a volume's empty proxy geometry. The actor
+        // list remains available for overlapping bounds and occluded actors.
+        for (unsigned actor = 0; actor < objectMaterials.size(); ++actor)
+        {
+            F3 origin = eye, ray = direction;
+            if (std::find(viewObjects.begin(), viewObjects.end(), actor) != viewObjects.end())
+            {
+                origin = {0, 0, 0};
+                ray = {x, y, 1};
+            }
+            F3 low, high;
+            for (unsigned axis = 0; axis < 3; ++axis)
+            {
+                low[axis] = bounds[3 + actor * 2][axis];
+                high[axis] = bounds[4 + actor * 2][axis];
+                for (const auto &motion : fixtureMotions)
+                    if (motion.object == actor)
+                    {
+                        float shift = motion.amplitude[axis] * std::sin(time * motion.frequency);
+                        low[axis] += shift;
+                        high[axis] += shift;
+                    }
+            }
+            float enter = .05f, leave = nearest;
+            for (unsigned axis = 0; axis < 3; ++axis)
+            {
+                if (std::abs(ray[axis]) < 1e-7f)
+                {
+                    if (origin[axis] < low[axis] || origin[axis] > high[axis])
+                        leave = -1;
+                }
+                else
+                {
+                    float a = (low[axis] - origin[axis]) / ray[axis];
+                    float b = (high[axis] - origin[axis]) / ray[axis];
+                    enter = std::max(enter, std::min(a, b));
+                    leave = std::min(leave, std::max(a, b));
+                }
+            }
+            if (leave >= enter && enter < nearest)
+            {
+                nearest = enter;
+                hit = int(actor);
+            }
+        }
+        if (hit >= 0)
+            SelectActor(unsigned(hit));
+    }
     avboit::MaterialDefaults MaterialDefaults() const
     {
         return {planarIor, sphereIor, refractionStrength, normalSphere};
@@ -168,7 +328,7 @@ class NativeViewer : public app::IRenderPass
     bool cubic = true, frost = true, vfx = false, vfxBehind = false, animate = false;
     bool cubicTrilinear = false;
     float time = 0;
-    std::array<F4, 10> camera;
+    std::array<F4, 12> camera;
     void UpdateCamera()
     {
         float theta = 0;
@@ -180,6 +340,8 @@ class NativeViewer : public app::IRenderPass
                 gpuMaterials[material * 4][channel] *= emissiveGain;
         if (gpuMaterials != uploadedMaterials)
         {
+            if (temporalAA)
+                temporalAA->Invalidate();
             interfaceSelectionDirty = true;
             commands->writeBuffer(materialBuffer, gpuMaterials.data(), gpuMaterials.size() * 16);
             uploadedMaterials = std::move(gpuMaterials);
@@ -208,12 +370,19 @@ class NativeViewer : public app::IRenderPass
                     float((zeroTShortcut ? 1 : 0) | (zeroDepth ? 2 : 0) | (mirrorBlur ? 4 : 0) | (fullVfx ? 8 : 0))},
                    {float(chain.width), float(chain.height), float(chain.mipCount), tileResolve ? 0.f : 1.f},
                    {float(slopeSplat), frostDetailRadius, frostNormalTiling,
-                    stochasticVolumeUpsample ? float(1 + (volumeSampleFrame++ % 4096)) : 0.f}}};
+                    (stochasticVolumeUpsample || taaEnabled) ? float(1 + (volumeSampleFrame++ % 4096)) : 0.f},
+                   {volumeStepSize, volumeLowT, volumeStepScale, float(volumeMaxSteps)},
+                   {0, 0, 0, 0}}};
+        if (temporalAA)
+        {
+            const auto jitter = temporalAA->Jitter();
+            camera[11] = {jitter.x, jitter.y, 0, 0};
+        }
         auto projected = bounds;
         auto animatedBounds = bounds;
         {
             unsigned seed = orderSeed + (animateOrder ? orderFrame++ : 0);
-            bool updateVertices = (!fixtureMotions.empty() && time != uploadedFixtureTime) ||
+            bool updateVertices = actorGeometryDirty || (!fixtureMotions.empty() && time != uploadedFixtureTime) ||
                                   submissionOrder != uploadedOrder ||
                                   (submissionOrder == 2 && seed != uploadedOrderSeed);
             std::vector<F4> movingVertices;
@@ -240,6 +409,7 @@ class NativeViewer : public app::IRenderPass
                 interfaceSelectionDirty = true;
                 uploadedOrder = submissionOrder;
                 uploadedOrderSeed = seed;
+                actorGeometryDirty = false;
             }
             uploadedFixtureTime = time;
         }
@@ -497,6 +667,8 @@ class NativeViewer : public app::IRenderPass
     void SetCsvPath(const std::string &path) { snprintf(csvPathUi.data(), csvPathUi.size(), "%s", path.c_str()); }
     void ApplyCameraPreset(unsigned preset)
     {
+        if (temporalAA)
+            temporalAA->Invalidate();
         cameraPreset = preset;
         float heading = 0;
         F3 eye = useSponza ? F3{-.6f, 1.75f, 0} : F3{0, 0, 0};
@@ -551,6 +723,13 @@ class NativeViewer : public app::IRenderPass
         emissiveGain = gain;
     }
     void SetEmissiveFront(bool front) { emissiveFront = front; }
+    void SetVolumeMarch(float step, float threshold, float scale, int budget)
+    {
+        volumeStepSize = step;
+        volumeLowT = threshold;
+        volumeStepScale = scale;
+        volumeMaxSteps = budget;
+    }
     void SetVolumeResolution(bool half, bool stochastic)
     {
         lowResolutionVolumes = half;
@@ -618,6 +797,7 @@ class NativeViewer : public app::IRenderPass
         rebuildRequested = true;
         preserveMaterialsOnRebuild = true;
     }
+    void SetTaa(bool enabled) { taaEnabled = enabled; }
     void SetHardwareDepth(bool enabled) { hardwareDepth = enabled; }
     void SetExtinctionOptions(bool dense, bool poison, bool slope)
     {
@@ -699,6 +879,67 @@ class NativeViewer : public app::IRenderPass
             return ImVec2((a.x + b.x) * .5f, (a.y + b.y) * .5f);
         };
         const char *backgrounds[] = {"Calibration background", "Sponza", "Sponza (legacy reference)"};
+        if (ImGui::CollapsingHeader("Scene actors", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            ImGui::TextWrapped("Select an actor here or click its bounds in the scene. Drag XYZ handles to move.");
+            if (ImGui::BeginListBox("##actors", ImVec2(-1, 110)))
+            {
+                for (unsigned actor = 0; actor < objectMaterials.size(); ++actor)
+                    if (ImGui::Selectable(ActorLabel(actor).c_str(), selectedActor == int(actor)))
+                        SelectActor(actor);
+                ImGui::EndListBox();
+            }
+            if (selectedActor >= 0 && unsigned(selectedActor) < objectMaterials.size())
+            {
+                ImGui::Text("Selected: %s", ActorLabel(unsigned(selectedActor)).c_str());
+                F3 position = ActorCenter(unsigned(selectedActor));
+                ImGui::SetNextItemWidth(-1);
+                if (ImGui::DragFloat3("##actor-position", position.data(), .02f, -1000.f, 1000.f, "%.3f"))
+                    SetActorPosition(unsigned(selectedActor), position);
+                ImGui::TextDisabled("Position XYZ (world units). Ctrl-click to type.");
+                if (ImGui::Checkbox("Move gizmo", &showActorGizmo))
+                    actorGizmo.Reset();
+                ImGui::SameLine();
+                if (ImGui::Button("Reset position"))
+                    SetActorPosition(unsigned(selectedActor), actorHomeCenters[selectedActor]);
+                if (ImGui::Button("Reset all actor positions"))
+                    for (unsigned a = 0; a < actorHomeCenters.size(); ++a)
+                        SetActorPosition(a, actorHomeCenters[a]);
+                ImGui::TextWrapped("White center: move in screen plane. Esc: cancel drag. Dragging pauses animation.");
+                ImGui::TextDisabled("Scene preset changes reset edits; quality changes keep them.");
+                ImGui::Separator();
+                avboit::DrawMaterialEditor(materials, MaterialDefaults(), selectedMaterial);
+            }
+            bool sharedMaterialsOpen = ImGui::TreeNode("Shared material defaults");
+            uiSharedMaterials = itemCenter();
+            if (sharedMaterialsOpen)
+            {
+                ImGui::TextWrapped(
+                    "These settings apply to all actors that inherit scene optics and to all frost detail.");
+                ImGui::Checkbox("Normal-driven sphere (artistic)", &normalSphere);
+                ImGui::SliderFloat("Planar IOR", &planarIor, 1, 2.5f, "%.2f");
+                ImGui::SliderFloat("Sphere IOR", &sphereIor, 1, 2.5f, "%.2f");
+                ImGui::SliderFloat("Self-refraction gain", &refractionStrength, 0, 4, "%.2f");
+                ImGui::SliderFloat("VFX strength (px)", &vfxStrength, 0, 64);
+                ImGui::SliderFloat("Post-blur offset (1440p px)", &frostDetailRadius, 0.f, 64.f, "%.1f");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(
+                        "Reserve this much of the material offset for the Gaussian lookup. Larger offsets remain "
+                        "in B. No new RT/pass.");
+                ImGui::TextWrapped(
+                    "No B-source radius/offset limit. Material sigma selects the available Gaussian levels.");
+                ImGui::SetNextItemWidth(135);
+                ImGui::SliderFloat("Frost normal tiling", &frostNormalTiling, .25f, 64.f, "%.2f",
+                                   ImGuiSliderFlags_Logarithmic);
+                uiFrostTiling = ImGui::GetItemRectMin();
+                uiFrostTiling.x += 100;
+                uiFrostTiling.y = (uiFrostTiling.y + ImGui::GetItemRectMax().y) * .5f;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(
+                        "Normal-map repeats across a pane. Larger values make finer detail. Changes live.");
+                ImGui::TreePop();
+            }
+        }
         ImGui::TextUnformatted("Background");
         ImGui::SetNextItemWidth(-1);
         bool backgroundOpen = ImGui::BeginCombo("##Background", backgrounds[pendingSceneMode]);
@@ -837,18 +1078,6 @@ class NativeViewer : public app::IRenderPass
                     chain.width >> (frostMipCount - 1), frostMipCount);
         ImGui::SetNextItemWidth(135);
         ImGui::SliderFloat("Maximum sigma (1440p px)", &maxFrostSigma, 0.f, 24.f, "%.2f");
-        ImGui::SliderFloat("Post-blur offset (1440p px)", &frostDetailRadius, 0.f, 64.f, "%.1f");
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Reserve this much of the material offset for the Gaussian lookup. Larger offsets remain "
-                              "in B. No new RT/pass.");
-        ImGui::TextWrapped("No B-source radius/offset limit. Material sigma selects the available Gaussian levels.");
-        ImGui::SetNextItemWidth(135);
-        ImGui::SliderFloat("Frost normal tiling", &frostNormalTiling, .25f, 64.f, "%.2f", ImGuiSliderFlags_Logarithmic);
-        uiFrostTiling = ImGui::GetItemRectMin();
-        uiFrostTiling.x += 100;
-        uiFrostTiling.y = (uiFrostTiling.y + ImGui::GetItemRectMax().y) * .5f;
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Normal-map repeats across a pane. Larger values make finer detail. Changes live.");
         ImGui::Text("Active levels: %u / %u (bounds may be empty)", maxBlurMip + 1, frostMipCount);
         ImGui::Checkbox("VFX distortion", &vfx);
         ImGui::SameLine();
@@ -864,7 +1093,6 @@ class NativeViewer : public app::IRenderPass
                 rebuildRequested = true;
                 preserveMaterialsOnRebuild = false;
             }
-            ImGui::SliderFloat("VFX strength (px)", &vfxStrength, 0, 64);
             bool primary = (vfxLayers & 1) != 0, secondary = (vfxLayers & 2) != 0;
             if (ImGui::Checkbox("Primary layer", &primary))
                 vfxLayers = (vfxLayers & ~1u) | (primary ? 1u : 0u);
@@ -952,7 +1180,19 @@ class NativeViewer : public app::IRenderPass
         if (ImGui::CollapsingHeader("Resolve pipeline", ImGuiTreeNodeFlags_DefaultOpen))
         {
             ImGui::Checkbox("Cull empty resolve tiles", &tileResolve);
-            ImGui::Checkbox("Stochastic volume upsample (requires TAA)", &stochasticVolumeUpsample);
+            if (ImGui::Checkbox("TAA (Halton + HDR history)", &taaEnabled))
+            {
+                rebuildRequested = true;
+                preserveMaterialsOnRebuild = true;
+            }
+            ImGui::TextDisabled("Camera motion only; moving transparency may leave trails.");
+            if (!taaEnabled)
+                ImGui::Checkbox("Temporal volume dithering / upsample (requires TAA)", &stochasticVolumeUpsample);
+            ImGui::SliderFloat("Volume step (world units)", &volumeStepSize, .005f, 2.f, "%.3f",
+                               ImGuiSliderFlags_Logarithmic);
+            ImGui::SliderFloat("Volume low-T threshold", &volumeLowT, .001f, .5f, "%.3f", ImGuiSliderFlags_Logarithmic);
+            ImGui::SliderFloat("Volume low-T step multiplier", &volumeStepScale, 1.f, 8.f, "%.1fx");
+            ImGui::SliderInt("Volume maximum steps", &volumeMaxSteps, 16, 512);
             if (ImGui::Checkbox("Half-resolution local volumes", &lowResolutionVolumes))
             {
                 rebuildRequested = true;
@@ -972,13 +1212,6 @@ class NativeViewer : public app::IRenderPass
                 ++orderSeed;
             ImGui::InputScalar("Order seed", ImGuiDataType_U32, &orderSeed);
         }
-        if (ImGui::CollapsingHeader("Refraction material controls"))
-        {
-            ImGui::Checkbox("Normal-driven sphere (artistic)", &normalSphere);
-            ImGui::SliderFloat("Planar IOR", &planarIor, 1, 2.5f, "%.2f");
-            ImGui::SliderFloat("Sphere IOR", &sphereIor, 1, 2.5f, "%.2f");
-            ImGui::SliderFloat("Self-refraction gain", &refractionStrength, 0, 4, "%.2f");
-        }
         if (ImGui::CollapsingHeader("Scene fixtures", ImGuiTreeNodeFlags_DefaultOpen))
         {
             bool changed = false;
@@ -990,10 +1223,6 @@ class NativeViewer : public app::IRenderPass
             ImGui::BeginDisabled(stressPreset != 0);
             changed |= ImGui::Checkbox("Glass sphere", &glassSphere);
             ImGui::EndDisabled();
-            ImGui::SameLine();
-            changed |= ImGui::Checkbox("RGB absorption", &rgbGlass);
-            ImGui::SetNextItemWidth(135);
-            changed |= ImGui::SliderFloat("Sphere roughness", &sphereRoughness, 0.f, 1.f);
             ImGui::SliderFloat("Emissive gain", &emissiveGain, 0, 64, "%.2f", ImGuiSliderFlags_Logarithmic);
             changed |= ImGui::Checkbox("Inversion calibration board", &calibrationBoard);
             changed |= ImGui::Checkbox("Emissive balls", &emissiveBalls);
@@ -1024,9 +1253,7 @@ class NativeViewer : public app::IRenderPass
         }
         if (!runtimeError.empty())
             ImGui::TextWrapped("%s", runtimeError.c_str());
-        ImGui::Checkbox("Material editor", &materialEditor);
         ImGui::End();
-        avboit::DrawMaterialEditor(materials, MaterialDefaults(), materialEditor, selectedMaterial);
         ImGui::SetNextWindowPos(ImVec2(820, 12), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(450, 730), ImGuiCond_FirstUseEver);
         ImGui::Begin("GPU pass timings");
@@ -1057,9 +1284,12 @@ class NativeViewer : public app::IRenderPass
             benchmarkRequested = true;
         avboit::DrawGpuProfiler(profiler);
         ImGui::End();
+        DrawActorGizmo();
     }
     void TestUiInteractions(avboit::ViewerUi &ui, nvrhi::IFramebuffer *framebuffer);
     void TestMaterialEdits(nvrhi::IFramebuffer *framebuffer);
+    void TestTemporalAA(nvrhi::IFramebuffer *framebuffer);
+    void TestActorEditing(nvrhi::IFramebuffer *framebuffer);
     void ApplyPendingUiChanges()
     {
         if (sceneSourceRequested)
@@ -1360,6 +1590,12 @@ class NativeViewer : public app::IRenderPass
         }
         materialBuffer = Buffer(unsigned(materials.entries.size() * 64), nvrhi::Format::RGBA32_FLOAT, false,
                                 "Transparency material table");
+        actorHomeCenters.clear();
+        for (unsigned a = 0; a < objectCount; ++a)
+            actorHomeCenters.push_back(ActorCenter(a));
+        actorGeometryDirty = false;
+        actorGizmo.Reset();
+        selectedActor = -1;
         selectedMaterial = 0;
         for (unsigned i = 0; i < materials.entries.size(); ++i)
             if (materials.entries[i].kind != 0)
@@ -1367,6 +1603,17 @@ class NativeViewer : public app::IRenderPass
                 selectedMaterial = int(i);
                 break;
             }
+        if (!objectMaterials.empty())
+        {
+            unsigned initialActor = 0;
+            for (unsigned actor = 0; actor < objectMaterials.size(); ++actor)
+                if (materials.entries[objectMaterials[actor]].kind >= 5)
+                {
+                    initialActor = actor;
+                    break;
+                }
+            SelectActor(initialActor);
+        }
         vertexBuffer = Buffer(unsigned(vertices.size() * 16), nvrhi::Format::RGBA32_FLOAT, false, "Scene vertices");
         boundsBuffer = Buffer(unsigned(bounds.size() * 16), nvrhi::Format::RGBA32_FLOAT, false, "Scene bounds");
         interfaceIndexBuffer = device->createBuffer(nvrhi::BufferDesc()
@@ -1547,12 +1794,16 @@ class NativeViewer : public app::IRenderPass
         }
         if (!occupancySettings)
             occupancySettings = Buffer(16, nvrhi::Format::RGBA32_FLOAT, false, "Occupancy overlay settings");
-        displayPass = Bind(D().addItem(B::Texture_SRV(21, transparency.DistortionApply().Output()))
-                               .addItem(B::TypedBuffer_SRV(22, physicalMasks))
-                               .addItem(B::Texture_SRV(30, transparency.Volume().ScreenTiles()))
-                               .addItem(B::TypedBuffer_SRV(32, occupancySettings))
-                               .addItem(B::Sampler(0, linear)),
-                           nvrhi::ShaderType::AllGraphics);
+        temporalAA.reset();
+        if (taaEnabled)
+            temporalAA = std::make_unique<avboit::TemporalAA>(device, transparency.DistortionApply().Output(), depth);
+        displayPass = Bind(
+            D().addItem(B::Texture_SRV(21, temporalAA ? temporalAA->Output() : transparency.DistortionApply().Output()))
+                .addItem(B::TypedBuffer_SRV(22, physicalMasks))
+                .addItem(B::Texture_SRV(30, transparency.Volume().ScreenTiles()))
+                .addItem(B::TypedBuffer_SRV(32, occupancySettings))
+                .addItem(B::Sampler(0, linear)),
+            nvrhi::ShaderType::AllGraphics);
     }
     void LoadScene()
     {
@@ -1652,11 +1903,15 @@ class NativeViewer : public app::IRenderPass
     }
     bool MouseButtonUpdate(int button, int action, int mods) override
     {
+        if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS)
+            PickActor();
         navigation.Button(button, action, mods);
         return false;
     }
     bool MousePosUpdate(double x, double y) override
     {
+        pointerX = x;
+        pointerY = y;
         navigation.Mouse(x, y);
         return false;
     }
@@ -1670,7 +1925,7 @@ class NativeViewer : public app::IRenderPass
         }
         if (animate)
             time += std::min(elapsed, .1f);
-        navigation.Tick(elapsed, keyboardCaptured, mouseCaptured);
+        navigation.Tick(elapsed, keyboardCaptured || actorGizmo.Active(), mouseCaptured || actorGizmo.Active());
     }
     void BackBufferResizing() override { displayPass.graphics = nullptr; }
     void BackBufferResized(uint32_t width, uint32_t height, uint32_t) override
@@ -1808,6 +2063,11 @@ class NativeViewer : public app::IRenderPass
                                         Stage::VfxApply};
                                     profiler.Event(commands, profileStages[unsigned(stage)], begin);
                                 });
+            {
+                AVBOIT_GPU_SCOPE(commands, "Temporal AA", profiler.Route(commands, Stage::TemporalAA));
+                if (temporalAA)
+                    temporalAA->Record(commands, camera);
+            }
             {
                 AVBOIT_GPU_SCOPE(commands, "Display / tone map", profiler.Route(commands, Stage::Display));
                 const F4 overlayData = {float(occupancyOverlay), occupancyOpacity,
@@ -2023,6 +2283,8 @@ class NativeViewer : public app::IRenderPass
                     file.write(reinterpret_cast<char *>(info), sizeof(info));
                 }
             }
+            if (temporalAA)
+                captureRaw(temporalAA->Output(), "native-taa.rgba16f", 8);
             captureRaw(transparency.Volume().ScreenTiles(), "native-screen-tiles.r32u", 4);
             captureRaw(composedHdr,
                        composedHdr->getDesc().format == nvrhi::Format::RGBA16_FLOAT ? "native-composition.rgba16f"
@@ -2166,6 +2428,8 @@ int main(int argc, const char **argv)
         viewer.SetDonutScene(o.donutScene);
         viewer.SetSceneLighting(o.sunIntensity, o.spotIntensity, o.volumeShadows);
         viewer.SetVolumeResolution(o.lowResolutionVolumes, o.stochasticVolumeUpsample);
+        viewer.SetTaa(o.taa);
+        viewer.SetVolumeMarch(o.volumeStepSize, o.volumeLowT, o.volumeStepScale, o.volumeMaxSteps);
         viewer.SetCalibration(o.calibrationBoard, o.emissiveGain);
         viewer.SetEmissiveFront(o.emissiveFront);
         viewer.SetOccupancyOverlay(o.occupancyOverlay, o.occupancySlice);
@@ -2191,11 +2455,15 @@ int main(int argc, const char **argv)
                                                      .setKeepInitialState(true));
             auto framebuffer = device->createFramebuffer(nvrhi::FramebufferDesc().addColorAttachment(texture));
             viewer.BackBufferResized(texture->getDesc().width, texture->getDesc().height, 1);
+            if (o.actorEditorTest)
+                viewer.TestActorEditing(framebuffer);
+            if (o.taa)
+                viewer.TestTemporalAA(framebuffer);
             // Warm a different view first, exposing stale sparse resources after camera changes.
             configureCamera(o.cameraPreset == 6 ? 0 : (o.cameraPreset + 2) % 6);
             viewer.Render(framebuffer);
             configureCamera(o.cameraPreset);
-            for (int frame = 0; frame < 3; ++frame)
+            for (int frame = 0; frame < (o.taa ? 32 : 3); ++frame)
             {
                 viewer.Render(framebuffer);
                 printf("Rendered %d\n", frame);
@@ -2218,6 +2486,8 @@ int main(int argc, const char **argv)
                     device->waitForIdle();
                     gui->Animate(1.f / 60.f);
                     gui->Render(framebuffer);
+                    if (gui->ErrorCount())
+                        throw std::runtime_error("ImGui reported errors during UI capture");
                 }
             }
             if (o.uiSelfTest)

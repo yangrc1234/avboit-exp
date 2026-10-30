@@ -10,11 +10,26 @@
 
 namespace avboit
 {
-static const char *Names[GpuProfiler::Count] = {
-    "frame",       "shadow",        "opaque",           "interface",        "bounds",
-    "adaptive_z",  "physical_mask", "extinction_clear", "extinction_splat", "integration",
-    "zero_depth",  "accumulation",  "resolve",          "blur_base",        "blur",
-    "composition", "vfx",           "vfx_apply",        "display"};
+static const char *Names[GpuProfiler::Count] = {"frame",
+                                                "shadow",
+                                                "opaque",
+                                                "interface",
+                                                "bounds",
+                                                "adaptive_z",
+                                                "physical_mask",
+                                                "extinction_clear",
+                                                "extinction_splat",
+                                                "integration",
+                                                "zero_depth",
+                                                "accumulation",
+                                                "resolve",
+                                                "blur_base",
+                                                "blur",
+                                                "composition",
+                                                "vfx",
+                                                "vfx_apply",
+                                                "taa",
+                                                "display"};
 
 const char *GpuProfiler::StageName(unsigned stage)
 {

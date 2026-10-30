@@ -157,6 +157,18 @@ ViewerOptions ParseViewerOptions(int argc, const char *const *argv)
             options.spotIntensity = ReadFloat(arg, value(), 0, 500);
         else if (arg == "--volume-stochastic-upsample")
             options.stochasticVolumeUpsample = true;
+        else if (arg == "--volume-step")
+            options.volumeStepSize = ReadFloat(arg, value(), .005f, 2.f);
+        else if (arg == "--volume-low-t")
+            options.volumeLowT = ReadFloat(arg, value(), .001f, .5f);
+        else if (arg == "--volume-step-scale")
+            options.volumeStepScale = ReadFloat(arg, value(), 1.f, 8.f);
+        else if (arg == "--volume-max-steps")
+            options.volumeMaxSteps = ReadInteger(arg, value(), 16, 512);
+        else if (arg == "--actor-editor-test")
+            options.actorEditorTest = options.headless = true;
+        else if (arg == "--taa")
+            options.taa = true;
         else if (arg == "--volume-half-res")
             options.lowResolutionVolumes = true;
         else if (arg == "--no-volume-shadows")
@@ -246,6 +258,11 @@ Scene and materials:
   --sun-intensity N          Sponza sun irradiance (0..12), default 2
   --spot-intensity N         Sponza dynamic spotlight intensity (0..500), default 80
   --volume-stochastic-upsample  Experimental blue-noise upsample for final TAA
+  --volume-step N           World-space accumulation step (default .5)
+  --volume-low-t N          Grow steps below this max-RGB T (default .1)
+  --volume-step-scale N     Maximum low-T step multiplier, 1..8 (default 4)
+  --volume-max-steps N      Per-ray step budget, 16..512 (default 256)
+  --taa                     Enable HDR TAA and temporal volume dithering
   --volume-half-res         Half-resolution local volume accumulation + bilateral upsample
   --no-volume-shadows        Disable local volume moment shadows for comparison
   --time SECONDS             Finite initial fixture time, default 0
