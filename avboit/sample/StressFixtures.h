@@ -20,6 +20,7 @@ struct StressVolume
 {
     std::array<float, 3> center, extent, extinction, source;
     bool textured = false;
+    std::array<float, 3> rotation = {}; // Euler degrees, Rz * Ry * Rx.
 };
 struct StressFixture
 {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "VolumeLighting.h"
+#include "SceneActor.h"
 #include "render/GpuScope.h"
 #include <donut/core/math/math.h>
 #include <nvrhi/utils.h>
@@ -22,7 +23,7 @@ void VolumeLighting::Create(nvrhi::IDevice *device, nvrhi::IShader *shader, nvrh
                                         .setDebugName(name));
     };
     lights = buffer(sizeof(VolumeLightData), "Volume light transforms and radiance");
-    m_volumes = buffer(std::max(capacity, 1u) * 48, "Volume shadow caster bounds and extinction");
+    m_volumes = buffer(std::max(capacity, 1u) * 80, "Volume shadow caster bounds and extinction");
     auto texture = [&](nvrhi::Format format, const char *name)
     {
         return device->createTexture(nvrhi::TextureDesc()
@@ -84,6 +85,9 @@ void VolumeLighting::Record(nvrhi::ICommandList *commands, VolumeLightData data,
         casters.push_back({v.center[0], v.center[1], v.center[2], v.textured ? 1.f : 0.f});
         casters.push_back({v.extent[0], v.extent[1], v.extent[2], 0});
         casters.push_back({v.extinction[0], v.extinction[1], v.extinction[2], 0});
+        auto basis = RotationBasis(v.rotation);
+        casters.push_back({basis[0][0], basis[0][1], basis[0][2], 0});
+        casters.push_back({basis[1][0], basis[1][1], basis[1][2], 0});
     }
     data[38][0] = float(volumes.size());
     // Test all world-space casters, including off-camera ones. Conservative
@@ -101,9 +105,10 @@ void VolumeLighting::Record(nvrhi::ICommandList *commands, VolumeLightData data,
             unsigned outside = 63;
             for (unsigned corner = 0; corner < 8; ++corner)
             {
-                float4 p(v.center[0] + ((corner & 1) ? 1 : -1) * v.extent[0],
-                         v.center[1] + ((corner & 2) ? 1 : -1) * v.extent[1],
-                         v.center[2] + ((corner & 4) ? 1 : -1) * v.extent[2], 1);
+                auto local = Rotate(RotationBasis(v.rotation), {((corner & 1) ? 1.f : -1.f) * v.extent[0],
+                                                                ((corner & 2) ? 1.f : -1.f) * v.extent[1],
+                                                                ((corner & 4) ? 1.f : -1.f) * v.extent[2]});
+                float4 p(v.center[0] + local[0], v.center[1] + local[1], v.center[2] + local[2], 1);
                 p = p * matrix;
                 unsigned bits = (p.x < 0 ? 1 : 0) | (p.x > p.w ? 2 : 0) | (p.y < 0 ? 4 : 0) | (p.y > p.w ? 8 : 0) |
                                 (p.z < 0 ? 16 : 0) | (p.z > p.w ? 32 : 0);

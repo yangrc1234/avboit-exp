@@ -22,20 +22,24 @@ RWTexture2DArray<float> TauOut : register(u1);
     float4 moments = 0.;
     for (uint actor = 0; actor < uint(VolumeLights[38].x); ++actor)
     {
-        float4 center = Casters[actor * 3];
-        float3 extent = Casters[actor * 3 + 1].xyz;
-        float sigma = dot(Casters[actor * 3 + 2].rgb, float3(.2126, .7152, .0722));
+        float4 center = Casters[actor * 5];
+        float3 extent = Casters[actor * 5 + 1].xyz;
+        float sigma = dot(Casters[actor * 5 + 2].rgb, float3(.2126, .7152, .0722));
+        float3 axisX = Casters[actor * 5 + 3].xyz, axisY = Casters[actor * 5 + 4].xyz;
+        float3 axisZ = cross(axisX, axisY), delta = origin - center.xyz;
+        float3 localOrigin = float3(dot(delta, axisX), dot(delta, axisY), dot(delta, axisZ));
+        float3 localRay = float3(dot(ray, axisX), dot(ray, axisY), dot(ray, axisZ));
         float enter = 0., leave = rayLength;
         [unroll] for (uint axis = 0; axis < 3; ++axis)
         {
-            if (abs(ray[axis]) < 1e-7)
+            if (abs(localRay[axis]) < 1e-7)
             {
-                if (abs(origin[axis] - center[axis]) > extent[axis])
+                if (abs(localOrigin[axis]) > extent[axis])
                     leave = -1.;
             }
             else
             {
-                float2 t = (center[axis] + float2(-1, 1) * extent[axis] - origin[axis]) / ray[axis];
+                float2 t = (float2(-1, 1) * extent[axis] - localOrigin[axis]) / localRay[axis];
                 enter = max(enter, min(t.x, t.y));
                 leave = min(leave, max(t.x, t.y));
             }
@@ -49,8 +53,8 @@ RWTexture2DArray<float> TauOut : register(u1);
         for (uint step = 0; step < steps; ++step)
         {
             float3 world = origin + ray * (enter + (step + .5) * ds);
-            float density =
-                center.w > 0 ? Density.SampleLevel(LinearClamp, (world - center.xyz) / (2. * extent) + .5, 0).r : 1.;
+            float3 local = localOrigin + localRay * (enter + (step + .5) * ds);
+            float density = center.w > 0 ? Density.SampleLevel(LinearClamp, local / (2. * extent) + .5, 0).r : 1.;
             float tau = sigma * density * ds;
             float4 projected = LightTransform(float4(world, 1), 13 + id.z * 4);
             float z = MomentDepth(projected.z / projected.w, id.z);

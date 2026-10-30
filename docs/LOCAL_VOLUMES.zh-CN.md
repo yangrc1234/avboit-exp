@@ -48,6 +48,17 @@ ImGui 的 **Quality → Volumes** 中可切换 `Half-resolution local volumes`�
 没有全分辨率补算，细遮挡与界面边缘允许近似。
 禁用后释放四张半分辨率 RT。2K packed 格式额外占用约 14.06 MiB（不含驱动对齐）。
 
+Upsample 使用 pixel shader，复用 occupancy pass 生成的 `ScreenTiles` 透明标记，
+按 64×64 屏幕 tile 绘制；空 tile 在共享 resolve VS 中折叠，不增加 mask、列表或调度 pass。
+全分辨率四张 accumulation RT 先清零，未绘制的 tile 保持零，随后全分辨率 actor 再叠加。
+这个 mask 是透明 actor bounds 的保守覆盖，包含其他透明 actor，不是逐像素可见烟雾；
+覆盖全屏时不会获得 tile 剔除收益。
+
+GPU timer 拆成互不重叠的四项：`accumulation_clear`（全分辨率 RT 清零）、
+`volume_accumulation`（半分辨率 RT 清零与绘制）、`volume_upsample`（重建）、
+`accumulation`（全分辨率 actor 绘制）。与旧 CSV 对比时，需要将四项相加；
+旧版 `accumulation` 包含了全部这些开销。关闭的阶段记录空计时间隔，支持实时切换。
+
 启用半分辨率和 TAA 后，使用四个分层蓝噪声 point taps，每个样本独立计算
 “实际采样 texel 距离的 Gaussian 空间权重 × 场景／interface 深度相似度”。
 一个候选不匹配只降低自身权重，不再让整个像素退回单点。
@@ -91,12 +102,18 @@ ImGui 的 **Quality → Volumes** 可实时调整步长、低 T 阈值、最大�
 
 ## 选择 actor 和调整材质
 
-**Actors** 页签 列出透明 actor；也可左键点击场景中的 bounds 选中。
-重叠／被挡住的 actor 可从列表选择。烟雾默认被选中，**Extinction**
-同时调整 RGB 消光系数（0～128 / world unit），**RGB extinction** 支持分通道编辑。
-修改立即影响相机消光、散射和体积阴影；沿用共享材质的 actor 会联动。
-玻璃的颜色、透射率、粗糙度、IOR、折射位移也在同一编辑区。
-**Shared material defaults** 收纳共用折射默认值、磨砂细节偏移、法线 tiling 和 VFX 强度。
+**Actors** 页签统一列出玻璃、烟雾、不透明测试物体／发光球、VFX、太阳和聚光灯。
+可以搜索列表，或左键点击场景中的 bounds 选中。每个几何 actor 有独立材质，修改不会影响其他 actor。
+位置、XYZ 角度、Move／Rotate gizmo 和 Enabled 开关立即生效；Reset transform 恢复初始变换。
+灯光朝向由旋转控制；聚光灯还可以调整强度和动画。发光球可编辑 HDR Radiance，VFX 可编辑强度和图案。
+
+烟雾 **Extinction** 同时调整 RGB 消光系数（0～128 / world unit），**RGB extinction** 支持分通道编辑。
+体积旋转使用同一组 OBB 轴处理相机光线、密度采样和 MSM 阴影；occupancy 使用旋转后的保守 AABB。
+玻璃的颜色、透射率、粗糙度、IOR、折射位移仍在同一编辑区。
+**Shared material defaults** 收纳共用折射默认值、磨砂细节偏移和法线 tiling。
+
+画质切换保留 actor 编辑。Scene 的 fixture／场景预设用于重建测试布局，会重置编辑；
+导入的 Sponza 建筑仍作为背景场景管理，不逐个拆成测试 actor。
 
 
 ### Demo TAA

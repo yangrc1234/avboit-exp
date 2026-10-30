@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-#include "sample/TranslationGizmo.h"
+#include "sample/TransformGizmo.h"
+#include "sample/SceneActor.h"
 #include <algorithm>
 #include <cmath>
 
@@ -7,8 +8,8 @@ namespace avboit
 {
 namespace
 {
-using V = TranslationGizmo::Vector;
-using View = TranslationGizmo::View;
+using V = TransformGizmo::Vector;
+using View = TransformGizmo::View;
 V Sub(V a, V b)
 {
     return {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
@@ -55,15 +56,32 @@ float SegmentDistance(ImVec2 p, ImVec2 a, ImVec2 b)
     return Distance(p, {a.x + x * t, a.y + y * t});
 }
 } // namespace
-void TranslationGizmo::Reset()
+void TransformGizmo::Reset()
 {
     active = -1;
     visible = false;
 }
-int TranslationGizmo::Hit(ImVec2 mouse) const
+int TransformGizmo::Hit(ImVec2 mouse) const
 {
     if (!visible)
         return -1;
+    if (rotating)
+    {
+        int best = -1;
+        float nearest = 8.f;
+        for (unsigned a = 0; a < 3; ++a)
+            if (axisVisible[a])
+                for (unsigned i = 0; i < 64; ++i)
+                {
+                    float d = SegmentDistance(mouse, rings[a][i], rings[a][i + 1]);
+                    if (d < nearest)
+                    {
+                        nearest = d;
+                        best = int(a);
+                    }
+                }
+        return best;
+    }
     if (Distance(mouse, origin) < 11.f)
         return 3;
     int best = -1;
@@ -80,14 +98,15 @@ int TranslationGizmo::Hit(ImVec2 mouse) const
         }
     return best;
 }
-bool TranslationGizmo::HitTest(ImVec2 mouse) const
+bool TransformGizmo::HitTest(ImVec2 mouse) const
 {
     return Active() || Hit(mouse) >= 0;
 }
-bool TranslationGizmo::Draw(const View &view, Vector center, Vector lower, Vector upper, Vector &delta)
+bool TransformGizmo::Draw(const View &view, Vector center, Vector lower, Vector upper, Vector &delta)
 {
     auto &io = ImGui::GetIO();
     delta = {};
+    rotating = false;
     visible = view.size.x > 0 && view.size.y > 0 && Project(view, center, origin);
     if (!visible)
     {
@@ -167,6 +186,83 @@ bool TranslationGizmo::Draw(const View &view, Vector center, Vector lower, Vecto
         }
     draw->AddCircleFilled(origin, 8.f,
                           active == 3 || hovered == 3 ? IM_COL32(255, 230, 100, 255) : IM_COL32(240, 240, 240, 255));
+    return changed;
+}
+bool TransformGizmo::DrawRotation(const View &view, Vector center, Vector &rotation)
+{
+    rotating = true;
+    auto &io = ImGui::GetIO();
+    visible = view.size.x > 0 && view.size.y > 0 && Project(view, center, origin);
+    if (!visible)
+    {
+        active = -1;
+        return false;
+    }
+    float radius = Dot(Sub(center, view.eye), view.forward) * (2.f * .57735027f) * 80.f / view.size.y;
+    constexpr float pi = 3.14159265359f;
+    for (unsigned a = 0; a < 3; ++a)
+    {
+        axisVisible[a] = true;
+        for (unsigned i = 0; i <= 64; ++i)
+        {
+            auto point = center;
+            float angle = 2.f * pi * i / 64.f;
+            point[(a + 1) % 3] += radius * std::cos(angle);
+            point[(a + 2) % 3] += radius * std::sin(angle);
+            axisVisible[a] &= Project(view, point, rings[a][i]);
+        }
+    }
+    int hovered =
+        !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow) && !ImGui::IsAnyItemActive() ? Hit(io.MousePos) : -1;
+    if (active < 0 && hovered >= 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+    {
+        planeNormal = {};
+        planeNormal[hovered] = 1;
+        if (PlaneHit(view, io.MousePos, center, planeNormal, startHit))
+        {
+            active = hovered;
+            dragView = view;
+            startCenter = center;
+            startRotation = rotation;
+        }
+    }
+    bool changed = false;
+    if (Active())
+    {
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+        {
+            rotation = startRotation;
+            active = -1;
+            changed = true;
+        }
+        else if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            active = -1;
+        else
+        {
+            V hit;
+            if (PlaneHit(dragView, io.MousePos, startCenter, planeNormal, hit))
+            {
+                V a = Sub(startHit, startCenter), b = Sub(hit, startCenter);
+                unsigned u = (active + 1) % 3, v = (active + 2) % 3;
+                float angle = std::atan2(a[u] * b[v] - a[v] * b[u], a[u] * b[u] + a[v] * b[v]) * 180.f / pi;
+                auto next = RotateWorld(startRotation, unsigned(active), angle);
+                changed = next != rotation;
+                rotation = next;
+            }
+        }
+    }
+    if (Active() || hovered >= 0)
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+    auto *draw = ImGui::GetBackgroundDrawList();
+    const ImU32 colors[] = {IM_COL32(255, 80, 80, 255), IM_COL32(90, 235, 110, 255), IM_COL32(85, 150, 255, 255)};
+    for (unsigned a = 0; a < 3; ++a)
+        if (axisVisible[a])
+        {
+            auto color = active == int(a) || hovered == int(a) ? IM_COL32(255, 240, 100, 255) : colors[a];
+            draw->AddPolyline(rings[a].data(), 65, IM_COL32(0, 0, 0, 180), 0, 5.f);
+            draw->AddPolyline(rings[a].data(), 65, color, 0, 2.5f);
+        }
+    draw->AddCircleFilled(origin, 3.f, IM_COL32(255, 220, 80, 255));
     return changed;
 }
 } // namespace avboit

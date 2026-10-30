@@ -87,6 +87,16 @@ def main():
     # The native --taa path also exercises camera motion, cuts and history resize.
     # This is not a numerical guarantee of temporal quality for arbitrary motion.
     report["half_taa_finite"] = True
+    # Tile reconstruction must leave inactive destinations clear. This also
+    # catches stale RT contents after the native test's view/size changes.
+    tw, th = np.fromfile(folder / "native-screen-tiles.r32u", dtype="<u4", count=2)
+    tiles = np.fromfile(folder / "native-screen-tiles.r32u", dtype="<u4", offset=8).reshape(th, tw)
+    active = np.repeat(np.repeat((tiles & 4) != 0, 64, axis=0), 64, axis=1)[:1440, :2560]
+    assert active.any() and not active.all(), "Fixture must exercise active and skipped tiles"
+    for name in ("numerator", "denominator", "total-tau", "back-numerator"):
+        data = np.fromfile(folder / f"native-{name}.raw", dtype="<u4", offset=8).reshape(1440, 2560)
+        assert not data[~active].any(), f"Nonzero {name} outside transparency tiles"
+    report["inactive_accumulation_tiles_zero"] = True
     for mode in ("bilateral", "dithered"):
         sequence = np.stack(
             [

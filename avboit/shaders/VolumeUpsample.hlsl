@@ -8,11 +8,7 @@ Texture2D<float3> LowBackN : register(t9);
 Texture2D<float> InterfaceDepth : register(t7);
 Texture2D<float4> Opaque : register(t3);
 #include "OpaqueDepth.hlsli"
-float4 upsampleVertex(uint id : SV_VertexID) : SV_Position
-{
-    float2 uv = float2((id << 1) & 2, id & 2);
-    return float4(uv * float2(2, -2) + float2(-1, 1), 0, 1);
-}
+// Uses the shared occupancy tile VS from ResolveTiles.hlsl.
 struct Accumulation
 {
     float3 n : SV_Target0;

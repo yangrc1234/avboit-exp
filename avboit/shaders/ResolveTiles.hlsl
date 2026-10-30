@@ -24,6 +24,7 @@ Fullscreen tileVertex(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
 {
     return TileVertex(vertex, instance, 4u, (uint(Camera[8].w) & 1u) != 0);
 }
+// Shared by the B cache and half-resolution volume upsample.
 Fullscreen backgroundVertex(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
 {
     return TileVertex(vertex, instance, 4u, false);

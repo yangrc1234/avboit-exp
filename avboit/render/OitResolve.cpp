@@ -15,7 +15,7 @@ void OitResolve::Create(nvrhi::IDevice *device, const OitResolveInputs &inputs)
     m_lowAccumulation = {};
     m_upsample = {};
     m_lowPipelines.clear();
-    m_backgroundTiles = ((inputs.width + 63) / 64) * ((inputs.height + 63) / 64);
+    m_screenTileCount = ((inputs.width + 63) / 64) * ((inputs.height + 63) / 64);
     auto texture = [&](const nvrhi::TextureHandle &current, nvrhi::Format format, const char *name)
     {
         return ReuseTexture(device, current,
@@ -160,8 +160,9 @@ void OitResolve::Create(nvrhi::IDevice *device, const OitResolveInputs &inputs)
                    .addItem(B::Texture_SRV(5, m_lowTargets[1]))
                    .addItem(B::Texture_SRV(6, m_lowTargets[2]))
                    .addItem(B::Texture_SRV(9, m_lowTargets[3]))
-                   .addItem(B::Texture_SRV(7, inputs.interfaceDepth)),
-               inputs.upsampleVertex, inputs.upsamplePixel, false);
+                   .addItem(B::Texture_SRV(7, inputs.interfaceDepth))
+                   .addItem(B::Texture_SRV(30, inputs.screenTiles)),
+               inputs.backgroundVertex, inputs.upsamplePixel, false);
     }
     else
         m_lowTargets = {};
@@ -191,10 +192,14 @@ void OitResolve::Pass::Record(nvrhi::ICommandList *commands, unsigned vertices, 
     commands->setGraphicsState(state);
     commands->draw(nvrhi::DrawArguments().setVertexCount(vertices).setInstanceCount(instances));
 }
-void OitResolve::RecordAccumulation(nvrhi::ICommandList *commands, const std::vector<GeometryDraw> &draws) const
+void OitResolve::RecordAccumulation(nvrhi::ICommandList *commands, const std::vector<GeometryDraw> &draws,
+                                    const AccumulationTiming &timing) const
 {
-    for (auto texture : {m_numerator, m_denominator, m_totalTau, m_backNumerator})
-        commands->clearTextureFloat(texture, nvrhi::AllSubresources, nvrhi::Color(0));
+    {
+        AVBOIT_GPU_SCOPE(commands, "Accumulation RT clear", timing.clear);
+        for (auto texture : {m_numerator, m_denominator, m_totalTau, m_backNumerator})
+            commands->clearTextureFloat(texture, nvrhi::AllSubresources, nvrhi::Color(0));
+    }
     auto drawPass = [&](bool low)
     {
         const auto &pass = low ? m_lowAccumulation : m_accumulation;
@@ -220,20 +225,28 @@ void OitResolve::RecordAccumulation(nvrhi::ICommandList *commands, const std::ve
     bool hasLow = false;
     for (const auto &draw : draws)
         hasLow |= !m_lowPipelines.empty() && m_lowPipelines.at(draw.material);
-    if (hasLow)
+    // Emit empty timestamp intervals when disabled so all profiler slots are
+    // initialized and no stale samples survive a live resolution switch.
     {
+        AVBOIT_GPU_SCOPE(commands, "Half-resolution volume accumulation", timing.lowResolution);
+        if (hasLow)
         {
-            AVBOIT_GPU_SCOPE(commands, "Half-resolution volume accumulation");
             for (const auto &target : m_lowTargets)
                 commands->clearTextureFloat(target, nvrhi::AllSubresources, nvrhi::Color(0));
             drawPass(true);
         }
-        {
-            AVBOIT_GPU_SCOPE(commands, "Volume depth-aware upsample");
-            m_upsample.Record(commands, 3);
-        }
     }
-    drawPass(false);
+    {
+        AVBOIT_GPU_SCOPE(commands, "Volume depth-aware upsample", timing.upsample);
+        if (hasLow)
+            // Reuse the occupancy-produced transparency tiles. Empty tiles
+            // collapse in the VS; untouched full-resolution targets stay clear.
+            m_upsample.Record(commands, 6, m_screenTileCount);
+    }
+    {
+        AVBOIT_GPU_SCOPE(commands, "Full-resolution accumulation", timing.fullResolution);
+        drawPass(false);
+    }
 }
 void OitResolve::RecordResolve(nvrhi::ICommandList *commands, bool poison) const
 {
@@ -242,6 +255,6 @@ void OitResolve::RecordResolve(nvrhi::ICommandList *commands, bool poison) const
         commands->clearTextureFloat(m_background, nvrhi::AllSubresources, nvrhi::Color(60000, 0, 60000, 1));
     // No border: bilinear taps outside the cache contribute zero color/validity.
     commands->clearTextureFloat(m_background, nvrhi::AllSubresources, nvrhi::Color(0));
-    m_backgroundPass.Record(commands, 6, m_backgroundTiles);
+    m_backgroundPass.Record(commands, 6, m_screenTileCount);
 }
 } // namespace avboit

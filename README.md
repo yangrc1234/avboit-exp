@@ -98,20 +98,18 @@ right mouse looks, Home resets, B changes reconstruction, G toggles frost, V
 toggles VFX and Space pauses animation. Fixture controls apply immediately.
 `bin/avboit_viewer.exe --help` lists the CLI, including headless captures.
 
-The panel has four tabs: **Actors** for transforms/materials, **Scene** for objects,
-VFX and lights, **Quality** for resolution, TAA, frost and volume sampling, and
+The panel has four tabs: **Actors** for transforms/materials, **Scene** for fixture presets and background assets, **Quality** for resolution, TAA, frost and volume sampling, and
 **Debug** for occupancy overlays and the optional GPU profiler window.
 Validated algorithm references stay in the CLI/tests rather than everyday controls.
 
 
-In the **Actors** tab, select a glass pane, sphere or smoke actor to edit its material
-and position. Drag the XYZ handles to move along an axis, or the white center to
-move in the screen plane. Ctrl-click the XYZ fields for exact coordinates;
-**Reset position** restores the fixture placement. Esc cancels a drag. Quality
-changes preserve edits; changing the scene preset resets them. Translation also
-updates occupancy bounds and local-volume shadow proxies. Gizmos are editor
-only and do not enter HDR/TAA. Axis handles aligned with the view are hidden;
-use the numeric position fields or rotate the camera to edit those axes.
+In **Actors**, select glass, smoke, an emissive mesh, VFX, the sun or spotlight.
+Edit its own material/light parameters, position and rotation; **Move / Rotate**
+switches the gizmo. Ctrl-click XYZ fields for exact values, **Reset transform**
+restores the preset pose, and Esc cancels a drag. **Enabled** hides the actor.
+Quality changes preserve edits; scene preset changes reset them. Volume rotation
+also transforms density sampling and shadow proxies. Gizmos stay outside HDR/TAA.
+The imported architecture remains the background scene.
 
 
 ## Code map

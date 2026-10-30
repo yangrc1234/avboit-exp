@@ -66,11 +66,11 @@ Sponza 的独立许可见 [第三方授权](THIRD_PARTY_NOTICES.md)。
 默认 **2560×1440、120 FPS**；场景、画质和 Scene fixtures 均可在 ImGui 中即时切换。
 WASD/QE 移动、右键转视角、Home 复位；B 切换 bilinear/bicubic，G 开关磨砂，V 开关 VFX，空格暂停动画。
 
-**Scene actors** 中选择玻璃、玻璃球或烟雾，可以一起编辑材质与位置。
-拖 XYZ 手柄沿轴移动，拖白色中心在屏幕平面移动；Ctrl+单击坐标可精确输入。
-`Reset position` 恢复该 actor 的初始位置，Esc 取消当前拖拽。
-质量切换保留编辑，切换场景预设会重置。移动同步更新 occupancy bounds 和体积阴影代理。
-与视线接近平行的轴手柄会隐藏，可改数值或转动视角；gizmo 只用于编辑，不进入 HDR/TAA。
+**Actors** 统一编辑玻璃、烟雾、发光物体、VFX、太阳和聚光灯。
+每个 actor 可独立调整材质／灯光参数、位置、旋转和 Enabled；**Move / Rotate** 切换 gizmo。
+Ctrl+单击 XYZ 数值可精确输入，**Reset transform** 复位，Esc 取消拖拽。
+画质切换保留编辑，场景预设切换会重置。体积旋转同步更新密度采样、occupancy bounds 和阴影代理；
+gizmo 只用于编辑，不进入 HDR/TAA。导入的建筑仍作为背景场景管理。
 
 
 ## 当前方案

@@ -2,6 +2,7 @@
 #pragma once
 #include <nvrhi/nvrhi.h>
 #include "GeometryDraw.h"
+#include "GpuScope.h"
 #include "MaterialShaders.h"
 #include <vector>
 #include <array>
@@ -20,8 +21,13 @@ struct OitResolveInputs
     nvrhi::BufferHandle volumeLights;
     nvrhi::TextureHandle regularLightDepth, lightMoments, lightOpticalDepth;
     nvrhi::SamplerHandle linear;
-    nvrhi::ShaderHandle backgroundVertex, backgroundPixel, upsampleVertex, upsamplePixel;
+    nvrhi::ShaderHandle backgroundVertex, backgroundPixel, upsamplePixel;
     std::vector<MaterialShaders> materialShaders;
+};
+
+struct AccumulationTiming
+{
+    GpuTimingRoute clear, lowResolution, upsample, fullResolution;
 };
 
 // Four-RT accumulation followed by a refracted background cache on transparency tiles.
@@ -30,7 +36,8 @@ class OitResolve
 {
   public:
     void Create(nvrhi::IDevice *device, const OitResolveInputs &inputs);
-    void RecordAccumulation(nvrhi::ICommandList *commands, const std::vector<GeometryDraw> &draws) const;
+    void RecordAccumulation(nvrhi::ICommandList *commands, const std::vector<GeometryDraw> &draws,
+                            const AccumulationTiming &timing = {}) const;
     void RecordResolve(nvrhi::ICommandList *commands, bool poison = false) const;
     nvrhi::ITexture *Numerator() const { return m_numerator; }
     nvrhi::ITexture *Denominator() const { return m_denominator; }
@@ -54,6 +61,6 @@ class OitResolve
     std::vector<nvrhi::GraphicsPipelineHandle> m_lowPipelines;
     nvrhi::BufferHandle m_indices;
     std::vector<nvrhi::GraphicsPipelineHandle> m_accumulationPipelines;
-    unsigned m_backgroundTiles = 0;
+    unsigned m_screenTileCount = 0;
 };
 } // namespace avboit

@@ -175,6 +175,20 @@ on/off, moving spot illumination, frost, and no volumes. It verifies finite,
 bounded moment data, source attenuation and the inactive projection flags.
 
 
+### Scene actor editor
+
+**Actors** lists glass, smoke, opaque fixtures/emissive meshes, VFX, the sun and
+spotlight. Filter the list or click bounds in the scene. Each geometry actor owns
+its material. Position, XYZ rotation in degrees, Move/Rotate gizmos and Enabled
+apply live; **Reset transform** restores the preset pose. Light rotation controls
+its direction; the spotlight also exposes intensity and animation. Emissive actors
+expose HDR radiance; VFX expose pattern, phase and strength.
+
+Rotating a volume transforms its camera-ray intersection, density coordinates and
+MSM shadow proxy with the same OBB axes. Occupancy uses its conservative world AABB.
+Quality switches preserve edits. Scene fixture/preset changes rebuild the layout
+and reset edits. The imported Sponza architecture remains the background scene.
+
 ### Demo TAA
 
 Enable `--taa` or **Quality → Display → Temporal anti-aliasing** in ImGui. This uses the same Donut
@@ -193,6 +207,20 @@ at one half-resolution texel; there is no depth-moment RT or volume-history buff
 This follows TAA automatically; there is no separate upscaling switch in ImGui.
 Without TAA, four fixed bilinear neighbors use spatial bilinear weights instead.
 `--volume-upsample-bilateral` retains that fixed-neighbor reference for automation.
+
+Upsampling is a pixel-shader tile draw using the existing occupancy-generated
+`ScreenTiles` transparency bit (64x64 screen pixels). Empty tiles collapse in the
+shared resolve VS; no new mask, tile list or scheduling pass is allocated. The
+four full-resolution accumulation RTs are cleared first, so skipped tiles remain
+zero before full-resolution actors add their contributions. This is conservative
+actor-bounds coverage, not per-pixel visible-smoke coverage, and includes other
+transparent actors. Dense/full-screen occupancy still runs full-screen work.
+
+GPU timestamps are non-overlapping: `accumulation_clear` clears the full-resolution
+RTs, `volume_accumulation` clears/draws the half-resolution RTs, `volume_upsample`
+reconstructs them, and `accumulation` draws full-resolution actors. Compare the
+sum of these four columns against old CSVs where `accumulation` included them all.
+Disabled stages emit empty timestamp intervals to support live mode changes.
 
 Upsampling does not query the T-LUT. Its scene-depth guide still contains Zero-T
 quads, so artificial cutoff-depth changes can still affect the weights. Independent

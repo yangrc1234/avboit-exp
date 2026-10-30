@@ -118,18 +118,20 @@ void NativeViewer::TestUiInteractions(avboit::ViewerUi &ui, nvrhi::IFramebuffer 
     }
 
     const bool originalFullVfx = fullVfx, originalHalfComposition = halfComposition;
-    const bool originalVfx = vfx;
-    const unsigned originalLayers = vfxLayers;
+    std::vector<bool> originalActorEnabled;
+    for (const auto &a : actors)
+        originalActorEnabled.push_back(a.enabled);
     for (bool enabled : {false, true})
         for (unsigned layers : {0u, 1u, 2u, 3u})
         {
-            vfx = enabled;
-            vfxLayers = layers;
+            for (auto &a : actors)
+                if (a.type == avboit::ActorType::Distortion)
+                    a.enabled = enabled && (layers & (1u << a.renderIndex));
             pump();
             checkCompactResources();
         }
-    vfx = originalVfx;
-    vfxLayers = originalLayers;
+    for (unsigned i = 0; i < actors.size(); ++i)
+        actors[i].enabled = originalActorEnabled[i];
     pump();
     checkCompactResources();
     for (bool value : {true, false})
@@ -315,6 +317,53 @@ void NativeViewer::TestUiInteractions(avboit::ViewerUi &ui, nvrhi::IFramebuffer 
     pump();
     if (selectedActor != 0 || selectedMaterial != int(objectMaterials[0]))
         throw std::runtime_error("Actor selection did not open its material");
+    // Exercise the overlay with real ImGui input events, including an Escape
+    // rollback. Render updates run between every event, as during an actual drag.
+    const bool oldGizmo = showActorGizmo, oldRotate = rotateActorGizmo;
+    const auto oldRotation = actors[0].rotation;
+    showActorGizmo = rotateActorGizmo = true;
+    actorGizmo.Reset();
+    pump();
+    auto center = ActorCenter(0);
+    auto eye = navigation.Eye(), right = navigation.Right(), up = navigation.Up(), forward = navigation.Forward();
+    auto dot = [](F3 a, F3 b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
+    F3 delta;
+    for (unsigned c = 0; c < 3; ++c)
+        delta[c] = center[c] - eye[c];
+    const auto display = ImGui::GetIO().DisplaySize;
+    float radius = dot(delta, forward) * (2.f * .57735027f) * 80.f / display.y;
+    auto point = [&](float angle)
+    {
+        F3 d = delta;
+        d[0] += radius * std::cos(angle);
+        d[1] += radius * std::sin(angle);
+        float z = dot(d, forward);
+        return ImVec2((dot(d, right) / (z * (float(Width) / Height) * .57735027f) * .5f + .5f) * display.x,
+                      (.5f - dot(d, up) / (z * .57735027f) * .5f) * display.y);
+    };
+    auto &gizmoIo = ImGui::GetIO();
+    auto start = point(.7f), finish = point(1.2f);
+    gizmoIo.AddMousePosEvent(start.x, start.y);
+    pump();
+    gizmoIo.AddMouseButtonEvent(0, true);
+    pump();
+    if (!actorGizmo.Active())
+        throw std::runtime_error("Rotation ring did not capture mouse drag");
+    gizmoIo.AddMousePosEvent(finish.x, finish.y);
+    pump();
+    if (actors[0].rotation == oldRotation)
+        throw std::runtime_error("Rotation ring did not rotate actor");
+    gizmoIo.AddKeyEvent(ImGuiKey_Escape, true);
+    pump();
+    gizmoIo.AddKeyEvent(ImGuiKey_Escape, false);
+    gizmoIo.AddMouseButtonEvent(0, false);
+    pump();
+    if (actors[0].rotation != oldRotation)
+        throw std::runtime_error("Escape did not cancel actor rotation");
+    showActorGizmo = oldGizmo;
+    rotateActorGizmo = oldRotate;
+    actorGizmo.Reset();
+    pump();
     bool originalAccum = halfAccumulation;
     auto materialIndex = objectMaterials.front();
     auto originalMaterial = materials.entries[materialIndex];
@@ -667,7 +716,7 @@ void NativeViewer::TestActorEditing(nvrhi::IFramebuffer *framebuffer)
         TranslateActor(actor, delta);
         auto center = ActorCenter(actor);
         for (unsigned a = 0; a < 3; ++a)
-            if (std::abs(center[a] - actorHomeCenters[actor][a] - delta[a]) > 1e-5f)
+            if (std::abs(center[a] - actors[actor].homePosition[a] - delta[a]) > 1e-5f)
                 throw std::runtime_error("Actor bounds did not move with geometry");
         const unsigned end =
             actor + 1 < objectCount ? objectFirstRecords[actor + 1] : (opaqueVertices + transparentVertices) * 4;
@@ -695,16 +744,92 @@ void NativeViewer::TestActorEditing(nvrhi::IFramebuffer *framebuffer)
     if (bounds != movedBounds)
         throw std::runtime_error("Quality rebuild lost actor positions");
     for (unsigned actor = 0; actor < objectCount; ++actor)
-        SetActorPosition(actor, actorHomeCenters[actor]);
+        SetActorPosition(actor, actors[actor].homePosition);
     for (unsigned v = 0; v < vertices.size(); ++v)
         for (unsigned a = 0; a < 4; ++a)
             if (std::abs(vertices[v][a] - savedVertices[v][a]) > 1e-5f)
                 throw std::runtime_error("Reset actor position failed");
+    // Exercise every editor actor, including opaque/VFX meshes and lights.
+    const auto originalLighting = ActorLighting();
+    for (unsigned actor = 0; actor < actors.size(); ++actor)
+    {
+        const auto &a = actors[actor];
+        if (a.firstRecord != a.endRecord)
+            for (unsigned other = 0; other < actor; ++other)
+                if (actors[other].firstRecord != actors[other].endRecord && actors[other].material == a.material)
+                    throw std::runtime_error("Actors unexpectedly share editable materials");
+        auto rotation = a.homeRotation;
+        rotation[0] += 19.f;
+        rotation[1] += 73.f;
+        rotation[2] += 11.f;
+        SetActorRotation(actor, rotation);
+        TranslateActor(actor, {.2f, -.1f, .3f});
+        if (a.firstRecord == a.endRecord)
+            continue;
+        const unsigned kind = materials.entries[a.material].kind;
+        for (unsigned v = a.firstRecord; v < a.endRecord; v += 4)
+        {
+            for (unsigned c = 0; c < 3; ++c)
+                if (!std::isfinite(vertices[v][c]) || vertices[v][c] < a.lower[c] - 1e-5f ||
+                    vertices[v][c] > a.upper[c] + 1e-5f)
+                    throw std::runtime_error("Rotated mesh escaped its occupancy bounds");
+            if (vertices[v + 1][3] != savedVertices[v + 1][3] || vertices[v + 2][3] != savedVertices[v + 2][3])
+                throw std::runtime_error("Rotation corrupted actor/material identity");
+            if (kind >= 5)
+            {
+                float xx = 0, yy = 0, xy = 0;
+                for (unsigned c = 0; c < 3; ++c)
+                {
+                    xx += vertices[v + 1][c] * vertices[v + 1][c];
+                    yy += vertices[v + 2][c] * vertices[v + 2][c];
+                    xy += vertices[v + 1][c] * vertices[v + 2][c];
+                }
+                if (std::abs(xx - 1) > 1e-5f || std::abs(yy - 1) > 1e-5f || std::abs(xy) > 1e-5f)
+                    throw std::runtime_error("Volume OBB axes are not orthonormal");
+            }
+        }
+        for (unsigned v = 0; v < localVolumeRecords.size(); ++v)
+            if (localVolumeRecords[v] == a.firstRecord &&
+                (localVolumes[v].center != a.position || localVolumes[v].rotation != a.rotation))
+                throw std::runtime_error("Rotated volume shadow proxy disagrees with camera proxy");
+    }
+    Render(framebuffer);
+    if (before == readColor())
+        throw std::runtime_error("Rotations did not change the image");
+    const auto rotatedVertices = vertices;
+    rebuildRequested = preserveMaterialsOnRebuild = true;
+    Render(framebuffer);
+    if (rotatedVertices != vertices)
+        throw std::runtime_error("Quality rebuild lost actor rotation");
+    for (unsigned actor = 0; actor < actors.size(); ++actor)
+        ResetActor(actor);
+    for (unsigned v = 0; v < vertices.size(); ++v)
+        for (unsigned c = 0; c < 4; ++c)
+            if (std::abs(vertices[v][c] - savedVertices[v][c]) > 1e-5f)
+                throw std::runtime_error("Reset actor transform failed");
+    auto restoredLighting = ActorLighting();
+    for (unsigned c = 0; c < 3; ++c)
+        if (std::abs(restoredLighting.sunDirection[c] - originalLighting.sunDirection[c]) > 1e-5f ||
+            std::abs(restoredLighting.spotTarget[c] - originalLighting.spotTarget[c]) > 1e-5f)
+            throw std::runtime_error("Reset light transform failed");
+    std::vector<bool> enabled;
+    for (auto &a : actors)
+    {
+        enabled.push_back(a.enabled);
+        a.enabled = false;
+    }
+    interfaceSelectionDirty = true;
+    Render(framebuffer);
+    if (!geometryDraws.empty() || !interfaceDraws.empty() || HasVfxDraws())
+        throw std::runtime_error("Disabled actors were still submitted");
+    for (unsigned i = 0; i < actors.size(); ++i)
+        actors[i].enabled = enabled[i];
+    interfaceSelectionDirty = true;
     // Restore exact test inputs after checking the floating-point round trip.
     vertices = savedVertices;
     bounds = savedBounds;
     localVolumes = savedVolumes;
     actorGeometryDirty = true;
     Render(framebuffer);
-    printf("Actor translation, geometry/bounds, shadow proxies, rebuild and reset PASS\n");
+    printf("Actor transforms, independent materials, lights, OBB shadow proxies, enable, rebuild and reset PASS\n");
 }

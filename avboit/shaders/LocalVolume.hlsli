@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Homogeneous world-space AABB prototype. Geometry remains an actor-owned draw;
+// Oriented local-volume prototype. Geometry remains an actor-owned draw;
 // its six proxy vertices carry center.xyz and extent.xyz, not a surface mesh.
 #ifndef AVBOIT_LOCAL_VOLUME
 #define AVBOIT_LOCAL_VOLUME
@@ -12,12 +12,20 @@ struct VolumeVaryings
     nointerpolation float3 extent : EXTENT;
     nointerpolation float3 sigma : SIGMA;
     nointerpolation float3 source : SOURCE;
+    nointerpolation float3 axisX : AXISX;
+    nointerpolation float3 axisY : AXISY;
 };
+float3 VolumeLocal(VolumeVaryings i, float3 v)
+{
+    return float3(dot(v, i.axisX), dot(v, i.axisY), dot(v, cross(i.axisX, i.axisY)));
+}
 VolumeVaryings volumeVertex(uint id : SV_VertexID)
 {
     VolumeVaryings o;
     o.center = Vertices[id * 4].xyz;
     o.extent = Vertices[id * 4 + 3].xyz;
+    o.axisX = Vertices[id * 4 + 1].xyz;
+    o.axisY = Vertices[id * 4 + 2].xyz;
     uint material = uint(Vertices[id * 4 + 1].w) * 4;
     o.sigma = max(Materials[material + 1].rgb, 0.);
     o.source = max(Materials[material].rgb, 0.);
@@ -25,7 +33,8 @@ VolumeVaryings volumeVertex(uint id : SV_VertexID)
     bool nearCrossing = false;
     for (uint c = 0; c < 8; ++c)
     {
-        float3 d = o.center + o.extent * float3((c & 1) ? 1 : -1, (c & 2) ? 1 : -1, (c & 4) ? 1 : -1) - Camera[0].xyz;
+        float3 local = o.extent * float3((c & 1) ? 1 : -1, (c & 2) ? 1 : -1, (c & 4) ? 1 : -1);
+        float3 d = o.center + local.x * o.axisX + local.y * o.axisY + local.z * cross(o.axisX, o.axisY) - Camera[0].xyz;
         float3 v = float3(dot(d, Camera[1].xyz), dot(d, Camera[2].xyz), dot(d, Camera[3].xyz));
         nearCrossing |= v.z <= Camera[5].z;
         float2 ndc = v.xy / max(v.z, Camera[5].z) / float2(float(WIDTH) / HEIGHT * .57735027, .57735027);
@@ -43,19 +52,19 @@ bool VolumeInterval(VolumeVaryings i, float2 uv, float opaqueZ, out float2 inter
 {
     float3 direction = WorldRay(uv);
     rayZ = max(dot(direction, Camera[3].xyz), 1e-6);
-    float3 origin = Camera[0].xyz;
+    float3 origin = VolumeLocal(i, Camera[0].xyz - i.center);
+    direction = VolumeLocal(i, direction);
     float entry = Camera[5].z / rayZ, exit = min(opaqueZ, Camera[5].w) / rayZ;
     for (uint axis = 0; axis < 3; ++axis)
     {
         if (abs(direction[axis]) < 1e-7)
         {
-            if (abs(origin[axis] - i.center[axis]) > i.extent[axis])
+            if (abs(origin[axis]) > i.extent[axis])
                 exit = -1;
         }
         else
         {
-            float2 hit = (float2(i.center[axis] - i.extent[axis], i.center[axis] + i.extent[axis]) - origin[axis]) /
-                         direction[axis];
+            float2 hit = (float2(-i.extent[axis], i.extent[axis]) - origin[axis]) / direction[axis];
             entry = max(entry, min(hit.x, hit.y));
             exit = min(exit, max(hit.x, hit.y));
         }
@@ -79,7 +88,7 @@ Texture3D<float2> VolumeDensity : register(t26);
 float2 SampleVolumeData(VolumeVaryings i, float2 uv, float viewZ, float rayZ)
 {
     float3 world = Camera[0].xyz + WorldRay(uv) * (viewZ / rayZ);
-    float3 local = (world - i.center) / (2. * i.extent) + .5;
+    float3 local = VolumeLocal(i, world - i.center) / (2. * i.extent) + .5;
     return VolumeDensity.SampleLevel(LinearClamp, local, 0);
 }
 #endif

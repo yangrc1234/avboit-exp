@@ -133,7 +133,14 @@ void DrawMaterialEditor(MaterialTable &materials, const MaterialDefaults &defaul
     auto &material = materials.entries[selectedMaterial];
     ImGui::TextDisabled("Material edits apply live.");
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Matching actors can share this material. Changing the scene preset resets edits.");
+        ImGui::SetTooltip("Each actor owns its material. Changing the scene preset resets edits.");
+    if (material.kind == 0)
+    {
+        ImGui::ColorEdit3("Radiance", material.color.data(), ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
+        ImGui::DragFloat3("Radiance RGB", material.color.data(), .1f, 0.f, 1000.f, "%.2f",
+                          ImGuiSliderFlags_AlwaysClamp);
+        return;
+    }
     if (material.kind >= 5)
     {
         ImGui::ColorEdit3("Source radiance", material.color.data(),
@@ -164,6 +171,8 @@ void DrawMaterialEditor(MaterialTable &materials, const MaterialDefaults &defaul
         if (ImGui::Combo("Pattern", &pattern, "Oscillating ring\0Heat wave\0Expanding shock\0"))
             material.vfxPattern = unsigned(pattern);
         ImGui::SliderFloat("Phase (cycles)", &material.vfxPhase, 0, 1);
+        ImGui::SliderFloat("Strength (px)", &material.gain, 0, 64);
+        return;
     }
     if (material.kind == 2 || material.kind == 4)
     {

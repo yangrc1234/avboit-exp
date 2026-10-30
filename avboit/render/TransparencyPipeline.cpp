@@ -74,7 +74,6 @@ void TransparencyPipeline::Create(nvrhi::IDevice *device, const TransparencyInpu
     oitInputs.indices = inputs.geometryIndices;
     oitInputs.halfAccumulation = inputs.halfAccumulation;
     oitInputs.lowResolutionVolumes = inputs.lowResolutionVolumes;
-    oitInputs.upsampleVertex = load("upsampleVertex", nvrhi::ShaderType::Vertex, "shaders/VolumeUpsample.hlsl");
     oitInputs.upsamplePixel = load("upsamplePixel", nvrhi::ShaderType::Pixel, "shaders/VolumeUpsample.hlsl");
     oitInputs.vertices = inputs.vertices;
     oitInputs.vertexRange = inputs.transparentRange;
@@ -191,8 +190,9 @@ void TransparencyPipeline::Record(nvrhi::ICommandList *commands, const Transpare
          [&] { m_volume.RecordIntegration(commands, frame.denseExtinction); });
     pass(Stage::ZeroDepth, "Zero-T indirect depth draw / VS neighborhood rejection",
          [&] { m_zero.RecordDepth(commands, frame.zeroDepth); });
-    pass(Stage::Accumulation, "OIT accumulation (4 MRT)",
-         [&] { m_resolve.RecordAccumulation(commands, frame.geometryDraws); });
+    m_resolve.RecordAccumulation(commands, frame.geometryDraws,
+                                 {route(Stage::AccumulationClear), route(Stage::VolumeAccumulation),
+                                  route(Stage::VolumeUpsample), route(Stage::Accumulation)});
     pass(Stage::Resolve, "Refracted B prime / transparency tiles",
          [&] { m_resolve.RecordResolve(commands, frame.poisonResolve); });
     m_gaussian.RecordBlur(commands, frame.lastBlurMip, frame.poisonResolve, route(Stage::BlurBase), route(Stage::Blur));

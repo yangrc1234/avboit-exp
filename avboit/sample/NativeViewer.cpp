@@ -24,7 +24,8 @@
 #include "sample/ViewerUi.h"
 #include "sample/ViewerOptions.h"
 #include "sample/TemporalAA.h"
-#include "sample/TranslationGizmo.h"
+#include "sample/TransformGizmo.h"
+#include "sample/SceneActor.h"
 #include "sample/MaterialTable.h"
 #include "sample/GeometrySubmission.h"
 #include "sample/SubmissionOrder.h"
@@ -89,7 +90,6 @@ class NativeViewer : public app::IRenderPass
     unsigned depthBudget = 128;
     bool fixedDepth = false, calibrationBoard = false, sceneGlassPanes = true;
     float emissiveGain = 1;
-    std::vector<unsigned> emissiveMaterials;
     std::vector<std::array<unsigned, 2>> viewVertexRanges;
     std::vector<unsigned> viewObjects;
     bool qBound = true, protectBackground = false, zeroTShortcut = false, zeroDepth = true, mirrorBlur = true;
@@ -155,161 +155,7 @@ class NativeViewer : public app::IRenderPass
     std::vector<unsigned> objectFirstRecords, objectMaterials;
     std::vector<F4> uploadedMaterials;
     int selectedMaterial = 0, selectedActor = -1;
-    avboit::TranslationGizmo actorGizmo;
-    bool showActorGizmo = true, actorGeometryDirty = false;
-    std::vector<F3> actorHomeCenters;
-    F3 ActorCenter(unsigned actor) const
-    {
-        F3 center;
-        for (unsigned a = 0; a < 3; ++a)
-            center[a] = (bounds[3 + actor * 2][a] + bounds[4 + actor * 2][a]) * .5f;
-        return center;
-    }
-    void TranslateActor(unsigned actor, F3 delta)
-    {
-        if (actor >= objectFirstRecords.size() || delta == F3{})
-            return;
-        for (float x : delta)
-            if (!std::isfinite(x))
-                return;
-        const unsigned first = objectFirstRecords[actor];
-        const unsigned end = actor + 1 < objectFirstRecords.size() ? objectFirstRecords[actor + 1]
-                                                                   : (opaqueVertices + transparentVertices) * 4;
-        for (unsigned a = 0; a < 3; ++a)
-        {
-            bounds[3 + actor * 2][a] += delta[a];
-            bounds[4 + actor * 2][a] += delta[a];
-            for (unsigned v = first; v < end; v += 4)
-                vertices[v][a] += delta[a];
-        }
-        // The light-space density integration uses a separate volume proxy list.
-        for (unsigned v = 0; v < localVolumeRecords.size(); ++v)
-            if (localVolumeRecords[v] == first)
-                for (unsigned a = 0; a < 3; ++a)
-                    localVolumes[v].center[a] += delta[a];
-        actorGeometryDirty = true;
-        if (temporalAA)
-            temporalAA->Invalidate();
-    }
-    void SetActorPosition(unsigned actor, F3 position)
-    {
-        const auto center = ActorCenter(actor);
-        for (unsigned a = 0; a < 3; ++a)
-            position[a] -= center[a];
-        TranslateActor(actor, position);
-    }
-    void DrawActorGizmo()
-    {
-        if (!showActorGizmo || selectedActor < 0 || unsigned(selectedActor) >= objectMaterials.size() ||
-            std::find(viewObjects.begin(), viewObjects.end(), unsigned(selectedActor)) != viewObjects.end())
-        {
-            actorGizmo.Reset();
-            return;
-        }
-        const unsigned actor = unsigned(selectedActor);
-        F3 low, high, center, delta;
-        for (unsigned a = 0; a < 3; ++a)
-        {
-            float offset = 0;
-            for (const auto &motion : fixtureMotions)
-                if (motion.object == actor)
-                    offset += motion.amplitude[a] * std::sin(time * motion.frequency);
-            low[a] = bounds[3 + actor * 2][a] + offset;
-            high[a] = bounds[4 + actor * 2][a] + offset;
-            center[a] = (low[a] + high[a]) * .5f;
-        }
-        avboit::TranslationGizmo::View view{navigation.Eye(),     navigation.Right(),         navigation.Up(),
-                                            navigation.Forward(), ImGui::GetIO().DisplaySize, float(Width) / Height};
-        if (actorGizmo.Draw(view, center, low, high, delta))
-            TranslateActor(actor, delta);
-        if (actorGizmo.Active())
-            animate = false;
-    }
-    double pointerX = 0, pointerY = 0;
-    bool preserveMaterialsOnRebuild = false;
-    std::string ActorLabel(unsigned actor) const
-    {
-        unsigned kind = materials.entries[objectMaterials[actor]].kind;
-        const char *type = kind == 6   ? "Volume smoke"
-                           : kind == 5 ? "Homogeneous volume"
-                           : kind == 1 ? "Smoke card"
-                           : kind == 4 ? "Glass sphere"
-                                       : "Glass";
-        return std::string(type) + " / Actor " + std::to_string(actor);
-    }
-    void SelectActor(unsigned actor)
-    {
-        if (actor >= objectMaterials.size())
-            return;
-        actorGizmo.Reset();
-        selectedActor = int(actor);
-        selectedMaterial = int(objectMaterials[actor]);
-    }
-    void PickActor()
-    {
-        if (!ImGui::GetCurrentContext() || ImGui::GetIO().WantCaptureMouse ||
-            actorGizmo.HitTest(ImVec2(float(pointerX), float(pointerY))))
-            return;
-        const auto size = ImGui::GetIO().DisplaySize;
-        if (size.x <= 0 || size.y <= 0)
-            return;
-        const float x = (float(pointerX) / size.x * 2.f - 1.f) * (float(Width) / Height) * .57735027f;
-        const float y = (1.f - float(pointerY) / size.y * 2.f) * .57735027f;
-        const auto eye = navigation.Eye(), right = navigation.Right(), up = navigation.Up(),
-                   forward = navigation.Forward();
-        F3 direction;
-        for (unsigned axis = 0; axis < 3; ++axis)
-            direction[axis] = forward[axis] + x * right[axis] + y * up[axis];
-        float nearest = 80.f;
-        int hit = -1;
-        // Bounds picking also works for a volume's empty proxy geometry. The actor
-        // list remains available for overlapping bounds and occluded actors.
-        for (unsigned actor = 0; actor < objectMaterials.size(); ++actor)
-        {
-            F3 origin = eye, ray = direction;
-            if (std::find(viewObjects.begin(), viewObjects.end(), actor) != viewObjects.end())
-            {
-                origin = {0, 0, 0};
-                ray = {x, y, 1};
-            }
-            F3 low, high;
-            for (unsigned axis = 0; axis < 3; ++axis)
-            {
-                low[axis] = bounds[3 + actor * 2][axis];
-                high[axis] = bounds[4 + actor * 2][axis];
-                for (const auto &motion : fixtureMotions)
-                    if (motion.object == actor)
-                    {
-                        float shift = motion.amplitude[axis] * std::sin(time * motion.frequency);
-                        low[axis] += shift;
-                        high[axis] += shift;
-                    }
-            }
-            float enter = .05f, leave = nearest;
-            for (unsigned axis = 0; axis < 3; ++axis)
-            {
-                if (std::abs(ray[axis]) < 1e-7f)
-                {
-                    if (origin[axis] < low[axis] || origin[axis] > high[axis])
-                        leave = -1;
-                }
-                else
-                {
-                    float a = (low[axis] - origin[axis]) / ray[axis];
-                    float b = (high[axis] - origin[axis]) / ray[axis];
-                    enter = std::max(enter, std::min(a, b));
-                    leave = std::min(leave, std::max(a, b));
-                }
-            }
-            if (leave >= enter && enter < nearest)
-            {
-                nearest = enter;
-                hit = int(actor);
-            }
-        }
-        if (hit >= 0)
-            SelectActor(unsigned(hit));
-    }
+#include "sample/ActorEditor.inl"
     avboit::MaterialDefaults MaterialDefaults() const
     {
         return {planarIor, sphereIor, refractionStrength, normalSphere};
@@ -317,7 +163,13 @@ class NativeViewer : public app::IRenderPass
     nvrhi::ITexture *composedHdr = nullptr;
     bool poisonResolve = false, tileResolve = true;
     unsigned vfxMode = 0, vfxLayers = 3, vfxVertices = 6;
-    bool HasVfxDraws() const { return vfx && ((vfxLayers & 1u) != 0 || ((vfxLayers & 2u) != 0 && vfxVertices > 6)); }
+    bool HasVfxDraws() const
+    {
+        for (const auto &a : actors)
+            if (a.type == avboit::ActorType::Distortion && a.enabled)
+                return true;
+        return false;
+    }
     float vfxStrength = 20;
     nvrhi::FramebufferHandle opaqueFb;
     nvrhi::SamplerHandle linear;
@@ -337,9 +189,6 @@ class NativeViewer : public app::IRenderPass
         for (unsigned index : objectMaterials)
             theta = std::max(theta, materials.Resolve(index, MaterialDefaults()).FrostTheta());
         auto gpuMaterials = materials.GpuRecords(MaterialDefaults());
-        for (unsigned material : emissiveMaterials)
-            for (unsigned channel = 0; channel < 3; ++channel)
-                gpuMaterials[material * 4][channel] *= emissiveGain;
         if (gpuMaterials != uploadedMaterials)
         {
             if (temporalAA)
@@ -364,7 +213,7 @@ class NativeViewer : public app::IRenderPass
         camera = {{{eye[0], eye[1], eye[2], cubic ? (cubicTrilinear ? 2.f : 1.f) : 0.f},
                    {right[0], right[1], right[2], float(frost)},
                    {up[0], up[1], up[2], time},
-                   {forward[0], forward[1], forward[2], vfx ? vfxStrength : 0.f},
+                   {forward[0], forward[1], forward[2], 1.f},
                    {sigmaCeiling, float(maxBlurMip), float(sparseBlur), float(hardwareDepth)},
                    {-.05f / 79.95f, 4.f / 79.95f, .05f, 80.f},
                    {float(Width), float(Height), float(volumeWidth), float(volumeHeight)},
@@ -430,6 +279,11 @@ class NativeViewer : public app::IRenderPass
                 commands->writeBuffer(interfaceIndexBuffer, selected.indices.data(), selected.indices.size() * 4);
             interfaceIndices = std::move(selected.indices);
             interfaceDraws = std::move(selected.draws);
+            auto disabled = [&](const avboit::GeometryDraw &draw) { return !actors[draw.actor].enabled; };
+            geometryDraws.erase(std::remove_if(geometryDraws.begin(), geometryDraws.end(), disabled),
+                                geometryDraws.end());
+            interfaceDraws.erase(std::remove_if(interfaceDraws.begin(), interfaceDraws.end(), disabled),
+                                 interfaceDraws.end());
             interfaceSelectionDirty = false;
             interfaceFrostEnabled = useFrost;
         }
@@ -437,6 +291,13 @@ class NativeViewer : public app::IRenderPass
         projected[2][3] = float(maxBlurMip);
         for (unsigned object = 0; object < objectCount; ++object)
         {
+            if (!actors[object].enabled)
+            {
+                // Empty behind-camera bounds are rejected by occupancy rasterization.
+                projected[3 + object * 2] = {0, 0, -2, 0};
+                projected[4 + object * 2] = {0, 0, -1, 0};
+                continue;
+            }
             auto lower = animatedBounds[3 + object * 2], upper = animatedBounds[4 + object * 2];
             auto material = materials.Resolve(objectMaterials[object], MaterialDefaults());
             // UVs clamp to screen edges. Unbounded analytic sphere refraction
@@ -933,34 +794,7 @@ class NativeViewer : public app::IRenderPass
             uiTabs[0] = itemCenter();
             if (tab0)
             {
-                ImGui::TextDisabled("Click an actor or select it below.");
-                if (ImGui::BeginListBox("##actors", ImVec2(-1, 110)))
-                {
-                    for (unsigned actor = 0; actor < objectMaterials.size(); ++actor)
-                        if (ImGui::Selectable(ActorLabel(actor).c_str(), selectedActor == int(actor)))
-                            SelectActor(actor);
-                    ImGui::EndListBox();
-                }
-                if (selectedActor >= 0 && unsigned(selectedActor) < objectMaterials.size())
-                {
-                    ImGui::Text("Selected: %s", ActorLabel(unsigned(selectedActor)).c_str());
-                    F3 position = ActorCenter(unsigned(selectedActor));
-                    ImGui::SetNextItemWidth(-1);
-                    if (ImGui::DragFloat3("##actor-position", position.data(), .02f, -1000.f, 1000.f, "%.3f"))
-                        SetActorPosition(unsigned(selectedActor), position);
-                    ImGui::TextDisabled("Position XYZ (world units). Ctrl-click to type.");
-                    if (ImGui::Checkbox("Move gizmo", &showActorGizmo))
-                        actorGizmo.Reset();
-                    ImGui::SameLine();
-                    if (ImGui::Button("Reset position"))
-                        SetActorPosition(unsigned(selectedActor), actorHomeCenters[selectedActor]);
-                    if (ImGui::Button("Reset all actor positions"))
-                        for (unsigned a = 0; a < actorHomeCenters.size(); ++a)
-                            SetActorPosition(a, actorHomeCenters[a]);
-
-                    ImGui::Separator();
-                    avboit::DrawMaterialEditor(materials, MaterialDefaults(), selectedMaterial);
-                }
+                DrawActorEditor();
                 bool sharedMaterialsOpen = ImGui::TreeNode("Shared material defaults");
                 uiSharedMaterials = itemCenter();
                 if (sharedMaterialsOpen)
@@ -997,7 +831,7 @@ class NativeViewer : public app::IRenderPass
                 if (ImGui::CollapsingHeader("Scene objects", ImGuiTreeNodeFlags_DefaultOpen))
                 {
                     bool changed = false;
-                    if (animate || vfx)
+                    if (animate || HasVfxDraws())
                         ImGui::SliderFloat("Animation time", &time, 0, 8, "%.2f s");
                     ImGui::BeginDisabled(stressPreset != 0);
                     changed |= ImGui::Checkbox("Scene glass panes", &sceneGlassPanes);
@@ -1006,7 +840,6 @@ class NativeViewer : public app::IRenderPass
                     ImGui::BeginDisabled(stressPreset != 0);
                     changed |= ImGui::Checkbox("Glass sphere", &glassSphere);
                     ImGui::EndDisabled();
-                    ImGui::SliderFloat("Emissive gain", &emissiveGain, 0, 64, "%.2f", ImGuiSliderFlags_Logarithmic);
                     changed |= ImGui::Checkbox("Inversion calibration board", &calibrationBoard);
                     changed |= ImGui::Checkbox("Emissive balls", &emissiveBalls);
                     ImGui::SameLine();
@@ -1026,44 +859,10 @@ class NativeViewer : public app::IRenderPass
                         preserveMaterialsOnRebuild = false;
                     }
                 }
-                if (ImGui::CollapsingHeader("VFX"))
-                {
-                    ImGui::Checkbox("Distortion enabled", &vfx);
-                    ImGui::SliderFloat("Strength (px)", &vfxStrength, 0, 64);
-                    int mode = int(vfxMode);
-                    if (ImGui::Combo("VFX fixture", &mode,
-                                     "Oscillating ring\0Heat wave\0Expanding shock\0Front + rear shocks\0"))
-                    {
-                        vfxMode = unsigned(mode);
-                        vfx = true;
-                        rebuildRequested = true;
-                        preserveMaterialsOnRebuild = false;
-                    }
-                    bool primary = (vfxLayers & 1) != 0, secondary = (vfxLayers & 2) != 0;
-                    if (ImGui::Checkbox("Primary layer", &primary))
-                        vfxLayers = (vfxLayers & ~1u) | (primary ? 1u : 0u);
-                    if (ImGui::Checkbox("Secondary layer", &secondary))
-                        vfxLayers = (vfxLayers & ~2u) | (secondary ? 2u : 0u);
-                    if (ImGui::Button("Play expanding shock"))
-                    {
-                        time = 0;
-                        animate = true;
-                        vfx = true;
-                        vfxMode = 2;
-                        rebuildRequested = true;
-                        preserveMaterialsOnRebuild = false;
-                    }
-                }
-                if (donutScene && ImGui::CollapsingHeader("Lighting"))
-                {
-                    ImGui::Checkbox("Animate spot light", &sceneLighting.animateSpot);
+                if (donutScene)
                     ImGui::Checkbox("Volumetric moment shadows", &sceneLighting.volumeShadows);
-                    ImGui::SliderFloat("Sun irradiance", &sceneLighting.sunIntensity, 0.f, 12.f);
-                    ImGui::SliderFloat3("Sun direction", sceneLighting.sunDirection.data(), -1.f, 1.f);
-                    ImGui::SliderFloat("Spot intensity", &sceneLighting.spotIntensity, 0.f, 500.f);
-                    ImGui::DragFloat3("Spot position", sceneLighting.spotPosition.data(), .05f);
-                    ImGui::DragFloat3("Spot target", sceneLighting.spotTarget.data(), .05f);
-                }
+                ImGui::TextWrapped("Select lights, emissive meshes and VFX in Actors to edit their properties. Scene "
+                                   "fixture toggles rebuild the preset.");
                 if (ImGui::CollapsingHeader("Camera presets"))
                 {
                     int pose = int(cameraPreset);
@@ -1563,13 +1362,6 @@ class NativeViewer : public app::IRenderPass
                 if (material.kind == 5 || material.kind == 6)
                     for (unsigned c = 0; c < 3; ++c)
                         material.transmission[c] = initialVolumeExtinction;
-        emissiveMaterials.clear();
-        for (unsigned v = emissiveFirst; v < emissiveEnd; v += 4)
-        {
-            const unsigned material = unsigned(vertices[v + 1][3]);
-            if (std::find(emissiveMaterials.begin(), emissiveMaterials.end(), material) == emissiveMaterials.end())
-                emissiveMaterials.push_back(material);
-        }
         // Material construction consumes the original kind. Afterwards position.w
         // is free to mark view-space geometry; the shader reads kind from materials.
         for (const auto &range : viewVertexRanges)
@@ -1593,11 +1385,9 @@ class NativeViewer : public app::IRenderPass
             for (unsigned vertex = first; vertex < end; vertex += 4)
                 vertices[vertex + 2][3] = float(object);
         }
-        materialBuffer = Buffer(unsigned(materials.entries.size() * 64), nvrhi::Format::RGBA32_FLOAT, false,
-                                "Transparency material table");
-        actorHomeCenters.clear();
-        for (unsigned a = 0; a < objectCount; ++a)
-            actorHomeCenters.push_back(ActorCenter(a));
+        BuildSceneActors(emissiveFirst, emissiveEnd);
+        materialBuffer =
+            Buffer(unsigned(materials.entries.size() * 64), nvrhi::Format::RGBA32_FLOAT, false, "Actor material table");
         actorGeometryDirty = false;
         actorGizmo.Reset();
         selectedActor = -1;
@@ -1898,7 +1688,14 @@ class NativeViewer : public app::IRenderPass
             if (key == GLFW_KEY_G)
                 frost = !frost;
             if (key == GLFW_KEY_V)
-                vfx = !vfx;
+            {
+                const bool enabled = !HasVfxDraws();
+                for (auto &a : actors)
+                    if (a.type == avboit::ActorType::Distortion)
+                        a.enabled = enabled;
+                if (temporalAA)
+                    temporalAA->Invalidate();
+            }
             if (key == GLFW_KEY_SPACE)
                 animate = !animate;
             if (key == GLFW_KEY_HOME)
@@ -1990,7 +1787,7 @@ class NativeViewer : public app::IRenderPass
                 AVBOIT_GPU_SCOPE(commands, "Shadow", profiler.Route(commands, Stage::Shadow));
                 if (donutScene)
                 {
-                    donutScene->UpdateLights(time, navigation.Eye(), sceneLighting);
+                    donutScene->UpdateLights(time, navigation.Eye(), ActorLighting());
                     donutScene->RecordShadow(commands, redrawShadows);
                 }
                 for (unsigned actor = 0; actor < localVolumes.size(); ++actor)
@@ -1999,8 +1796,17 @@ class NativeViewer : public app::IRenderPass
                     for (unsigned c = 0; c < 3; ++c)
                         localVolumes[actor].extinction[c] = material.transmission[c];
                 }
+                std::vector<avboit::StressVolume> shadowVolumes;
+                for (unsigned i = 0; i < localVolumes.size(); ++i)
+                {
+                    auto object =
+                        std::find(objectFirstRecords.begin(), objectFirstRecords.end(), localVolumeRecords[i]);
+                    if (object != objectFirstRecords.end() &&
+                        actors[size_t(object - objectFirstRecords.begin())].enabled)
+                        shadowVolumes.push_back(localVolumes[i]);
+                }
                 volumeLighting.Record(commands, donutScene ? donutScene->LightingData() : avboit::VolumeLightData{},
-                                      localVolumes);
+                                      shadowVolumes);
                 // The current shadow casters, alpha masks and directional-light matrix
                 // are static. Camera motion and transparent fixtures do not invalidate
                 // this map. Init/scene rebuilding always resets shadowDirty.
@@ -2028,6 +1834,8 @@ class NativeViewer : public app::IRenderPass
                     nvrhi::IndexBufferBinding().setBuffer(opaqueIndexBuffer).setFormat(nvrhi::Format::R32_UINT);
                 for (const auto &draw : opaqueDraws)
                 {
+                    if (!actors[opaqueActors[draw.actor]].enabled)
+                        continue;
                     char label[96];
                     snprintf(label, sizeof(label), "Opaque actor %u / material %u", draw.actor, draw.material);
                     AVBOIT_GPU_SCOPE(commands, label);
@@ -2047,24 +1855,33 @@ class NativeViewer : public app::IRenderPass
             frame.poisonResolve = poisonResolve;
             frame.zeroDepth = zeroDepth;
             frame.lastBlurMip = maxBlurMip;
-            if (vfx)
+            if (HasVfxDraws())
             {
-                if (vfxLayers & 1)
-                    frame.distortionBatches.push_back(0);
-                if ((vfxLayers & 2) && vfxVertices > 6)
-                    frame.distortionBatches.push_back(1);
+                for (const auto &actor : actors)
+                    if (actor.type == avboit::ActorType::Distortion && actor.enabled)
+                        frame.distortionBatches.push_back(actor.renderIndex);
             }
             transparency.Record(commands, frame,
                                 [&](avboit::TransparencyPipeline::Stage stage, bool begin)
                                 {
                                     static constexpr avboit::GpuProfiler::Stage profileStages[] = {
-                                        Stage::Interface,       Stage::Bounds,
-                                        Stage::AdaptiveZ,       Stage::PhysicalMask,
-                                        Stage::ExtinctionClear, Stage::ExtinctionSplat,
-                                        Stage::Integration,     Stage::ZeroDepth,
-                                        Stage::Accumulation,    Stage::Resolve,
-                                        Stage::BlurBase,        Stage::Blur,
-                                        Stage::Composition,     Stage::Vfx,
+                                        Stage::Interface,
+                                        Stage::Bounds,
+                                        Stage::AdaptiveZ,
+                                        Stage::PhysicalMask,
+                                        Stage::ExtinctionClear,
+                                        Stage::ExtinctionSplat,
+                                        Stage::Integration,
+                                        Stage::ZeroDepth,
+                                        Stage::AccumulationClear,
+                                        Stage::VolumeAccumulation,
+                                        Stage::VolumeUpsample,
+                                        Stage::Accumulation,
+                                        Stage::Resolve,
+                                        Stage::BlurBase,
+                                        Stage::Blur,
+                                        Stage::Composition,
+                                        Stage::Vfx,
                                         Stage::VfxApply};
                                     profiler.Event(commands, profileStages[unsigned(stage)], begin);
                                 });
