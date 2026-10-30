@@ -24,9 +24,9 @@ float GuideError(float depth, float reference)
 {
     return abs(depth - reference) / max(.02, reference * .02);
 }
-// RDR2 slide 56 describes four blue-noise taps, averaging except at depth
-// discontinuities. We use a fixed kernel instead of its weighted-depth width.
-// The exact point sequence is unpublished; this stratified set is our choice.
+// Four blue-noise point taps inspired by RDR2 slide 56, with independent
+// bilateral weights instead of its closest-depth selection at discontinuities.
+// The fixed kernel and stratified point sequence are demo choices.
 float2 UpscaleNoise(uint2 pixel, uint tap)
 {
     uint2 p = (pixel + uint2(7u, 13u) * tap) & 31u;
@@ -50,9 +50,8 @@ Accumulation upsamplePixel(float4 position : SV_Position)
     float2 f = frac(location);
     float weights[4];
     int2 taps[4];
-    float sum = 0., bestError = 1e30;
+    float sum = 0., bestError = 1e30, bestDistance = 1e30;
     uint best = 0;
-    bool discontinuity = false;
     [unroll] for (uint j = 0; j < 4; ++j)
     {
         int2 offset = int2(j & 1, j >> 1);
@@ -72,20 +71,25 @@ Accumulation upsamplePixel(float4 position : SV_Position)
         error += ((iz > 0.) != (interfaceZ > 0.))
                      ? 1000.
                      : (interfaceZ > 0. ? GuideError(ViewDepthFromDevice(iz), ViewDepthFromDevice(interfaceZ)) : 0.);
-        float spatial = (offset.x ? f.x : 1. - f.x) * (offset.y ? f.y : 1. - f.y);
-        discontinuity |= error > 1.;
-        weights[j] = dithered ? .25 : spatial * exp2(-error * error);
+        float2 delta = float2(taps[j]) - location;
+        float distanceSquared = dot(delta, delta);
+        // Use the actual jittered texel position, not the original quadrant,
+        // for spatial weighting. A bad tap suppresses only its own weight.
+        float spatial = dithered ? exp2(-distanceSquared / (radius * radius))
+                                 : (offset.x ? f.x : 1. - f.x) * (offset.y ? f.y : 1. - f.y);
+        weights[j] = spatial * exp2(-error * error);
         sum += weights[j];
-        if (error < bestError)
+        if (error < bestError || (error == bestError && distanceSquared < bestDistance))
         {
             bestError = error;
+            bestDistance = distanceSquared;
             best = j;
         }
     }
     Accumulation o = (Accumulation)0;
     [unroll] for (uint k = 0; k < 4; ++k)
     {
-        bool selectClosest = dithered ? discontinuity : sum <= 1e-6;
+        bool selectClosest = sum <= 1e-6;
         float w = selectClosest ? (k == best ? 1. : 0.) : weights[k] / sum;
         o.n += LowN.Load(int3(taps[k], 0)) * w;
         o.a += LowA.Load(int3(taps[k], 0)) * w;

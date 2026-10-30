@@ -85,20 +85,22 @@ VolumeAccumulation ShadeVolume(VolumeVaryings i, bool textured, bool halfResolut
     float interfaceZ = interfaceDevice > 0 ? ViewDepthFromDevice(interfaceDevice) : Camera[5].w;
     float baseStep = Camera[10].x;
     uint maxSteps = uint(Camera[10].w);
-    // Stratify four neighboring rays into four depth phases. In the half-res
-    // path use low-res pixel coordinates, not the all-odd full-res guide texels.
+    // Full-resolution rays stratify depth phases over a quad. Half-resolution
+    // rays use independent blue noise: fixed quad phases become visible as an
+    // axis-aligned pattern after upsampling high-extinction smoke.
     uint2 marchPixel = halfResolution ? pixel / 2u : pixel;
-    uint2 noisePixel = (marchPixel / 2u) & 31u;
-    float jitter = (VolumeBlueNoise[noisePixel.y * 32 + noisePixel.x] + .5) / 1024.;
-    // Stable spatial dithering by default; use the existing TAA-oriented option
-    // to vary the phase over time when a host provides temporal accumulation.
+    uint2 noisePixel = (halfResolution ? marchPixel : marchPixel / 2u) & 31u;
+    float jitter = (VolumeBlueNoise[noisePixel.y * 32u + noisePixel.x] + .5) / 1024.;
     if (Camera[9].w > 0.)
         jitter = frac(jitter + (Camera[9].w - 1.) * .618033989);
-    uint phase = (marchPixel.x & 1u) * 2u;
-    phase = (marchPixel.y & 1u) ? 3u - phase : phase; // [0,2;3,1]
-    if (Camera[9].w > 0.)
-        phase = (phase + uint(Camera[9].w - 1.)) & 3u;
-    jitter = (float(phase) + jitter) * .25;
+    if (!halfResolution)
+    {
+        uint phase = (marchPixel.x & 1u) * 2u;
+        phase = (marchPixel.y & 1u) ? 3u - phase : phase; // [0,2;3,1]
+        if (Camera[9].w > 0.)
+            phase = (phase + uint(Camera[9].w - 1.)) & 3u;
+        jitter = (float(phase) + jitter) * .25;
+    }
     float z = interval.x;
     float3 t = SampleVolumeTransmittance(uv, z);
     [loop] for (uint step = 0; step < maxSteps && z < stopZ; ++step)

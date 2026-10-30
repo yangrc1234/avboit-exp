@@ -61,8 +61,9 @@ step start, max(R,G,B) of the global T-LUT controls a smooth increase below T=.1
 up to 4x at T=0. A 256-step budget coarsens long intervals to cover the complete
 ray, rather than dropping the remaining optical depth. Interface depth still
 splits steps into front/back pieces. Ray phases use four stratified depth phases per 2x2 pixel quad,
-with a shared 32x32 blue-noise offset inside each stratum. Half-resolution draws
-form quads in low-resolution coordinates; integration bounds and segment lengths are unchanged.
+with a shared 32x32 blue-noise offset inside each stratum. Half-resolution rays instead
+use independent per-pixel blue-noise phases to avoid a regular quad pattern in dense
+smoke after upsampling. Integration bounds and segment lengths are unchanged.
 Each piece averages four stratified density taps but evaluates lighting only once.
 Adjacent steps reuse their shared T endpoint. Spatial dithering is stable by default;
 `--taa` also animates the march phase and accumulates the final HDR image.
@@ -179,15 +180,23 @@ bounded moment data, source attenuation and the inactive projection flags.
 Enable `--taa` or **Quality → Display → Temporal anti-aliasing** in ImGui. This uses the same Donut
 TAA pass as the neighboring ADS demo, after transparency/VFX distortion and before
 tonemapping. Halton projection jitter is shared by opaque and transparent geometry,
-occupancy projection and volume rays. TAA also enables temporal quad phase rotation.
-With half-resolution volumes and TAA enabled, reconstruction defaults to four
-stratified blue-noise point taps, averaged in depth-continuous regions. At a scene
-or interface depth discrepancy it selects the closest-depth candidate instead.
-N/A/totalTau/BackN share the same taps and weights. The kernel radius is fixed at
-one half-resolution texel; there is no depth-moment RT or volume-history buffer.
+occupancy projection and volume rays. TAA also varies ray phases over time (quad rotation at full resolution, blue-noise
+phase offsets at half resolution).
+With half-resolution volumes and TAA enabled, reconstruction uses four stratified
+blue-noise point taps. Each tap has an independent spatial Gaussian weight based
+on its actual texel position, multiplied by a scene/interface depth similarity
+weight. One incompatible tap no longer switches all four taps to closest-sample
+selection. Only a near-zero total weight falls back to the closest-depth tap;
+equal depth errors prefer the spatially nearest candidate.
+N/A/totalTau/BackN share the same normalized weights. The sampling radius is fixed
+at one half-resolution texel; there is no depth-moment RT or volume-history buffer.
 This follows TAA automatically; there is no separate upscaling switch in ImGui.
-`--volume-upsample-bilateral` retains the bilateral reference for automated comparisons.
-Without TAA, bilateral is always used.
+Without TAA, four fixed bilinear neighbors use spatial bilinear weights instead.
+`--volume-upsample-bilateral` retains that fixed-neighbor reference for automation.
+
+Upsampling does not query the T-LUT. Its scene-depth guide still contains Zero-T
+quads, so artificial cutoff-depth changes can still affect the weights. Independent
+weighting removes the all-or-nothing selection rule, not this underlying ambiguity.
 Disabling TAA releases its history,
 motion and output textures. It defaults off to preserve non-temporal comparisons.
 
@@ -203,8 +212,9 @@ This adapts the final upscaling stage in
 The earlier skipped-ray history reconstruction and ray placement (slides 51–55)
 are not prerequisites for this stage and are not implemented here. We deliberately
 omit its weighted-ray-depth kernel width. The exact point sequence and thresholds
-are not published: our quadrant stratification and 2%/2cm depth threshold are demo
-choices. RDR2 filters integrated scattering/transmittance; we filter additive
+are not published: our quadrant stratification and 2%/2cm depth scale are demo
+choices. We also use independent bilateral weights rather than the slide's
+closest-depth selection at discontinuities. RDR2 filters integrated scattering/transmittance; we filter additive
 AVBOIT intermediates before a nonlinear resolve, so the two are not mathematically
 identical. Missing compatible low-resolution samples at depth edges can still leak
 or flicker; final TAA has no independent volume motion.

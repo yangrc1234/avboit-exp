@@ -48,12 +48,15 @@ ImGui 的 **Quality → Volumes** 中可切换 `Half-resolution local volumes`�
 没有全分辨率补算，细遮挡与界面边缘允许近似。
 禁用后释放四张半分辨率 RT。2K packed 格式额外占用约 14.06 MiB（不含驱动对齐）。
 
-启用半分辨率和 TAA 后，默认使用四个分层蓝噪声 point taps：深度连续处平均，
-场景／interface 深度不连续时选择深度最接近的候选。四张 RT 的采样与选择完全一致。
-kernel 半径固定为一个半分辨率 texel，不生成深度矩，不增加 RT 或体积 history。
+启用半分辨率和 TAA 后，使用四个分层蓝噪声 point taps，每个样本独立计算
+“实际采样 texel 距离的 Gaussian 空间权重 × 场景／interface 深度相似度”。
+一个候选不匹配只降低自身权重，不再让整个像素退回单点。
+只有权重总和接近零时才选择深度最匹配的候选；深度差相同则优先空间最近的样本。
+四张 RT 共用归一化后的权重。采样半径固定为一个半分辨率 texel，
+不生成深度矩，不增加 RT 或体积 history，也不查询 T-LUT。
+SceneDepth 仍包含 Zero-T，因此其人工深度台阶仍可能影响权重；这个改动不消除深度本身的歧义。
 上采样跟随 TAA 自动选择，不再单独提供 ImGui 对比开关。
-CLI 参数 `--volume-upsample-bilateral` 仅用于自动化对照。
-没有 TAA 时自动使用稳定 bilateral。
+没有 TAA 时使用固定四邻居与 bilinear 空间权重；CLI 参数 `--volume-upsample-bilateral` 仅用于自动化对照。
 `Temporal volume dithering (requires TAA)` / `--volume-temporal-dither`
 只改变 raymarch 的时域采样相位，用于接入宿主自己的 TAA。
 旧参数 `--volume-stochastic-upsample` 仅保留为别名，不再抖动 upsample 地址。
@@ -68,7 +71,7 @@ CLI 参数 `--volume-upsample-bilateral` 仅用于自动化对照。
 每步起点查询 T-LUT，RGB 最大透射率低于 0.1 时平滑增大步长，T=0 时达到 4 倍。
 默认最多 256 步；长射线会增大有效步长覆盖完整区间，不会直接丢弃剩余光学厚度。
 Interface 仍切分前后段。每个 2×2 quad 的四条射线分配四个步内深度相位，层内用共享蓝噪声偏移，积分区间与长度不变。
-半分辨率模式按低分辨率像素组成 quad。这是交错采样，没有新增空间／时域重建 pass。
+半分辨率模式改用逐像素蓝噪声相位，避免高消光烟雾重建后暴露固定 quad 的横竖排列。积分区间与长度不变，没有新增重建 pass。
 默认只做稳定的空间抖动；启用 TAA 后随帧改变采样相位，并累积最终 HDR 图像。
 每段采用 4 次分层密度采样和 1 次光照计算；可见性使用区间两端 T 的梯形平均，
 避免单个随机点落入 T=0 区域就丢掉整段的可见散射。相邻步复用共享端点的 T 查询。
@@ -101,7 +104,7 @@ ImGui 的 **Quality → Volumes** 可实时调整步长、低 T 阈值、最大�
 `--taa` 或 ImGui 的 **Quality → Display → Temporal anti-aliasing** 启用 Donut TAA，与相邻 ADS demo
 使用同一个库实现。TAA 在透明合成与 VFX distortion 后、tonemap 前处理 HDR；
 Halton 投影 jitter 同时用于 opaque、透明几何、occupancy 投影和体积射线。
-启用时自动开启体积 quad 的时域相位轮换；半分辨率默认使用上述蓝噪声重建。
+启用时自动开启体积采样相位变化：全分辨率轮换 quad 相位，半分辨率偏移逐像素蓝噪声；半分辨率默认使用上述蓝噪声重建。
 关闭时释放 TAA history、motion 和 output RT；默认关闭，便于保留无 TAA 的算法对比。
 
 当前 motion 由场景深度与前后帧相机生成，支持相机移动，但没有透明物体自身的运动矢量，
@@ -112,7 +115,8 @@ Halton 投影 jitter 同时用于 opaque、透明几何、occupancy 投影和体
 这里借鉴的是 [RDR2 第 56 页及备注的最终上采样](https://advances.realtimerendering.com/s2019/slides_public_release.pptx)。
 不需要前面第 51–55 页的缺失射线历史重建；我们每帧计算全部半分辨率像素。
 按当前取舍，没有实现加权 ray depth 控制 kernel 宽度。原分享没有公布精确点集与阈值，
-四象限分层点集、2%／2cm 深度阈值是 demo 的选择，不能称为逐项复现。
+四象限分层点集、2%／2cm 深度尺度是 demo 的选择；也改用了逐样本 bilateral 权重，
+而不是分享中的深度不连续处选单点，不能称为逐项复现。
 原方案过滤已积分散射／透射率；我们过滤 AVBOIT 中间量后再非线性 resolve，两者不严格等价。
 低分辨率没有合适深度样本时仍可能漏光或闪动，最终 TAA 也没有独立的体积运动矢量。
 

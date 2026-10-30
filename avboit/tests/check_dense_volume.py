@@ -68,6 +68,19 @@ def main():
         report[f"bottom_zero_weight_pixels_{extinction}"] = holes
         assert holes < 32, report
 
+    # Compare matched TAA sequences at high density. Scene depth still contains
+    # Zero-T, so weighted reconstruction is not invariant to its cutoff tiles.
+    # Catch the large jumps from the old all-or-nothing closest-tap selection:
+    # that baseline measured 0.381 bottom error and 2738 pixels over 8 at 2K.
+    _, enabled = capture("half-zero-128", 128, "--volume-half-res", "--taa")
+    _, disabled = capture("half-nozero-128", 128, "--volume-half-res", "--taa", "--no-zero-depth")
+    error = np.abs(enabled - disabled)
+    bottom_error = float(error[740:1200, 1300:1640].mean())
+    report["half_zero_bottom_mean_255"] = bottom_error
+    report["half_zero_pixels_over_8"] = int(np.count_nonzero(error.max(axis=2) > 8))
+    assert bottom_error < 0.3, report
+    assert report["half_zero_pixels_over_8"] < 1000, report
+
     folder, _ = capture("half-taa", 64, "--volume-upsample-test")
     hdr = texture(folder / "native-taa.rgba16f", "<f2", 4)
     assert np.isfinite(hdr).all()
