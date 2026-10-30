@@ -41,15 +41,19 @@ ImGui 的 Resolve pipeline 中可切换 `Half-resolution local volumes`，或使
 `--volume-half-res`。当前仅局部体积材质提供低分辨率 shader；interface 与其他透明材质
 始终全分辨率。渲染器通过 `MaterialShaders::halfResolutionPixel` 显式选择可降分辨率材质。
 
-顺序为半宽半高体积 accumulation → bilateral upsample 覆盖全分辨率四张 accumulation RT
+顺序为半宽半高体积 accumulation → 深度感知 upsample 覆盖全分辨率四张 accumulation RT
 → 全分辨率透明对象 additive accumulation → 原有统一 resolve。Extinction/LUT 不改变。
 低分辨率没有绑定全分辨率 DSV，shader 在选定的全分辨率 guide 像素读取深度并裁剪射线。
-2×2 上采样对 N、A、totalTau、BackN 使用同一组空间/opaque depth/interface depth 权重；
-没有可靠权重时使用深度最接近的候选。没有全分辨率补算，细遮挡与界面边缘允许近似。
+上采样对 N、A、totalTau、BackN 使用相同样本与权重。
+没有全分辨率补算，细遮挡与界面边缘允许近似。
 禁用后释放四张半分辨率 RT。2K packed 格式额外占用约 14.06 MiB（不含驱动对齐）。
 
-上采样使用固定的四 tap bilateral footprint，不额外抖动屏幕采样地址；
-原来随机改变重建 footprint 会把额外噪声带入后续非线性 resolve。
+启用半分辨率和 TAA 后，默认使用四个分层蓝噪声 point taps：深度连续处平均，
+场景／interface 深度不连续时选择深度最接近的候选。四张 RT 的采样与选择完全一致。
+kernel 半径固定为一个半分辨率 texel，不生成深度矩，不增加 RT 或体积 history。
+ImGui 的 **Dithered volume upscale (RDR2-inspired)** 可实时切换 bilateral 对照，
+切换时重置 TAA history；CLI 对照参数是 `--volume-upsample-bilateral`。
+没有 TAA 时自动使用稳定 bilateral。
 `Temporal volume dithering (requires TAA)` / `--volume-temporal-dither`
 只改变 raymarch 的时域采样相位，用于接入宿主自己的 TAA。
 旧参数 `--volume-stochastic-upsample` 仅保留为别名，不再抖动 upsample 地址。
@@ -97,7 +101,7 @@ ImGui 的 Resolve pipeline 可实时调整步长、低 T 阈值、最大倍率�
 `--taa` 或 ImGui 的 **Resolve pipeline → TAA** 启用 Donut TAA，与相邻 ADS demo
 使用同一个库实现。TAA 在透明合成与 VFX distortion 后、tonemap 前处理 HDR；
 Halton 投影 jitter 同时用于 opaque、透明几何、occupancy 投影和体积射线。
-启用时自动开启体积 quad 的时域相位轮换；半分辨率重建保持固定 footprint。
+启用时自动开启体积 quad 的时域相位轮换；半分辨率默认使用上述蓝噪声重建。
 关闭时释放 TAA history、motion 和 output RT；默认关闭，便于保留无 TAA 的算法对比。
 
 当前 motion 由场景深度与前后帧相机生成，支持相机移动，但没有透明物体自身的运动矢量，
@@ -105,9 +109,15 @@ Halton 投影 jitter 同时用于 opaque、透明几何、occupancy 投影和体
 这是用于观察采样收敛的基线，不是完整的透明 temporal reconstruction。
 切换视角、重建资源和编辑 actor 材质会重置 history。GPU profiler 单独列出 `taa`。
 
-这不是完整的 [RDR2 云重建方案](https://advances.realtimerendering.com/s2019/slides_public_release.pptx)：
-原分享第 51–56 页还有低分辨率缺失射线的历史重建、深度邻域与射线位置选择，
-以及用透射率加权体积深度指导 upsample；当前 demo 尚未实现这些部分。
+这里借鉴的是 [RDR2 第 56 页及备注的最终上采样](https://advances.realtimerendering.com/s2019/slides_public_release.pptx)。
+不需要前面第 51–55 页的缺失射线历史重建；我们每帧计算全部半分辨率像素。
+按当前取舍，没有实现加权 ray depth 控制 kernel 宽度。原分享没有公布精确点集与阈值，
+四象限分层点集、2%／2cm 深度阈值是 demo 的选择，不能称为逐项复现。
+原方案过滤已积分散射／透射率；我们过滤 AVBOIT 中间量后再非线性 resolve，两者不严格等价。
+低分辨率没有合适深度样本时仍可能漏光或闪动，最终 TAA 也没有独立的体积运动矢量。
+
+`--sponza --stress 24 --volume-extinction 64 --volume-upsample-test` 可输出静止／移动镜头的逐帧对照。
+测试脚本统计固定烟雾 ROI 的时域变化，并检查无 TAA 时回退 bilateral、磨砂交错时输出有限值。
 
 `python avboit/tests/check_dense_volume.py` 在 2K、packed RT 下检查高消光 Zero-T 开关差异、
 底部零权重黑洞和半分辨率 TAA 有限值。仍允许少量孤立像素的截止差异，

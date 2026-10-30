@@ -75,6 +75,7 @@ class NativeViewer : public app::IRenderPass
     avboit::VolumeLighting volumeLighting;
     avboit::SceneLightingSettings sceneLighting;
     bool lowResolutionVolumes = false, temporalVolumeDithering = false;
+    bool ditheredVolumeUpsample = true;
     unsigned volumeSampleFrame = 0;
     bool taaEnabled = false;
     std::unique_ptr<avboit::TemporalAA> temporalAA;
@@ -377,7 +378,7 @@ class NativeViewer : public app::IRenderPass
         if (temporalAA)
         {
             const auto jitter = temporalAA->Jitter();
-            camera[11] = {jitter.x, jitter.y, 0, 0};
+            camera[11] = {jitter.x, jitter.y, float(ditheredVolumeUpsample), 0};
         }
         auto projected = bounds;
         auto animatedBounds = bounds;
@@ -798,6 +799,7 @@ class NativeViewer : public app::IRenderPass
         rebuildRequested = true;
         preserveMaterialsOnRebuild = true;
     }
+    void SetVolumeUpsample(bool dithered) { ditheredVolumeUpsample = dithered; }
     void SetInitialVolumeExtinction(float value) { initialVolumeExtinction = value; }
     void SetTaa(bool enabled) { taaEnabled = enabled; }
     void SetHardwareDepth(bool enabled) { hardwareDepth = enabled; }
@@ -1200,6 +1202,13 @@ class NativeViewer : public app::IRenderPass
                 rebuildRequested = true;
                 preserveMaterialsOnRebuild = true;
             }
+            if (lowResolutionVolumes)
+            {
+                if (ImGui::Checkbox("Dithered volume upscale (RDR2-inspired)", &ditheredVolumeUpsample) && temporalAA)
+                    temporalAA->Invalidate();
+                ImGui::TextDisabled(taaEnabled ? "Four blue-noise taps; depth-aware selection; final TAA."
+                                               : "TAA disabled: stable bilateral fallback.");
+            }
             ImGui::TextWrapped("B prime on transparency tiles. Resolve into temporary color, then copy tiles to "
                                "SceneColor. q stays in registers; no I/R/q caches.");
         }
@@ -1290,7 +1299,7 @@ class NativeViewer : public app::IRenderPass
     }
     void TestUiInteractions(avboit::ViewerUi &ui, nvrhi::IFramebuffer *framebuffer);
     void TestMaterialEdits(nvrhi::IFramebuffer *framebuffer);
-    void TestTemporalAA(nvrhi::IFramebuffer *framebuffer);
+    void TestTemporalAA(nvrhi::IFramebuffer *framebuffer, bool captureUpscaleSequence);
     void TestActorEditing(nvrhi::IFramebuffer *framebuffer);
     void ApplyPendingUiChanges()
     {
@@ -2436,6 +2445,7 @@ int main(int argc, const char **argv)
         viewer.SetSceneLighting(o.sunIntensity, o.spotIntensity, o.volumeShadows);
         viewer.SetVolumeResolution(o.lowResolutionVolumes, o.temporalVolumeDithering);
         viewer.SetTaa(o.taa);
+        viewer.SetVolumeUpsample(o.ditheredVolumeUpsample);
         viewer.SetInitialVolumeExtinction(o.initialVolumeExtinction);
         viewer.SetVolumeMarch(o.volumeStepSize, o.volumeLowT, o.volumeStepScale, o.volumeMaxSteps);
         viewer.SetCalibration(o.calibrationBoard, o.emissiveGain);
@@ -2466,7 +2476,7 @@ int main(int argc, const char **argv)
             if (o.actorEditorTest)
                 viewer.TestActorEditing(framebuffer);
             if (o.taa)
-                viewer.TestTemporalAA(framebuffer);
+                viewer.TestTemporalAA(framebuffer, o.volumeUpsampleTest);
             // Warm a different view first, exposing stale sparse resources after camera changes.
             configureCamera(o.cameraPreset == 6 ? 0 : (o.cameraPreset + 2) % 6);
             viewer.Render(framebuffer);

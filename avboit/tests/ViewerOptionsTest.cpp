@@ -29,6 +29,11 @@ int main()
         Require(defaults.occupancyOverlay == 0);
         Require(!defaults.lowResolutionVolumes && !defaults.temporalVolumeDithering);
         Require(Parse({"--volume-half-res"}).lowResolutionVolumes);
+        Require(defaults.ditheredVolumeUpsample);
+        auto upscaleTest = Parse({"--volume-upsample-test"});
+        Require(upscaleTest.headless && upscaleTest.taa && upscaleTest.lowResolutionVolumes &&
+                upscaleTest.volumeUpsampleTest);
+        Require(!Parse({"--volume-upsample-bilateral"}).ditheredVolumeUpsample);
         auto march = Parse(
             {"--volume-step", ".025", "--volume-low-t", ".05", "--volume-step-scale", "2", "--volume-max-steps", "64"});
         Require(march.volumeStepSize == .025f && march.volumeLowT == .05f && march.volumeStepScale == 2.f &&

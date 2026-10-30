@@ -68,12 +68,33 @@ def main():
         report[f"bottom_zero_weight_pixels_{extinction}"] = holes
         assert holes < 32, report
 
-    folder, _ = capture("half-taa", 64, "--volume-half-res", "--taa")
+    folder, _ = capture("half-taa", 64, "--volume-upsample-test")
     hdr = texture(folder / "native-taa.rgba16f", "<f2", 4)
     assert np.isfinite(hdr).all()
     # The native --taa path also exercises camera motion, cuts and history resize.
     # This is not a numerical guarantee of temporal quality for arbitrary motion.
     report["half_taa_finite"] = True
+    for mode in ("bilateral", "dithered"):
+        sequence = np.stack(
+            [
+                np.asarray(
+                    Image.open(folder / f"volume-upscale-{mode}-{frame:02}.ppm"), dtype=np.float32
+                )
+                for frame in range(8)
+            ]
+        )
+        # Fixed smoke ROI, unregistered static camera. Report rather than assert
+        # a universal quality win; the second eight frames exercise camera motion.
+        roi = sequence[:, 400:1200, 1250:1700]
+        report[f"{mode}_temporal_std_255"] = float(roi.std(axis=0).mean())
+        report[f"{mode}_frame_delta_255"] = float(abs(np.diff(roi, axis=0)).mean())
+        assert (folder / f"volume-upscale-{mode}-15.ppm").is_file()
+    _, fallback = capture("half-no-taa", 64, "--volume-half-res")
+    _, reference = capture("half-bilateral", 64, "--volume-half-res", "--volume-upsample-bilateral")
+    assert np.array_equal(fallback, reference), "No-TAA fallback differs from bilateral"
+    frost, _ = capture("half-frost-taa", 64, "--stress", "25", "--volume-half-res", "--taa")
+    assert np.isfinite(texture(frost / "native-taa.rgba16f", "<f2", 4)).all()
+
     (output / "report.json").write_text(json.dumps(report, indent=2))
     print(json.dumps(report, indent=2))
 

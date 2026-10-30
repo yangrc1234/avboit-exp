@@ -478,7 +478,7 @@ void NativeViewer::TestMaterialEdits(nvrhi::IFramebuffer *framebuffer)
 
 // Exercise the same resource-rebuild path as the live checkbox, and validate HDR
 // history after static frames, a moving camera, a camera cut and a size change.
-void NativeViewer::TestTemporalAA(nvrhi::IFramebuffer *framebuffer)
+void NativeViewer::TestTemporalAA(nvrhi::IFramebuffer *framebuffer, bool captureUpscaleSequence)
 {
     const unsigned savedWidth = Width, savedPreset = cameraPreset;
     auto validate = [&]()
@@ -542,6 +542,62 @@ void NativeViewer::TestTemporalAA(nvrhi::IFramebuffer *framebuffer)
     ApplyCameraPreset(savedPreset);
     Render(framebuffer);
     validate();
+    if (lowResolutionVolumes && captureUpscaleSequence)
+    {
+        // Deterministic A/B sequences at the requested render resolution. These
+        // exercise the same live mode switch; no separate rendering test path.
+        const bool savedUpscale = ditheredVolumeUpsample;
+        auto *color = framebuffer->getDesc().colorAttachments[0].texture;
+        auto staging = GetDevice()->createStagingTexture(color->getDesc(), nvrhi::CpuAccessMode::Read);
+        for (bool dithered : {false, true})
+        {
+            ditheredVolumeUpsample = dithered;
+            volumeSampleFrame = 0;
+            ApplyCameraPreset(savedPreset);
+            temporalAA->Invalidate();
+            const auto startEye = navigation.Eye(), direction = navigation.Forward();
+            const float heading = std::atan2(direction[0], direction[2]);
+            const float pitchAngle = std::asin(std::clamp(direction[1], -1.f, 1.f));
+            for (unsigned frame = 0; frame < 48; ++frame)
+            {
+                if (frame >= 40)
+                    navigation.SetPose({startEye[0] + float(frame - 39) * .02f, startEye[1], startEye[2]}, heading,
+                                       pitchAngle);
+                Render(framebuffer);
+                if (frame < 32)
+                    continue;
+                commands->open();
+                commands->copyTexture(staging, {}, color, {});
+                commands->close();
+                GetDevice()->executeCommandList(commands);
+                GetDevice()->waitForIdle();
+                size_t pitch = 0;
+                auto *data = static_cast<const unsigned char *>(
+                    GetDevice()->mapStagingTexture(staging, {}, nvrhi::CpuAccessMode::Read, &pitch));
+                if (!data)
+                    throw std::runtime_error("Volume upscale sequence readback failed");
+                char name[128];
+                snprintf(name, sizeof(name), "volume-upscale-%s-%02u.ppm", dithered ? "dithered" : "bilateral",
+                         frame - 32);
+                std::ofstream file(name, std::ios::binary);
+                const auto w = color->getDesc().width, h = color->getDesc().height;
+                file << "P6\n" << w << " " << h << "\n255\n";
+                std::vector<unsigned char> row(w * 3);
+                for (unsigned y = 0; y < h; ++y)
+                {
+                    for (unsigned x = 0; x < w; ++x)
+                        for (unsigned c = 0; c < 3; ++c)
+                            row[x * 3 + c] = data[y * pitch + x * 4 + c];
+                    file.write(reinterpret_cast<const char *>(row.data()), row.size());
+                }
+                GetDevice()->unmapStagingTexture(staging);
+            }
+        }
+        ditheredVolumeUpsample = savedUpscale;
+        ApplyCameraPreset(savedPreset);
+        temporalAA->Invalidate();
+        Render(framebuffer);
+    }
     printf("TAA toggle, moving camera, cut, resize and finite HDR checks PASS\n");
 }
 

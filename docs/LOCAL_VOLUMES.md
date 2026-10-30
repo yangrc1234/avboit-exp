@@ -180,8 +180,14 @@ Enable `--taa` or **Resolve pipeline → TAA** in ImGui. This uses the same Donu
 TAA pass as the neighboring ADS demo, after transparency/VFX distortion and before
 tonemapping. Halton projection jitter is shared by opaque and transparent geometry,
 occupancy projection and volume rays. TAA also enables temporal quad phase rotation.
-Half-resolution reconstruction uses a fixed four-tap bilateral footprint; adding
-independent screen-space address noise here made the nonlinear resolve less stable.
+With half-resolution volumes and TAA enabled, reconstruction defaults to four
+stratified blue-noise point taps, averaged in depth-continuous regions. At a scene
+or interface depth discrepancy it selects the closest-depth candidate instead.
+N/A/totalTau/BackN share the same taps and weights. The kernel radius is fixed at
+one half-resolution texel; there is no depth-moment RT or volume-history buffer.
+Use ImGui **Dithered volume upscale (RDR2-inspired)** or
+`--volume-upsample-bilateral` to compare the stable bilateral reference. Switching
+live invalidates TAA history. Without TAA, bilateral is always used.
 Disabling TAA releases its history,
 motion and output textures. It defaults off to preserve non-temporal comparisons.
 
@@ -192,10 +198,23 @@ and actor material edits reset history. The GPU profiler reports a separate `taa
 stage. Headless `--taa` also checks toggling, motion, cuts, resizing and finite HDR
 output before capturing a converged frame.
 
-This is not the full [RDR2 cloud reconstruction](https://advances.realtimerendering.com/s2019/slides_public_release.pptx).
-That presentation also reconstructs skipped low-resolution rays from history,
-uses depth-aware neighborhoods and ray placement, and guides upsampling with a
-transmittance-weighted volume depth (slides 51–56). Those stages are absent here.
+This adapts the final upscaling stage in
+[RDR2 slide 56 and its speaker notes](https://advances.realtimerendering.com/s2019/slides_public_release.pptx).
+The earlier skipped-ray history reconstruction and ray placement (slides 51–55)
+are not prerequisites for this stage and are not implemented here. We deliberately
+omit its weighted-ray-depth kernel width. The exact point sequence and thresholds
+are not published: our quadrant stratification and 2%/2cm depth threshold are demo
+choices. RDR2 filters integrated scattering/transmittance; we filter additive
+AVBOIT intermediates before a nonlinear resolve, so the two are not mathematically
+identical. Missing compatible low-resolution samples at depth edges can still leak
+or flicker; final TAA has no independent volume motion.
+
+`--sponza --stress 24 --volume-extinction 64 --volume-upsample-test` writes matched
+static/moving-camera A/B sequences at the requested resolution. The Python dense-volume
+check reports static smoke ROI temporal variation, verifies the no-TAA bilateral
+fallback, and checks a frosted-glass intersection. These short sequences are
+diagnostics, not a guarantee for arbitrary motion or all densities.
+
 `--volume-temporal-dither` animates ray phases without enabling the demo's TAA,
 for hosts providing their own temporal accumulation. The former
 `--volume-stochastic-upsample` spelling remains an alias; it no longer jitters

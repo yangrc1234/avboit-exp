@@ -157,6 +157,12 @@ ViewerOptions ParseViewerOptions(int argc, const char *const *argv)
             options.spotIntensity = ReadFloat(arg, value(), 0, 500);
         else if (arg == "--volume-temporal-dither" || arg == "--volume-stochastic-upsample")
             options.temporalVolumeDithering = true;
+        else if (arg == "--volume-upsample-test")
+        {
+            options.volumeUpsampleTest = options.headless = options.taa = options.lowResolutionVolumes = true;
+        }
+        else if (arg == "--volume-upsample-bilateral")
+            options.ditheredVolumeUpsample = false;
         else if (arg == "--volume-extinction")
             options.initialVolumeExtinction = ReadFloat(arg, value(), 0.f, 128.f);
         else if (arg == "--volume-step")
@@ -260,6 +266,8 @@ Scene and materials:
   --sun-intensity N          Sponza sun irradiance (0..12), default 2
   --spot-intensity N         Sponza dynamic spotlight intensity (0..500), default 80
   --volume-temporal-dither  Animate raymarch sample phases (requires final TAA)
+  --volume-upsample-test   Headless static/moving A/B captures (enables half-res + TAA)
+  --volume-upsample-bilateral  Reference fixed bilateral instead of dithered TAA upscale
   --volume-extinction N    Initial volume material extinction, 0..128 per world unit
   --volume-step N           World-space accumulation step (default .5)
   --volume-low-t N          Grow steps below this max-RGB T (default .1)

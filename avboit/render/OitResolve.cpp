@@ -229,7 +229,7 @@ void OitResolve::RecordAccumulation(nvrhi::ICommandList *commands, const std::ve
             drawPass(true);
         }
         {
-            AVBOIT_GPU_SCOPE(commands, "Volume bilateral upsample");
+            AVBOIT_GPU_SCOPE(commands, "Volume depth-aware upsample");
             m_upsample.Record(commands, 3);
         }
     }

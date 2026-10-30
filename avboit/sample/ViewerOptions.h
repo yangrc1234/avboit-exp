@@ -25,6 +25,7 @@ struct ViewerOptions
     float sunIntensity = 2.f, spotIntensity = 80.f;
     bool volumeShadows = true;
     bool lowResolutionVolumes = false, temporalVolumeDithering = false;
+    bool ditheredVolumeUpsample = true, volumeUpsampleTest = false;
     float initialVolumeExtinction = -1.f;
     float volumeStepSize = .5f, volumeLowT = .1f, volumeStepScale = 4.f;
     int volumeMaxSteps = 256;
