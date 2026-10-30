@@ -93,12 +93,18 @@ python tools/fetch_sponza.py
 No rebuild is needed; you can also select **Background → Sponza** in ImGui after
 downloading. Sponza's separate license is listed in [third-party notices](THIRD_PARTY_NOTICES.md).
 
-Use **Background** and **Test case** in ImGui to change scenes. WASD/QE moves,
+Use **Background** and **Scene preset** in ImGui to change scenes. WASD/QE moves,
 right mouse looks, Home resets, B changes reconstruction, G toggles frost, V
 toggles VFX and Space pauses animation. Fixture controls apply immediately.
 `bin/avboit_viewer.exe --help` lists the CLI, including headless captures.
 
-In **Scene actors**, select a glass pane, sphere or smoke actor to edit its material
+The panel has four tabs: **Actors** for transforms/materials, **Scene** for objects,
+VFX and lights, **Quality** for resolution, TAA, frost and volume sampling, and
+**Debug** for occupancy overlays and the optional GPU profiler window.
+Validated algorithm references stay in the CLI/tests rather than everyday controls.
+
+
+In the **Actors** tab, select a glass pane, sphere or smoke actor to edit its material
 and position. Drag the XYZ handles to move along an axis, or the white center to
 move in the screen plane. Ctrl-click the XYZ fields for exact coordinates;
 **Reset position** restores the fixture placement. Esc cancels a drag. Quality

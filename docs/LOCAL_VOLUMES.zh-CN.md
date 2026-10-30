@@ -1,7 +1,7 @@
 # 局部体积与动态阴影
 
 启动 `bin/avboit_viewer.exe --sponza --stress 24` 看烟雾；`--stress 25` 加磨砂玻璃。
-ImGui 的 **Dynamic lighting / volume shadows** 可以实时调整方向光、聚光灯和 MSM。
+ImGui 的 **Scene → Lighting** 可以实时调整方向光、聚光灯和 MSM。
 聚光灯默认随时间移动；总动画暂停时也会停止。
 
 相机方向仍走 AVBOIT：体积的完整 bounds 参与 occupancy，低分辨率绘制注入消光，
@@ -37,7 +37,7 @@ MSM 使用 **RGBA16_UNORM＋R16F**，三层共约 **1.875 MiB**。
 
 ## 半分辨率 accumulation
 
-ImGui 的 Resolve pipeline 中可切换 `Half-resolution local volumes`，或使用
+ImGui 的 **Quality → Volumes** 中可切换 `Half-resolution local volumes`，或使用
 `--volume-half-res`。当前仅局部体积材质提供低分辨率 shader；interface 与其他透明材质
 始终全分辨率。渲染器通过 `MaterialShaders::halfResolutionPixel` 显式选择可降分辨率材质。
 
@@ -51,8 +51,8 @@ ImGui 的 Resolve pipeline 中可切换 `Half-resolution local volumes`，或使
 启用半分辨率和 TAA 后，默认使用四个分层蓝噪声 point taps：深度连续处平均，
 场景／interface 深度不连续时选择深度最接近的候选。四张 RT 的采样与选择完全一致。
 kernel 半径固定为一个半分辨率 texel，不生成深度矩，不增加 RT 或体积 history。
-ImGui 的 **Dithered volume upscale (RDR2-inspired)** 可实时切换 bilateral 对照，
-切换时重置 TAA history；CLI 对照参数是 `--volume-upsample-bilateral`。
+上采样跟随 TAA 自动选择，不再单独提供 ImGui 对比开关。
+CLI 参数 `--volume-upsample-bilateral` 仅用于自动化对照。
 没有 TAA 时自动使用稳定 bilateral。
 `Temporal volume dithering (requires TAA)` / `--volume-temporal-dither`
 只改变 raymarch 的时域采样相位，用于接入宿主自己的 TAA。
@@ -79,7 +79,7 @@ Zero-T 深度只终止后续步，不挪动最后一步内的密度／光照采�
 否则开关 Zero-T 会改变前方仍可见烟雾的积分位置，浓烟底部尤其容易出现黑斑。
 可用 `--volume-extinction 64` 或 `128` 重现高消光场景。
 
-ImGui 的 Resolve pipeline 可实时调整步长、低 T 阈值、最大倍率和步数预算；倍率设为 1
+ImGui 的 **Quality → Volumes** 可实时调整步长、低 T 阈值、最大倍率和步数预算；倍率设为 1
 即禁用低 T 加速。对应命令行：`--volume-step`、`--volume-low-t`、
 `--volume-step-scale`、`--volume-max-steps`。不新增 RT 或 pass。
 大步长会近似密度／光照和 totalTau，可能漏掉细结构。Extinction 注入仍逐 Z bin 积分；
@@ -88,7 +88,7 @@ ImGui 的 Resolve pipeline 可实时调整步长、低 T 阈值、最大倍率�
 
 ## 选择 actor 和调整材质
 
-面板顶部 **Scene actors** 列出透明 actor；也可左键点击场景中的 bounds 选中。
+**Actors** 页签 列出透明 actor；也可左键点击场景中的 bounds 选中。
 重叠／被挡住的 actor 可从列表选择。烟雾默认被选中，**Extinction**
 同时调整 RGB 消光系数（0～128 / world unit），**RGB extinction** 支持分通道编辑。
 修改立即影响相机消光、散射和体积阴影；沿用共享材质的 actor 会联动。
@@ -98,7 +98,7 @@ ImGui 的 Resolve pipeline 可实时调整步长、低 T 阈值、最大倍率�
 
 ### Demo TAA
 
-`--taa` 或 ImGui 的 **Resolve pipeline → TAA** 启用 Donut TAA，与相邻 ADS demo
+`--taa` 或 ImGui 的 **Quality → Display → Temporal anti-aliasing** 启用 Donut TAA，与相邻 ADS demo
 使用同一个库实现。TAA 在透明合成与 VFX distortion 后、tonemap 前处理 HDR；
 Halton 投影 jitter 同时用于 opaque、透明几何、occupancy 投影和体积射线。
 启用时自动开启体积 quad 的时域相位轮换；半分辨率默认使用上述蓝噪声重建。

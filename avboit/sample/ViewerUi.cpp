@@ -131,8 +131,9 @@ void DrawMaterialEditor(MaterialTable &materials, const MaterialDefaults &defaul
         return;
     const ScopedItemWidth itemWidth(160);
     auto &material = materials.entries[selectedMaterial];
-    ImGui::TextWrapped("Shared by matching fixture surfaces. Edits apply immediately; geometry changes in "
-                       "Scene fixtures reset materials.");
+    ImGui::TextDisabled("Material edits apply live.");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Matching actors can share this material. Changing the scene preset resets edits.");
     if (material.kind >= 5)
     {
         ImGui::ColorEdit3("Source radiance", material.color.data(),
@@ -141,14 +142,14 @@ void DrawMaterialEditor(MaterialTable &materials, const MaterialDefaults &defaul
         if (ImGui::SliderFloat("Extinction", &extinction, 0.f, 128.f, "%.3f / world unit",
                                ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp))
             material.transmission[0] = material.transmission[1] = material.transmission[2] = extinction;
-        ImGui::TextWrapped("Higher extinction makes smoke denser. Uniform sets all RGB channels together.");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Higher extinction makes smoke denser. This slider sets all RGB channels together.");
         if (ImGui::TreeNode("RGB extinction"))
         {
             ImGui::DragFloat3("Extinction RGB", material.transmission.data(), .05f, 0.f, 128.f, "%.3f",
                               ImGuiSliderFlags_AlwaysClamp);
             ImGui::TreePop();
         }
-        ImGui::TextWrapped("Source is lighting divided by extinction. Each actor has its own proxy draw.");
     }
     else if (material.kind != 3)
     {
@@ -185,11 +186,6 @@ void DrawMaterialEditor(MaterialTable &materials, const MaterialDefaults &defaul
         if (material.kind == 4)
             ImGui::Checkbox("Normal-driven refraction", &material.normalSphere);
         ImGui::EndDisabled();
-        ImGui::Text("Extinction lane: %s", material.ScalarExtinction() ? "scalar" : "RGB");
-        if (std::isfinite(effective.MaximumDisplacement()))
-            ImGui::Text("Conservative offset bound: %.1f px", effective.MaximumDisplacement());
-        else
-            ImGui::TextUnformatted("Analytic refraction: full-screen Gaussian coverage");
     }
 }
 

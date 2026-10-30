@@ -1,6 +1,6 @@
 # Local volumes: first AVBOIT prototype
 
-Select **Test case 19–25** in ImGui, or run `bin/avboit_viewer.exe --stress 22`.
+Select **Scene preset 19–25** in ImGui, or run `bin/avboit_viewer.exe --stress 22`.
 The material editor exposes RGB extinction per world unit and source radiance.
 
 | Case | Purpose |
@@ -103,7 +103,7 @@ bin-aligned; light-space MSM retains its independent 96/32-step integration.
 ## Dynamic lighting and volumetric shadows
 
 Run `bin/avboit_viewer.exe --sponza --stress 24` (or 25 for frosted glass).
-ImGui's **Dynamic lighting / volume shadows** section edits sun direction and
+ImGui's **Scene → Lighting** section edits sun direction and
 irradiance, spotlight position/target/intensity, movement and MSM enablement live.
 The main animation control drives light time too. `--time`, `--sun-intensity`,
 `--spot-intensity` and `--no-volume-shadows` support repeatable captures.
@@ -176,7 +176,7 @@ bounded moment data, source attenuation and the inactive projection flags.
 
 ### Demo TAA
 
-Enable `--taa` or **Resolve pipeline → TAA** in ImGui. This uses the same Donut
+Enable `--taa` or **Quality → Display → Temporal anti-aliasing** in ImGui. This uses the same Donut
 TAA pass as the neighboring ADS demo, after transparency/VFX distortion and before
 tonemapping. Halton projection jitter is shared by opaque and transparent geometry,
 occupancy projection and volume rays. TAA also enables temporal quad phase rotation.
@@ -185,9 +185,9 @@ stratified blue-noise point taps, averaged in depth-continuous regions. At a sce
 or interface depth discrepancy it selects the closest-depth candidate instead.
 N/A/totalTau/BackN share the same taps and weights. The kernel radius is fixed at
 one half-resolution texel; there is no depth-moment RT or volume-history buffer.
-Use ImGui **Dithered volume upscale (RDR2-inspired)** or
-`--volume-upsample-bilateral` to compare the stable bilateral reference. Switching
-live invalidates TAA history. Without TAA, bilateral is always used.
+This follows TAA automatically; there is no separate upscaling switch in ImGui.
+`--volume-upsample-bilateral` retains the bilateral reference for automated comparisons.
+Without TAA, bilateral is always used.
 Disabling TAA releases its history,
 motion and output textures. It defaults off to preserve non-temporal comparisons.
 

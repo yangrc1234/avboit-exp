@@ -6,7 +6,7 @@
 - **屏幕空间折射可能采到前景。** B 是按被采样像素自己的界面深度划分的背景，并不保证相对于接收折射的玻璃也是背景。偏移采样可能把玻璃前面的物体带进来；屏幕外和被遮挡的信息也无法恢复。实心球倒像使用解析球体与屏幕深度近似，不是光线追踪。
 - **没有 TAA/MSAA。** 轮廓、窄高光和 Fresnel 边缘可能出现锯齿。测试玻璃使用简化的表面光照，没有实现完整能量守恒的反射/透射 BSDF。
 - **低分辨率消光体。** 默认 XY 为 1/8 光栅覆盖，Z 方向线性 splat，查询 T-LUT 时过滤 XYZ。相近透明层可能落进同一深度区间，锐利边缘也可能不同于全分辨率排序参考。
-- **斜率消光偏移仍是近似。** 默认 splat 根据 device-depth 导数，把消光推到三角形 XY 双线性覆盖范围的后方；push 上限与 occupancy 共用归一化 log-Z 的 `64/2048`。Occupancy 在 Adaptive Z 压缩前向后预留同样范围，同时覆盖全局与每 tile 的标记。不需要 actor 深度参数，也不增加 RT、pass 或 LUT 查询，原有两个 virtual slice 的查询避让保留。预留会增加占用工作量，可能降低 Adaptive Z 分辨率；超过上限的斜率仍可能自遮挡。真实消光也会被延后，临近及交叉层仍有混色误差。ImGui 的 slope-aware splat 开关或 `--no-slope-splat` 可对比原行为。见[验证方法](VALIDATION.md#crossing-glass-quality-diagnostic)。
+- **斜率消光偏移仍是近似。** 默认 splat 根据 device-depth 导数，把消光推到三角形 XY 双线性覆盖范围的后方；push 上限与 occupancy 共用归一化 log-Z 的 `64/2048`。Occupancy 在 Adaptive Z 压缩前向后预留同样范围，同时覆盖全局与每 tile 的标记。不需要 actor 深度参数，也不增加 RT、pass 或 LUT 查询，原有两个 virtual slice 的查询避让保留。预留会增加占用工作量，可能降低 Adaptive Z 分辨率；超过上限的斜率仍可能自遮挡。真实消光也会被延后，临近及交叉层仍有混色误差。命令行 `--no-slope-splat` 可对比原行为。见[验证方法](VALIDATION.md#crossing-glass-quality-diagnostic)。
 - **Packed RGB 的极端溢出。** 这里指 extinction 的整数打包，不是 R11G11B10 颜色 RT。RGB 每通道使用 8 位有效数值及 2 位保护位，共用一个 uint 做原子加法；保护容量有限，极端高 overdraw 可能跨通道进位。这不是三个通道各自独立的饱和加法。GPU 测试单独报告此限制，不把它当作画质通过。
 - **浮点混合不保证逐位顺序无关。** R11G11B10 的有限精度可能使不同提交顺序产生小差异。RGBA16F 命令行参考路径用于帮助区分精度与分类问题。
 - **Zero-T 的量化与空间近似。** 开启 Zero-T 时，Resolve 查询当前 SceneDepth 处过滤后的 LUT；RGB 全零则将有效总透射率设为零并同步更新归一化，避免 totalTau 被截断后漏出背景。这也可能闭合保守 quad 覆盖外的像素：它采用低分辨率 RGBA8 LUT 的“不透光”定义，而非精确的全分辨率透射率，因此很小的非零透射率可能被视为零，轮廓精度也受 LUT 限制。不需要 stencil 或额外 cutoff RT。公开演讲未明确说明这项同步细节，这是本实现的明确选择。

@@ -27,8 +27,7 @@ Passing the tests below does not establish physical correctness or paper parity.
   reduce Adaptive Z resolution. Slopes beyond the cap can retain self-shadow.
   This removes measured front-pane self-shadow in test case 17, but delays real
   attenuation too: close/intersecting layers can mix incorrectly. The most grazing
-  view still fails the strict interior-error check. ImGui's slope-aware splat toggle
-  or `--no-slope-splat` selects the original behavior for comparison. See
+  view still fails the strict interior-error check. `--no-slope-splat` selects the original behavior for comparison. See
   [the diagnostic](VALIDATION.md#crossing-glass-quality-diagnostic).
 - **Packed RGB overflow.** Packed integer addition has finite guard capacity;
   adversarial overdraw can carry between channel fields. The GPU oracle reports

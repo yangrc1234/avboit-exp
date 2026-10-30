@@ -30,6 +30,13 @@ void NativeViewer::TestUiInteractions(avboit::ViewerUi &ui, nvrhi::IFramebuffer 
         pump();
         pump();
     };
+    auto chooseTab = [&](unsigned index)
+    {
+        uiScrollRequest = -100000;
+        pump();
+        pump();
+        click(uiTabs[index]);
+    };
     auto checkCompactResources = [&]()
     {
         if (transparency.Zero().Depth() != depth.Get())
@@ -152,6 +159,7 @@ void NativeViewer::TestUiInteractions(avboit::ViewerUi &ui, nvrhi::IFramebuffer 
     }
     maxFrostSigma = originalSigma;
     pump();
+    chooseTab(2);
     click(uiMipHigh);
     if (frostMipCount != 5)
         throw std::runtime_error("ImGui mip slider high endpoint failed");
@@ -200,12 +208,14 @@ void NativeViewer::TestUiInteractions(avboit::ViewerUi &ui, nvrhi::IFramebuffer 
     }
     for (unsigned scale : {2u, 8u, initialScale})
     {
-        click(uiVolume);
-        click(uiVolumeChoices[scale == 2 ? 0 : 1]);
+        // Reference resolutions remain available to automated tests, not the UI.
+        volumeScale = scale;
+        rebuildRequested = preserveMaterialsOnRebuild = true;
+        pump();
         if (volumeScale != scale || lut->getDesc().width != (Width + scale - 1) / scale ||
             physicalMasks->getDesc().byteSize !=
                 ((Width + scale * 8 - 1) / (scale * 8)) * ((Height + scale * 8 - 1) / (scale * 8)) * 8 * 4)
-            throw std::runtime_error("ImGui extinction resolution rebuild failed");
+            throw std::runtime_error("Extinction reference resolution rebuild failed");
     }
     const auto targetsAfterVolumeChange = stableTargets();
     for (size_t i = 0; i < targetsBeforeVolumeChange.size(); ++i)
@@ -227,14 +237,17 @@ void NativeViewer::TestUiInteractions(avboit::ViewerUi &ui, nvrhi::IFramebuffer 
     const bool initialSlope = slopeSplat;
     for (bool expected : {!initialSlope, initialSlope})
     {
-        click(uiSlopeSplat);
+        slopeSplat = expected;
+        pump();
         if (slopeSplat != expected || camera[9][0] != float(expected) || vertexBuffer != initialVertices ||
             boundsBuffer != initialBounds)
-            throw std::runtime_error("ImGui slope splat toggle failed or rebuilt scene data");
+            throw std::runtime_error("Slope splat reference changed scene data");
     }
+    chooseTab(2);
     click(uiCubic);
     if (cubic == initialCubic)
         throw std::runtime_error("ImGui cubic toggle failed");
+    chooseTab(0);
     click(uiSharedMaterials);
     const float initialTiling = frostNormalTiling;
     click(uiFrostTiling);
@@ -244,27 +257,36 @@ void NativeViewer::TestUiInteractions(avboit::ViewerUi &ui, nvrhi::IFramebuffer 
     frostNormalTiling = initialTiling;
     click(uiSharedMaterials);
     bool initialSparse = sparseBlur;
-    click(uiSparse);
+    sparseBlur = !sparseBlur;
+    pump();
     if (sparseBlur == initialSparse)
-        throw std::runtime_error("ImGui sparse blur toggle failed");
-    click(uiSparse);
+        throw std::runtime_error("Sparse blur reference toggle failed");
+    sparseBlur = !sparseBlur;
+    pump();
     if (sparseBlur != initialSparse)
-        throw std::runtime_error("ImGui dense blur restore failed");
-    click(uiFrost);
+        throw std::runtime_error("Dense blur reference restore failed");
+    frost = !frost;
+    pump();
     if (frost == initialFrost)
         throw std::runtime_error("ImGui frost toggle failed");
+    chooseTab(1);
     click(uiSmoke);
     if (showSmoke == initialSmoke || int(objectCount) != int(initialObjects) + (initialSmoke ? -8 : 8))
         throw std::runtime_error("ImGui fixture change did not apply immediately");
+    showProfilerWindow = true;
+    pump();
     click(uiProfile);
     if (profiler.ActiveStages() != 0)
         throw std::runtime_error("ImGui profiling disable failed");
     click(uiProfile);
     if (profiler.ActiveStages() == 0)
         throw std::runtime_error("ImGui profiling enable failed");
-    click(uiFrost);
+    frost = !frost;
+    pump();
     if (frost != initialFrost)
         throw std::runtime_error("ImGui frost restore failed");
+    showProfilerWindow = false;
+    chooseTab(3);
     const int originalOverlay = occupancyOverlay, originalSlice = occupancySlice;
     const auto overlayTargets = stableTargets();
     uiScrollRequest = -100000;
@@ -287,6 +309,7 @@ void NativeViewer::TestUiInteractions(avboit::ViewerUi &ui, nvrhi::IFramebuffer 
             occupancySlice = originalSlice;
         }
     }
+    chooseTab(0);
     TestMaterialEdits(framebuffer);
     SelectActor(0);
     pump();
@@ -400,8 +423,17 @@ void NativeViewer::TestUiInteractions(avboit::ViewerUi &ui, nvrhi::IFramebuffer 
         scenePathUi.fill(0);
         for (int mode : {1, 2, 0})
         {
-            click(uiBackground);
-            click(uiBackgroundChoices[mode]);
+            if (mode == 2)
+            {
+                pendingSceneMode = mode;
+                sceneSourceRequested = true;
+                pump();
+            }
+            else
+            {
+                click(uiBackground);
+                click(uiBackgroundChoices[mode]);
+            }
             if (!runtimeError.empty() || useSponza != (mode != 0) || bool(donutScene) != (mode == 1))
                 throw std::runtime_error("Runtime scene source switch failed: " + runtimeError);
         }

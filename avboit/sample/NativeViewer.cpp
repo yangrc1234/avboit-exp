@@ -54,7 +54,9 @@ class NativeViewer : public app::IRenderPass
     avboit::TransparencyPipeline transparency;
     avboit::GpuProfiler profiler;
     bool detailedProfiling = true, profilingEnabled = false, profilerDirty = false, rebuildRequested = false;
-    ImVec2 uiCubic, uiSparse, uiFrost, uiSmoke, uiProfile, uiGlassPanes, uiSlopeSplat;
+    ImVec2 uiCubic, uiSmoke, uiProfile, uiGlassPanes;
+    std::array<ImVec2, 4> uiTabs;
+    bool showProfilerWindow = false;
     ImVec2 uiMipLow, uiMipHigh, uiBackground, uiDemoCase;
     ImVec2 uiFrostTiling, uiSharedMaterials;
     ImVec2 uiOccupancy;
@@ -66,8 +68,6 @@ class NativeViewer : public app::IRenderPass
     std::array<ImVec2, 3> uiBackgroundChoices;
     std::array<ImVec2, avboit::StressPresetCount + 3> uiDemoChoices;
     float uiScrollRequest = 0; // UI interaction tests can request normal scrolling.
-    ImVec2 uiVolume;
-    std::array<ImVec2, 2> uiVolumeChoices;
     std::unique_ptr<engine::ShaderFactory> shaders;
     avboit::SceneData scene;
     bool useDonutScene = false;
@@ -868,89 +868,34 @@ class NativeViewer : public app::IRenderPass
     void DrawUi()
     {
         ImGui::SetNextWindowPos(ImVec2(12, 12), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(390, std::max(300.f, ImGui::GetIO().DisplaySize.y - 36.f)),
+        ImGui::SetNextWindowSize(ImVec2(410, std::max(300.f, ImGui::GetIO().DisplaySize.y - 36.f)),
                                  ImGuiCond_FirstUseEver);
-        ImGui::Begin("AVBOIT - Quality and fixtures");
+        if (!ImGui::Begin("AVBOIT"))
+        {
+            ImGui::End();
+            DrawActorGizmo();
+            return;
+        }
         if (uiScrollRequest != 0)
         {
             ImGui::SetScrollY(ImGui::GetScrollY() + uiScrollRequest);
             uiScrollRequest = 0;
         }
+        ImGui::PushItemWidth(150);
         ImGui::TextUnformatted("WASD / QE move; RMB look; Home reset");
         auto itemCenter = []()
         {
             auto a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
             return ImVec2((a.x + b.x) * .5f, (a.y + b.y) * .5f);
         };
-        const char *backgrounds[] = {"Calibration background", "Sponza", "Sponza (legacy reference)"};
-        if (ImGui::CollapsingHeader("Scene actors", ImGuiTreeNodeFlags_DefaultOpen))
-        {
-            ImGui::TextWrapped("Select an actor here or click its bounds in the scene. Drag XYZ handles to move.");
-            if (ImGui::BeginListBox("##actors", ImVec2(-1, 110)))
-            {
-                for (unsigned actor = 0; actor < objectMaterials.size(); ++actor)
-                    if (ImGui::Selectable(ActorLabel(actor).c_str(), selectedActor == int(actor)))
-                        SelectActor(actor);
-                ImGui::EndListBox();
-            }
-            if (selectedActor >= 0 && unsigned(selectedActor) < objectMaterials.size())
-            {
-                ImGui::Text("Selected: %s", ActorLabel(unsigned(selectedActor)).c_str());
-                F3 position = ActorCenter(unsigned(selectedActor));
-                ImGui::SetNextItemWidth(-1);
-                if (ImGui::DragFloat3("##actor-position", position.data(), .02f, -1000.f, 1000.f, "%.3f"))
-                    SetActorPosition(unsigned(selectedActor), position);
-                ImGui::TextDisabled("Position XYZ (world units). Ctrl-click to type.");
-                if (ImGui::Checkbox("Move gizmo", &showActorGizmo))
-                    actorGizmo.Reset();
-                ImGui::SameLine();
-                if (ImGui::Button("Reset position"))
-                    SetActorPosition(unsigned(selectedActor), actorHomeCenters[selectedActor]);
-                if (ImGui::Button("Reset all actor positions"))
-                    for (unsigned a = 0; a < actorHomeCenters.size(); ++a)
-                        SetActorPosition(a, actorHomeCenters[a]);
-                ImGui::TextWrapped("White center: move in screen plane. Esc: cancel drag. Dragging pauses animation.");
-                ImGui::TextDisabled("Scene preset changes reset edits; quality changes keep them.");
-                ImGui::Separator();
-                avboit::DrawMaterialEditor(materials, MaterialDefaults(), selectedMaterial);
-            }
-            bool sharedMaterialsOpen = ImGui::TreeNode("Shared material defaults");
-            uiSharedMaterials = itemCenter();
-            if (sharedMaterialsOpen)
-            {
-                ImGui::TextWrapped(
-                    "These settings apply to all actors that inherit scene optics and to all frost detail.");
-                ImGui::Checkbox("Normal-driven sphere (artistic)", &normalSphere);
-                ImGui::SliderFloat("Planar IOR", &planarIor, 1, 2.5f, "%.2f");
-                ImGui::SliderFloat("Sphere IOR", &sphereIor, 1, 2.5f, "%.2f");
-                ImGui::SliderFloat("Self-refraction gain", &refractionStrength, 0, 4, "%.2f");
-                ImGui::SliderFloat("VFX strength (px)", &vfxStrength, 0, 64);
-                ImGui::SliderFloat("Post-blur offset (1440p px)", &frostDetailRadius, 0.f, 64.f, "%.1f");
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip(
-                        "Reserve this much of the material offset for the Gaussian lookup. Larger offsets remain "
-                        "in B. No new RT/pass.");
-                ImGui::TextWrapped(
-                    "No B-source radius/offset limit. Material sigma selects the available Gaussian levels.");
-                ImGui::SetNextItemWidth(135);
-                ImGui::SliderFloat("Frost normal tiling", &frostNormalTiling, .25f, 64.f, "%.2f",
-                                   ImGuiSliderFlags_Logarithmic);
-                uiFrostTiling = ImGui::GetItemRectMin();
-                uiFrostTiling.x += 100;
-                uiFrostTiling.y = (uiFrostTiling.y + ImGui::GetItemRectMax().y) * .5f;
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip(
-                        "Normal-map repeats across a pane. Larger values make finer detail. Changes live.");
-                ImGui::TreePop();
-            }
-        }
+        const char *backgrounds[] = {"Calibration", "Sponza"};
         ImGui::TextUnformatted("Background");
         ImGui::SetNextItemWidth(-1);
-        bool backgroundOpen = ImGui::BeginCombo("##Background", backgrounds[pendingSceneMode]);
+        bool backgroundOpen = ImGui::BeginCombo("##Background", backgrounds[std::min(pendingSceneMode, 1)]);
         uiBackground = itemCenter();
         if (backgroundOpen)
         {
-            for (int choice = 0; choice < 3; ++choice)
+            for (int choice = 0; choice < 2; ++choice)
             {
                 if (ImGui::Selectable(backgrounds[choice], pendingSceneMode == choice))
                 {
@@ -962,7 +907,7 @@ class NativeViewer : public app::IRenderPass
             ImGui::EndCombo();
         }
         const unsigned demo = CurrentDemoCase();
-        ImGui::TextUnformatted("Test case");
+        ImGui::TextUnformatted("Scene preset");
         ImGui::SetNextItemWidth(-1);
         bool demoOpen = ImGui::BeginCombo("##TestCase", DemoCaseName(demo), ImGuiComboFlags_HeightLargest);
         uiDemoCase = itemCenter();
@@ -979,322 +924,366 @@ class NativeViewer : public app::IRenderPass
         if (ImGui::Button("Reset view"))
             ApplyCameraPreset(0);
         ImGui::SameLine();
-        if (ImGui::Button("Look at sky"))
-            ApplyCameraPreset(6);
-        ImGui::TextWrapped("Selections apply immediately; test cases reset the view.");
-        ImGui::SliderInt("FPS limit", &fpsLimit, 0, 240);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("CPU frame pacing. 0 = unlimited.");
-        ImGui::Text("CPU frame rate: %.1f FPS", ImGui::GetIO().Framerate);
-        const char *overlayLabels[] = {"Off",
-                                       "Screen requests (RGB)",
-                                       "Transparent / main resolve",
-                                       "Frost requests",
-                                       "Sharp B requests",
-                                       "B prime cache tiles",
-                                       "Extinction XY (any Z)",
-                                       "Extinction physical Z slice"};
-        ImGui::TextUnformatted("Occupancy overlay");
-        ImGui::SetNextItemWidth(-1);
-        bool overlayOpen = ImGui::BeginCombo("##OccupancyOverlay", overlayLabels[occupancyOverlay]);
-        uiOccupancy = itemCenter();
-        if (overlayOpen)
-        {
-            for (int choice = 0; choice < 8; ++choice)
-            {
-                if (ImGui::Selectable(overlayLabels[choice], occupancyOverlay == choice))
-                    occupancyOverlay = choice;
-                uiOccupancyChoices[choice] = itemCenter();
-            }
-            ImGui::EndCombo();
-        }
-        if (occupancyOverlay)
-        {
-            ImGui::SetNextItemWidth(140);
-            ImGui::SliderFloat("Overlay opacity", &occupancyOpacity, 0, 1, "%.2f");
-            ImGui::SameLine();
-            ImGui::Checkbox("Grid", &occupancyGrid);
-            if (occupancyOverlay == 7)
-            {
-                occupancySlice = std::min(occupancySlice, int(depthBudget) - 1);
-                ImGui::SliderInt("Physical Z", &occupancySlice, 0, int(depthBudget) - 1);
-            }
-            if (occupancyOverlay == 1)
-                ImGui::TextWrapped("R: transparent; G: frost; B: sharp source. White = all three.");
-            else if (occupancyOverlay >= 6)
-                ImGui::TextWrapped("Red: scalar extinction; cyan: RGB extinction; white: both.");
-            else
-                ImGui::TextWrapped("Colored = requested work; dimmed = inactive.");
-            ImGui::TextWrapped("Conservative bounds, not exact fragment coverage. Debug cost is in display.");
-        }
-        ImGui::Separator();
-        ImGui::Checkbox("Cubic reconstruction", &cubic);
-        uiCubic = itemCenter();
-        if (cubic)
-        {
-            ImGui::Checkbox("4-tap cubic + trilinear (approximate)", &cubicTrilinear);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Share the finer mip's cubic offsets across both mip levels.\n"
-                                  "Off: exact 8-tap cubic. Compare highlights and roughness transitions.");
-        }
-        ImGui::Checkbox("Slope-aware extinction splat", &slopeSplat);
-        uiSlopeSplat = itemCenter();
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Bounded slope push; occupancy reserves the same log-depth range.");
-        int volumeChoice = volumeScale == 2 ? 0 : 1;
-        const char *volumeLabels[] = {"1/2 resolution (reference)", "1/8 resolution (default)"};
-        bool volumeOpen = ImGui::BeginCombo("Extinction XY", volumeLabels[volumeChoice]);
-        uiVolume = itemCenter();
-        if (volumeOpen)
-        {
-            for (unsigned choice = 0; choice < 2; ++choice)
-            {
-                if (ImGui::Selectable(volumeLabels[choice], int(choice) == volumeChoice))
-                {
-                    volumeScale = choice == 0 ? 2u : 8u;
-                    rebuildRequested = true;
-                    preserveMaterialsOnRebuild = true;
-                }
-                uiVolumeChoices[choice] = itemCenter();
-            }
-            ImGui::EndCombo();
-        }
-        ImGui::Checkbox("Sparse first filter (16 taps vs 64)", &sparseBlur);
-        uiSparse = itemCenter();
-        ImGui::Checkbox("Frost enabled", &frost);
-        uiFrost = itemCenter();
-        ImGui::SetNextItemWidth(135);
-        int levels = int(frostMipCount);
-        if (ImGui::SliderInt("Frost mip count", &levels, 3, 5))
-        {
-            frostMipCount = unsigned(levels);
-            rebuildRequested = true;
-            preserveMaterialsOnRebuild = true;
-        }
-        {
-            auto p = ImGui::GetItemRectMin();
-            auto q = ImGui::GetItemRectMax();
-            uiMipLow = ImVec2(p.x + 7, (p.y + q.y) * .5f);
-            uiMipHigh = ImVec2(p.x + 128, (p.y + q.y) * .5f);
-        }
-        auto chain = avboit::FrostChain::Make(Width, Height, frostMipCount);
-        ImGui::Text("Allocated chain: %u x %u -> %u x 45 (%u levels)", chain.width, chain.height,
-                    chain.width >> (frostMipCount - 1), frostMipCount);
-        ImGui::SetNextItemWidth(135);
-        ImGui::SliderFloat("Maximum sigma (1440p px)", &maxFrostSigma, 0.f, 24.f, "%.2f");
-        ImGui::Text("Active levels: %u / %u (bounds may be empty)", maxBlurMip + 1, frostMipCount);
-        ImGui::Checkbox("VFX distortion", &vfx);
-        ImGui::SameLine();
         ImGui::Checkbox("Animate", &animate);
-        if (ImGui::CollapsingHeader("VFX material and layers"))
+
+        ImGui::Separator();
+        if (ImGui::BeginTabBar("Viewer tabs"))
         {
-            int mode = int(vfxMode);
-            if (ImGui::Combo("VFX fixture", &mode,
-                             "Oscillating ring\0Heat wave\0Expanding shock\0Front + rear shocks\0"))
+            bool tab0 = ImGui::BeginTabItem("Actors");
+            uiTabs[0] = itemCenter();
+            if (tab0)
             {
-                vfxMode = unsigned(mode);
-                vfx = true;
-                rebuildRequested = true;
-                preserveMaterialsOnRebuild = false;
-            }
-            bool primary = (vfxLayers & 1) != 0, secondary = (vfxLayers & 2) != 0;
-            if (ImGui::Checkbox("Primary layer", &primary))
-                vfxLayers = (vfxLayers & ~1u) | (primary ? 1u : 0u);
-            if (ImGui::Checkbox("Secondary layer", &secondary))
-                vfxLayers = (vfxLayers & ~2u) | (secondary ? 2u : 0u);
-            if (ImGui::Button("Play expanding shock"))
-            {
-                time = 0;
-                animate = true;
-                vfx = true;
-                vfxMode = 2;
-                rebuildRequested = true;
-                preserveMaterialsOnRebuild = false;
-            }
-        }
-        if (ImGui::CollapsingHeader("Depth quality"))
-        {
-            if (ImGui::Checkbox("Fixed log-Z reference", &fixedDepth))
-            {
-                rebuildRequested = true;
-                preserveMaterialsOnRebuild = true;
-            }
-            int choice = depthBudget == 16 ? 0 : depthBudget == 32 ? 1 : depthBudget == 64 ? 2 : 3;
-            if (ImGui::Combo("Z budget", &choice, "16\00032\00064\000128\000"))
-            {
-                depthBudget = 16u << choice;
-                rebuildRequested = true;
-                preserveMaterialsOnRebuild = true;
-            }
-            ImGui::Text("Extinction and T-LUT: %u physical slots", depthBudget);
-        }
-        if (ImGui::CollapsingHeader("Internal resolution"))
-        {
-            if (ImGui::Checkbox("Follow window size", &followWindow))
-                SyncWindowSize();
-            const unsigned widths[] = {512, 640, 960, 1280, 1920, 2560};
-            const unsigned heights[] = {320, 384, 576, 768, 1080, 1440};
-            ImGui::Text("Actual render targets: %u x %u", Width, Height);
-            for (unsigned i = 0; i < 6; ++i)
-            {
-                char label[32];
-                snprintf(label, sizeof(label), "%u x %u", widths[i], heights[i]);
-                if (ImGui::Selectable(label, Width == widths[i] && Height == heights[i]))
+                ImGui::TextDisabled("Click an actor or select it below.");
+                if (ImGui::BeginListBox("##actors", ImVec2(-1, 110)))
                 {
-                    followWindow = false;
-                    SetRenderSize(widths[i], heights[i]);
-                    rebuildRequested = true;
-                    preserveMaterialsOnRebuild = true;
+                    for (unsigned actor = 0; actor < objectMaterials.size(); ++actor)
+                        if (ImGui::Selectable(ActorLabel(actor).c_str(), selectedActor == int(actor)))
+                            SelectActor(actor);
+                    ImGui::EndListBox();
                 }
+                if (selectedActor >= 0 && unsigned(selectedActor) < objectMaterials.size())
+                {
+                    ImGui::Text("Selected: %s", ActorLabel(unsigned(selectedActor)).c_str());
+                    F3 position = ActorCenter(unsigned(selectedActor));
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::DragFloat3("##actor-position", position.data(), .02f, -1000.f, 1000.f, "%.3f"))
+                        SetActorPosition(unsigned(selectedActor), position);
+                    ImGui::TextDisabled("Position XYZ (world units). Ctrl-click to type.");
+                    if (ImGui::Checkbox("Move gizmo", &showActorGizmo))
+                        actorGizmo.Reset();
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reset position"))
+                        SetActorPosition(unsigned(selectedActor), actorHomeCenters[selectedActor]);
+                    if (ImGui::Button("Reset all actor positions"))
+                        for (unsigned a = 0; a < actorHomeCenters.size(); ++a)
+                            SetActorPosition(a, actorHomeCenters[a]);
+
+                    ImGui::Separator();
+                    avboit::DrawMaterialEditor(materials, MaterialDefaults(), selectedMaterial);
+                }
+                bool sharedMaterialsOpen = ImGui::TreeNode("Shared material defaults");
+                uiSharedMaterials = itemCenter();
+                if (sharedMaterialsOpen)
+                {
+                    ImGui::TextWrapped(
+                        "These settings apply to all actors that inherit scene optics and to all frost detail.");
+
+                    ImGui::SliderFloat("Planar IOR", &planarIor, 1, 2.5f, "%.2f");
+                    ImGui::SliderFloat("Sphere IOR", &sphereIor, 1, 2.5f, "%.2f");
+                    ImGui::SliderFloat("Self-refraction gain", &refractionStrength, 0, 4, "%.2f");
+
+                    ImGui::SliderFloat("Post-blur offset (1440p px)", &frostDetailRadius, 0.f, 64.f, "%.1f");
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Fine distortion after frost filtering. Larger offsets remain "
+                                          "in the background refraction.");
+
+                    ImGui::SetNextItemWidth(135);
+                    ImGui::SliderFloat("Frost normal tiling", &frostNormalTiling, .25f, 64.f, "%.2f",
+                                       ImGuiSliderFlags_Logarithmic);
+                    uiFrostTiling = ImGui::GetItemRectMin();
+                    uiFrostTiling.x += 100;
+                    uiFrostTiling.y = (uiFrostTiling.y + ImGui::GetItemRectMax().y) * .5f;
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip(
+                            "Normal-map repeats across a pane. Larger values make finer detail. Changes live.");
+                    ImGui::TreePop();
+                }
+                ImGui::EndTabItem();
             }
-        }
-        if (donutScene && ImGui::CollapsingHeader("Dynamic lighting / volume shadows"))
-        {
-            ImGui::Checkbox("Animate spot light", &sceneLighting.animateSpot);
-            ImGui::Checkbox("Volumetric moment shadows", &sceneLighting.volumeShadows);
-            ImGui::SliderFloat("Sun irradiance", &sceneLighting.sunIntensity, 0.f, 12.f);
-            ImGui::SliderFloat3("Sun direction", sceneLighting.sunDirection.data(), -1.f, 1.f);
-            ImGui::SliderFloat("Spot intensity", &sceneLighting.spotIntensity, 0.f, 500.f);
-            ImGui::DragFloat3("Spot position", sceneLighting.spotPosition.data(), .05f);
-            ImGui::DragFloat3("Spot target", sceneLighting.spotTarget.data(), .05f);
-            ImGui::TextWrapped("Regular depth shadows + independent volumetric moments. Sun: two 256px cascades. Spot: "
-                               "256px. Moments are evaluated only for lights overlapping volume bounds.");
-        }
-        if (ImGui::CollapsingHeader("Custom resolution / camera"))
-        {
-            ImGui::InputInt2("Internal width / height", customRenderSize);
-            ImGui::TextDisabled("Internal dimensions round up to multiples of 4.");
-            if (ImGui::Button("Apply custom resolution"))
+            bool tab1 = ImGui::BeginTabItem("Scene");
+            uiTabs[1] = itemCenter();
+            if (tab1)
             {
-                followWindow = false;
-                SetRenderSize(std::clamp(customRenderSize[0], 256, 4096), std::clamp(customRenderSize[1], 256, 4096));
-                customRenderSize[0] = int(Width);
-                customRenderSize[1] = int(Height);
-                rebuildRequested = true;
-                preserveMaterialsOnRebuild = true;
+                if (ImGui::CollapsingHeader("Scene objects", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    bool changed = false;
+                    if (animate || vfx)
+                        ImGui::SliderFloat("Animation time", &time, 0, 8, "%.2f s");
+                    ImGui::BeginDisabled(stressPreset != 0);
+                    changed |= ImGui::Checkbox("Scene glass panes", &sceneGlassPanes);
+                    uiGlassPanes = itemCenter();
+                    ImGui::EndDisabled();
+                    ImGui::BeginDisabled(stressPreset != 0);
+                    changed |= ImGui::Checkbox("Glass sphere", &glassSphere);
+                    ImGui::EndDisabled();
+                    ImGui::SliderFloat("Emissive gain", &emissiveGain, 0, 64, "%.2f", ImGuiSliderFlags_Logarithmic);
+                    changed |= ImGui::Checkbox("Inversion calibration board", &calibrationBoard);
+                    changed |= ImGui::Checkbox("Emissive balls", &emissiveBalls);
+                    ImGui::SameLine();
+                    ImGui::BeginDisabled(stressPreset != 0);
+                    changed |= ImGui::Checkbox("Front smoke", &showSmoke);
+                    uiSmoke = itemCenter();
+                    ImGui::EndDisabled();
+                    if (ImGui::Checkbox("Emissive balls in front", &emissiveFront))
+                    {
+                        emissiveBalls = true;
+                        changed = true;
+                    }
+                    changed |= ImGui::Checkbox("Place VFX behind glass", &vfxBehind);
+                    if (changed)
+                    {
+                        rebuildRequested = true;
+                        preserveMaterialsOnRebuild = false;
+                    }
+                }
+                if (ImGui::CollapsingHeader("VFX"))
+                {
+                    ImGui::Checkbox("Distortion enabled", &vfx);
+                    ImGui::SliderFloat("Strength (px)", &vfxStrength, 0, 64);
+                    int mode = int(vfxMode);
+                    if (ImGui::Combo("VFX fixture", &mode,
+                                     "Oscillating ring\0Heat wave\0Expanding shock\0Front + rear shocks\0"))
+                    {
+                        vfxMode = unsigned(mode);
+                        vfx = true;
+                        rebuildRequested = true;
+                        preserveMaterialsOnRebuild = false;
+                    }
+                    bool primary = (vfxLayers & 1) != 0, secondary = (vfxLayers & 2) != 0;
+                    if (ImGui::Checkbox("Primary layer", &primary))
+                        vfxLayers = (vfxLayers & ~1u) | (primary ? 1u : 0u);
+                    if (ImGui::Checkbox("Secondary layer", &secondary))
+                        vfxLayers = (vfxLayers & ~2u) | (secondary ? 2u : 0u);
+                    if (ImGui::Button("Play expanding shock"))
+                    {
+                        time = 0;
+                        animate = true;
+                        vfx = true;
+                        vfxMode = 2;
+                        rebuildRequested = true;
+                        preserveMaterialsOnRebuild = false;
+                    }
+                }
+                if (donutScene && ImGui::CollapsingHeader("Lighting"))
+                {
+                    ImGui::Checkbox("Animate spot light", &sceneLighting.animateSpot);
+                    ImGui::Checkbox("Volumetric moment shadows", &sceneLighting.volumeShadows);
+                    ImGui::SliderFloat("Sun irradiance", &sceneLighting.sunIntensity, 0.f, 12.f);
+                    ImGui::SliderFloat3("Sun direction", sceneLighting.sunDirection.data(), -1.f, 1.f);
+                    ImGui::SliderFloat("Spot intensity", &sceneLighting.spotIntensity, 0.f, 500.f);
+                    ImGui::DragFloat3("Spot position", sceneLighting.spotPosition.data(), .05f);
+                    ImGui::DragFloat3("Spot target", sceneLighting.spotTarget.data(), .05f);
+                }
+                if (ImGui::CollapsingHeader("Camera presets"))
+                {
+                    int pose = int(cameraPreset);
+                    if (ImGui::Combo("Camera preset", &pose,
+                                     "Default\0Right\0Left oblique\0Close oblique\0Far\0Reverse\0Sky\0"
+                                     "Crossing +30 deg\0Crossing +40 deg\0Crossing -30 deg\0"))
+                        ApplyCameraPreset(unsigned(pose));
+                    if (ImGui::Button("Reset camera preset"))
+                        ApplyCameraPreset(cameraPreset);
+                }
+                if (ImGui::CollapsingHeader("Scene asset"))
+                {
+                    ImGui::InputText("Sponza glTF path", scenePathUi.data(), scenePathUi.size());
+                    ImGui::TextUnformatted("Empty path uses the bundled Sponza asset.");
+                    if (ImGui::Button("Reload selected background"))
+                        sceneSourceRequested = true;
+                    ImGui::TextWrapped(
+                        "Loading a scene resets fixture material edits; quality switches preserve them.");
+                }
+                ImGui::EndTabItem();
             }
-            int pose = int(cameraPreset);
-            if (ImGui::Combo("Camera preset", &pose,
-                             "Default\0Right\0Left oblique\0Close oblique\0Far\0Reverse\0Sky\0"
-                             "Crossing +30 deg\0Crossing +40 deg\0Crossing -30 deg\0"))
-                ApplyCameraPreset(unsigned(pose));
-            if (ImGui::Button("Reset camera preset"))
-                ApplyCameraPreset(cameraPreset);
-        }
-        if (ImGui::CollapsingHeader("Resolve pipeline", ImGuiTreeNodeFlags_DefaultOpen))
-        {
-            ImGui::Checkbox("Cull empty resolve tiles", &tileResolve);
-            if (ImGui::Checkbox("TAA (Halton + HDR history)", &taaEnabled))
+            bool tab2 = ImGui::BeginTabItem("Quality");
+            uiTabs[2] = itemCenter();
+            if (tab2)
             {
-                rebuildRequested = true;
-                preserveMaterialsOnRebuild = true;
+                if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    if (ImGui::Checkbox("Temporal anti-aliasing (TAA)", &taaEnabled))
+                    {
+                        rebuildRequested = true;
+                        preserveMaterialsOnRebuild = true;
+                    }
+                    if (ImGui::Checkbox("Follow window size", &followWindow))
+                        SyncWindowSize();
+                    const unsigned widths[] = {1280, 1920, 2560, 3840};
+                    const unsigned heights[] = {720, 1080, 1440, 2160};
+                    char current[32];
+                    snprintf(current, sizeof(current), "%u x %u", Width, Height);
+                    if (ImGui::BeginCombo("Resolution", current))
+                    {
+                        for (unsigned i = 0; i < 4; ++i)
+                        {
+                            char label[32];
+                            snprintf(label, sizeof(label), "%u x %u", widths[i], heights[i]);
+                            if (ImGui::Selectable(label, Width == widths[i] && Height == heights[i]))
+                            {
+                                followWindow = false;
+                                SetRenderSize(widths[i], heights[i]);
+                                rebuildRequested = preserveMaterialsOnRebuild = true;
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+                    ImGui::SliderInt("FPS limit", &fpsLimit, 0, 240);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("0 = unlimited; default 120.");
+                    if (ImGui::TreeNode("Custom resolution"))
+                    {
+                        ImGui::InputInt2("Internal width / height", customRenderSize);
+                        ImGui::TextDisabled("Internal dimensions round up to multiples of 4.");
+                        if (ImGui::Button("Apply custom resolution"))
+                        {
+                            followWindow = false;
+                            SetRenderSize(std::clamp(customRenderSize[0], 256, 4096),
+                                          std::clamp(customRenderSize[1], 256, 4096));
+                            customRenderSize[0] = int(Width);
+                            customRenderSize[1] = int(Height);
+                            rebuildRequested = true;
+                            preserveMaterialsOnRebuild = true;
+                        }
+                        ImGui::TreePop();
+                    }
+                }
+                if (ImGui::CollapsingHeader("Frost", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    ImGui::Checkbox("Bicubic frost filtering", &cubic);
+                    uiCubic = itemCenter();
+                    ImGui::SetNextItemWidth(135);
+                    int levels = int(frostMipCount);
+                    if (ImGui::SliderInt("Frost mip count", &levels, 3, 5))
+                    {
+                        frostMipCount = unsigned(levels);
+                        rebuildRequested = true;
+                        preserveMaterialsOnRebuild = true;
+                    }
+                    {
+                        auto p = ImGui::GetItemRectMin();
+                        auto q = ImGui::GetItemRectMax();
+                        uiMipLow = ImVec2(p.x + 7, (p.y + q.y) * .5f);
+                        uiMipHigh = ImVec2(p.x + 128, (p.y + q.y) * .5f);
+                    }
+                    ImGui::SetNextItemWidth(135);
+                    ImGui::SliderFloat("Maximum frost sigma", &maxFrostSigma, 0.f, 24.f, "%.1f px");
+                }
+                if (ImGui::CollapsingHeader("Volumes", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    if (ImGui::Checkbox("Half-resolution local volumes", &lowResolutionVolumes))
+                    {
+                        rebuildRequested = true;
+                        preserveMaterialsOnRebuild = true;
+                    }
+                    ImGui::TextDisabled(taaEnabled && ditheredVolumeUpsample ? "TAA-aware four-tap upscale."
+                                                                             : "Bilateral upscaling.");
+                    ImGui::SliderFloat("Ray step", &volumeStepSize, .005f, 2.f, "%.3f", ImGuiSliderFlags_Logarithmic);
+                    if (ImGui::TreeNode("Marching limits"))
+                    {
+                        ImGui::SliderFloat("Low-T threshold", &volumeLowT, .001f, .5f, "%.3f",
+                                           ImGuiSliderFlags_Logarithmic);
+                        ImGui::SliderFloat("Low-T step scale", &volumeStepScale, 1.f, 8.f, "%.1fx");
+                        ImGui::SliderInt("Step budget", &volumeMaxSteps, 16, 512);
+                        ImGui::TreePop();
+                    }
+                }
+                if (ImGui::CollapsingHeader("OIT sampling"))
+                {
+                    int choice = depthBudget == 16 ? 0 : depthBudget == 32 ? 1 : depthBudget == 64 ? 2 : 3;
+                    if (ImGui::Combo("Z budget", &choice, "16\00032\00064\000128\000"))
+                    {
+                        depthBudget = 16u << choice;
+                        rebuildRequested = true;
+                        preserveMaterialsOnRebuild = true;
+                    }
+                    ImGui::TextDisabled("%s Z, 1/%u XY resolution.", fixedDepth ? "Fixed" : "Adaptive", volumeScale);
+                }
+                ImGui::EndTabItem();
             }
-            ImGui::TextDisabled("Camera motion only; moving transparency may leave trails.");
-            if (!taaEnabled)
-                ImGui::Checkbox("Temporal volume dithering (requires TAA)", &temporalVolumeDithering);
-            ImGui::SliderFloat("Volume step (world units)", &volumeStepSize, .005f, 2.f, "%.3f",
-                               ImGuiSliderFlags_Logarithmic);
-            ImGui::SliderFloat("Volume low-T threshold", &volumeLowT, .001f, .5f, "%.3f", ImGuiSliderFlags_Logarithmic);
-            ImGui::SliderFloat("Volume low-T step multiplier", &volumeStepScale, 1.f, 8.f, "%.1fx");
-            ImGui::SliderInt("Volume maximum steps", &volumeMaxSteps, 16, 512);
-            if (ImGui::Checkbox("Half-resolution local volumes", &lowResolutionVolumes))
+            bool tab3 = ImGui::BeginTabItem("Debug");
+            uiTabs[3] = itemCenter();
+            if (tab3)
             {
-                rebuildRequested = true;
-                preserveMaterialsOnRebuild = true;
+                ImGui::Checkbox("GPU profiler", &showProfilerWindow);
+                const char *overlayLabels[] = {"Off",
+                                               "Screen requests (RGB)",
+                                               "Transparent / main resolve",
+                                               "Frost requests",
+                                               "Sharp B requests",
+                                               "B prime cache tiles",
+                                               "Extinction XY (any Z)",
+                                               "Extinction physical Z slice"};
+                ImGui::TextUnformatted("Occupancy overlay");
+                ImGui::SetNextItemWidth(-1);
+                bool overlayOpen = ImGui::BeginCombo("##OccupancyOverlay", overlayLabels[occupancyOverlay]);
+                uiOccupancy = itemCenter();
+                if (overlayOpen)
+                {
+                    for (int choice = 0; choice < 8; ++choice)
+                    {
+                        if (ImGui::Selectable(overlayLabels[choice], occupancyOverlay == choice))
+                            occupancyOverlay = choice;
+                        uiOccupancyChoices[choice] = itemCenter();
+                    }
+                    ImGui::EndCombo();
+                }
+                if (occupancyOverlay)
+                {
+                    ImGui::SetNextItemWidth(140);
+                    ImGui::SliderFloat("Overlay opacity", &occupancyOpacity, 0, 1, "%.2f");
+                    ImGui::SameLine();
+                    ImGui::Checkbox("Grid", &occupancyGrid);
+                    if (occupancyOverlay == 7)
+                    {
+                        occupancySlice = std::min(occupancySlice, int(depthBudget) - 1);
+                        ImGui::SliderInt("Physical Z", &occupancySlice, 0, int(depthBudget) - 1);
+                    }
+                    if (occupancyOverlay == 1)
+                        ImGui::TextWrapped("R: transparent; G: frost; B: sharp source. White = all three.");
+                    else if (occupancyOverlay >= 6)
+                        ImGui::TextWrapped("Red: scalar extinction; cyan: RGB extinction; white: both.");
+                    else
+                        ImGui::TextWrapped("Colored = requested work; dimmed = inactive.");
+                    ImGui::TextWrapped("Conservative bounds, not exact fragment coverage. Debug cost is in display.");
+                }
+                ImGui::EndTabItem();
             }
-            if (lowResolutionVolumes)
-            {
-                if (ImGui::Checkbox("Dithered volume upscale (RDR2-inspired)", &ditheredVolumeUpsample) && temporalAA)
-                    temporalAA->Invalidate();
-                ImGui::TextDisabled(taaEnabled ? "Four blue-noise taps; depth-aware selection; final TAA."
-                                               : "TAA disabled: stable bilateral fallback.");
-            }
-            ImGui::TextWrapped("B prime on transparency tiles. Resolve into temporary color, then copy tiles to "
-                               "SceneColor. q stays in registers; no I/R/q caches.");
-        }
-        if (ImGui::CollapsingHeader("OIT submission validation"))
-        {
-            ImGui::Text("Interface vertices: %u / %u", unsigned(interfaceIndices.size()), transparentVertices);
-            int order = int(submissionOrder);
-            if (ImGui::Combo("Submission order", &order, "Original\0Reverse triangles\0Shuffle triangles\0"))
-                submissionOrder = unsigned(order);
-            ImGui::Checkbox("Animate shuffled order", &animateOrder);
-            if (ImGui::Button("Next shuffle seed"))
-                ++orderSeed;
-            ImGui::InputScalar("Order seed", ImGuiDataType_U32, &orderSeed);
-        }
-        if (ImGui::CollapsingHeader("Scene fixtures", ImGuiTreeNodeFlags_DefaultOpen))
-        {
-            bool changed = false;
-            ImGui::SliderFloat("Fixture time", &time, 0, 8, "%.2f s");
-            ImGui::BeginDisabled(stressPreset != 0);
-            changed |= ImGui::Checkbox("Scene glass panes", &sceneGlassPanes);
-            uiGlassPanes = itemCenter();
-            ImGui::EndDisabled();
-            ImGui::BeginDisabled(stressPreset != 0);
-            changed |= ImGui::Checkbox("Glass sphere", &glassSphere);
-            ImGui::EndDisabled();
-            ImGui::SliderFloat("Emissive gain", &emissiveGain, 0, 64, "%.2f", ImGuiSliderFlags_Logarithmic);
-            changed |= ImGui::Checkbox("Inversion calibration board", &calibrationBoard);
-            changed |= ImGui::Checkbox("Emissive balls", &emissiveBalls);
-            ImGui::SameLine();
-            ImGui::BeginDisabled(stressPreset != 0);
-            changed |= ImGui::Checkbox("Front smoke", &showSmoke);
-            uiSmoke = itemCenter();
-            ImGui::EndDisabled();
-            if (ImGui::Checkbox("Emissive balls in front", &emissiveFront))
-            {
-                emissiveBalls = true;
-                changed = true;
-            }
-            changed |= ImGui::Checkbox("Place VFX behind glass", &vfxBehind);
-            if (changed)
-            {
-                rebuildRequested = true;
-                preserveMaterialsOnRebuild = false;
-            }
-        }
-        if (ImGui::CollapsingHeader("Custom Sponza asset"))
-        {
-            ImGui::InputText("Sponza glTF path", scenePathUi.data(), scenePathUi.size());
-            ImGui::TextUnformatted("Empty path uses the bundled Sponza asset.");
-            if (ImGui::Button("Reload selected background"))
-                sceneSourceRequested = true;
-            ImGui::TextWrapped("Loading a scene resets fixture material edits; quality switches preserve them.");
+            ImGui::EndTabBar();
         }
         if (!runtimeError.empty())
             ImGui::TextWrapped("%s", runtimeError.c_str());
+        ImGui::PopItemWidth();
         ImGui::End();
-        ImGui::SetNextWindowPos(ImVec2(820, 12), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(450, 730), ImGuiCond_FirstUseEver);
-        ImGui::Begin("GPU pass timings");
-        if (ImGui::Checkbox("Enable profiling", &profilingEnabled))
-            profilerDirty = true;
-        uiProfile = itemCenter();
-        ImGui::SameLine();
-        if (ImGui::Checkbox("Detailed", &detailedProfiling))
-            profilerDirty = true;
-        ImGui::InputText("CSV path", csvPathUi.data(), csvPathUi.size());
-        if (ImGui::Button("Export timing CSV") && profiler.ActiveStages() > 0)
+        if (showProfilerWindow)
         {
-            try
+            ImGui::SetNextWindowPos(ImVec2(820, 12), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(450, 730), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("GPU pass timings", &showProfilerWindow))
             {
-                profiler.ExportCsv(csvPathUi[0] ? csvPathUi.data() : "native-benchmark-ui.csv",
-                                   "interactive; internal=" + std::to_string(Width) + "x" + std::to_string(Height));
+                if (ImGui::Checkbox("Enable profiling", &profilingEnabled))
+                    profilerDirty = true;
+                uiProfile = itemCenter();
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Detailed", &detailedProfiling))
+                    profilerDirty = true;
+                if (ImGui::TreeNode("Benchmark / export"))
+                {
+                    ImGui::InputText("CSV path", csvPathUi.data(), csvPathUi.size());
+                    if (ImGui::Button("Export timing CSV") && profiler.ActiveStages() > 0)
+                    {
+                        try
+                        {
+                            profiler.ExportCsv(csvPathUi[0] ? csvPathUi.data() : "native-benchmark-ui.csv",
+                                               "interactive; internal=" + std::to_string(Width) + "x" +
+                                                   std::to_string(Height));
+                        }
+                        catch (const std::exception &e)
+                        {
+                            donut::log::warning("%s", e.what());
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reset stats"))
+                        profilerDirty = true;
+                    ImGui::InputInt("Benchmark frames", &interactiveBenchmarkFrames);
+                    if (ImGui::Button("Run fixed-camera benchmark"))
+                        benchmarkRequested = true;
+                    ImGui::TreePop();
+                }
+                avboit::DrawGpuProfiler(profiler);
             }
-            catch (const std::exception &e)
-            {
-                donut::log::warning("%s", e.what());
-            }
+            ImGui::End();
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Reset stats"))
-            profilerDirty = true;
-        ImGui::InputInt("Benchmark frames", &interactiveBenchmarkFrames);
-        if (ImGui::Button("Run fixed-camera benchmark"))
-            benchmarkRequested = true;
-        avboit::DrawGpuProfiler(profiler);
-        ImGui::End();
         DrawActorGizmo();
     }
     void TestUiInteractions(avboit::ViewerUi &ui, nvrhi::IFramebuffer *framebuffer);

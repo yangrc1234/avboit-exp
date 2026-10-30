@@ -1,5 +1,8 @@
 # GPU profiling implementation notes
 
+Open **Debug → GPU profiler** in ImGui. CSV export and fixed-camera captures are
+under **Benchmark / export**; the timing window stays closed until requested.
+
 ## Background refraction filtering comparison
 
 Refraction resolves directly into the destination B cache before Gaussian using
@@ -52,7 +55,7 @@ Both command-line and ImGui benchmarks use a StablePowerState RAII scope before 
 
 ## Frost reconstruction comparison
 
-The default cubic reconstruction filters each adjacent Gaussian mip with four bilinear taps, then interpolates their results (eight taps). `--cubic-trilinear`, or **4-tap cubic + trilinear (approximate)** below the ImGui cubic checkbox, shares the finer mip's cubic coordinates and weights across four hardware trilinear taps. `--linear` selects the one-instruction trilinear baseline.
+The default cubic reconstruction filters each adjacent Gaussian mip with four bilinear taps, then interpolates their results (eight taps). The CLI reference `--cubic-trilinear` shares the finer mip's cubic coordinates and weights across four hardware trilinear taps. `--linear` selects the one-instruction trilinear baseline.
 
 The four-tap mode is exact at integer LOD, but its coarser-mip contribution is approximate at fractional LOD. Check HDR highlights and transitions across integer LOD before adopting it. The existing cubic producer padding is retained; no RT or pass is added. Four trilinear instructions still access two mip levels each, so neither texture traffic nor frame time is expected to halve. The exact two-level approach is also described in [GPU Gems 2, section 20.3](https://developer.nvidia.com/gpugems/gpugems2/part-iii-high-quality-rendering/chapter-20-fast-third-order-texture-filtering).
 
