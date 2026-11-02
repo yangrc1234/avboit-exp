@@ -174,6 +174,24 @@ void DrawMaterialEditor(MaterialTable &materials, const MaterialDefaults &defaul
         ImGui::SliderFloat("Strength (px)", &material.gain, 0, 64);
         return;
     }
+    {
+        auto effective = materials.Resolve(unsigned(selectedMaterial), defaults);
+        ImGui::BeginDisabled(!effective.SupportsCameraOffset());
+        ImGui::SliderFloat("OIT offset (bins)", &material.cameraOffsetBins, -4.f, 4.f, "%.2f",
+                           ImGuiSliderFlags_AlwaysClamp);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Positive pulls OIT ordering toward the camera, without moving geometry. Ordinary "
+                              "translucency only; disabled for frost/refraction interfaces and volumes. "
+                              "Nonzero offsets suspend hardware Zero-T depth culling.");
+        ImGui::EndDisabled();
+    }
+    if (material.kind == 2 && material.surfacePattern != 0)
+    {
+        ImGui::TextUnformatted(material.surfacePattern == 1 ? "Noise opacity shell" : "Striped inner model");
+        if (material.surfacePattern == 1)
+            ImGui::SliderFloat("Noise frequency", &material.patternScale, 1.f, 24.f, "%.2f");
+        ImGui::TextWrapped("Coverage and RGB transmission above control this layer. Geometry uses back-face culling.");
+    }
     if (material.kind == 2 || material.kind == 4)
     {
         ImGui::SliderFloat("Roughness", &material.transmission[3], 0, 1);

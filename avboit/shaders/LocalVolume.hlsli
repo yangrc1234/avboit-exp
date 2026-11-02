@@ -26,7 +26,7 @@ VolumeVaryings volumeVertex(uint id : SV_VertexID)
     o.extent = Vertices[id * 4 + 3].xyz;
     o.axisX = Vertices[id * 4 + 1].xyz;
     o.axisY = Vertices[id * 4 + 2].xyz;
-    uint material = uint(Vertices[id * 4 + 1].w) * 4;
+    uint material = uint(Vertices[id * 4 + 1].w) * 5;
     o.sigma = max(Materials[material + 1].rgb, 0.);
     o.source = max(Materials[material].rgb, 0.);
     float2 low = 1e30, high = -1e30;

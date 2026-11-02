@@ -14,10 +14,7 @@ struct Accumulation
     if (i.depth >= LoadOpaqueViewDepth(uint2(i.position.xy)))
         discard;
     float3 alpha = Opacity(i);
-    float mapped = MapAdaptiveDepth(DepthWarp, i.depth, 80., 1., 2.);
-    float3 t = mapped < 0
-                   ? float3(1, 1, 1)
-                   : TransmittanceLut.SampleLevel(LinearClamp, float3(uv, (mapped + .5) / float(SLICE_COUNT)), 0).rgb;
+    float3 t = SampleSurfaceTransmittance(uv, i.depth, i.cameraOffsetBins);
     Accumulation o = (Accumulation)0;
     // Only surviving fragments accumulate tau. The optional shading-only
     // shortcut below preserves tau; hardware zero-T depth rejection does not.
@@ -25,8 +22,22 @@ struct Accumulation
     [branch] if ((uint(Camera[7].w) & 1u) != 0 && all(t == 0)) return o;
     o.numerator =
         (i.kind == 4 || (i.kind == 2 && i.sphere.w < -1.5) ? SphereSurfaceLight(i, uv) : i.color.rgb * alpha) * t;
+    if (i.kind == 2 && i.effect.x > 0)
+    {
+        float light = .25 + .75 * saturate(dot(normalize(i.surfaceNormal), normalize(float3(-.4, .7, -.6))));
+        float stripes = i.effect.x == 2 ? .5 + .5 * smoothstep(-.2, .2, sin(i.materialLocal.y * 24.)) : 1.;
+        o.numerator = i.color.rgb * (light * stripes) * alpha * t;
+    }
     o.denominator = alpha * t;
-    o.backNumerator = BehindInterface(uint2(i.position.xy), i.position.z) ? o.numerator : float3(0, 0, 0);
+    bool behind = BehindInterface(uint2(i.position.xy), i.position.z);
+    if (i.cameraOffsetBins != 0)
+    {
+        float4 hit = LoadInterface(uint2(i.position.xy));
+        float orderingZ = MapAdaptiveDepth(DepthWarp, i.depth, 80., 1., 0.) - i.cameraOffsetBins;
+        float interfaceZ = MapAdaptiveDepth(DepthWarp, hit.x + InterfaceTolerance(hit.x), 80., 1., 0.);
+        behind = hit.w != 0 && orderingZ > interfaceZ;
+    }
+    o.backNumerator = behind ? o.numerator : float3(0, 0, 0);
     return o;
 } Texture2D<uint> ScreenTiles : register(t30);
 Texture2D<float2> InterfaceOffset : register(t14);

@@ -49,7 +49,7 @@ math::float2 TemporalAA::Jitter() const
 {
     return pass->GetCurrentPixelOffset();
 }
-void TemporalAA::Record(nvrhi::ICommandList *commands, const std::array<std::array<float, 4>, 12> &camera)
+void TemporalAA::Record(nvrhi::ICommandList *commands, const std::array<std::array<float, 4>, 13> &camera)
 {
     auto vector = [&](unsigned row) { return math::float3(camera[row][0], camera[row][1], camera[row][2]); };
     const auto eye = vector(0), right = vector(1), up = vector(2), forward = vector(3);

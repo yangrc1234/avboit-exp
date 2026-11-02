@@ -27,6 +27,7 @@ int main()
         Require(defaults.slopeSplat && !Parse({"--no-slope-splat"}).slopeSplat);
         Require(defaults.volumeScale == 8 && Parse({"--camera-preset", "6"}).cameraPreset == 6);
         Require(defaults.occupancyOverlay == 0);
+        Require(defaults.shellOffsetBins == 0 && Parse({"--shell-offset-bins", "1.5"}).shellOffsetBins == 1.5f);
         Require(!defaults.lowResolutionVolumes && !defaults.temporalVolumeDithering);
         Require(Parse({"--volume-half-res"}).lowResolutionVolumes);
         Require(defaults.ditheredVolumeUpsample);
@@ -109,7 +110,7 @@ int main()
                                                                 {"--sphere-ior", "0.9"},
                                                                 {"--refraction-gain", "5"},
                                                                 {"--stress", "-1"},
-                                                                {"--stress", "26"},
+                                                                {"--stress", "31"},
                                                                 {"--frost-detail-radius", "65"},
                                                                 {"--frost-detail-radius", "-1"},
                                                                 {"--stress", "1.5"},

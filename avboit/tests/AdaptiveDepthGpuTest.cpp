@@ -74,9 +74,16 @@ bool RunBudgetTest(nvrhi::IDevice *device, unsigned budget, bool fixed = false)
                                              .setCpuAccess(nvrhi::CpuAccessMode::Read)
                                              .setInitialState(nvrhi::ResourceStates::CopyDest)
                                              .setKeepInitialState(true));
+    auto camera = device->createBuffer(nvrhi::BufferDesc()
+                                           .setByteSize(13 * 16)
+                                           .setCanHaveTypedViews(true)
+                                           .setFormat(nvrhi::Format::RGBA32_FLOAT)
+                                           .setInitialState(nvrhi::ResourceStates::CopyDest)
+                                           .setKeepInitialState(true));
     auto bindings = nvrhi::BindingSetDesc()
                         .addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(0, input))
-                        .addItem(nvrhi::BindingSetItem::TypedBuffer_UAV(0, output));
+                        .addItem(nvrhi::BindingSetItem::TypedBuffer_UAV(0, output))
+                        .addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(15, camera));
     nvrhi::BindingSetHandle set;
     nvrhi::BindingLayoutHandle layout;
     if (!nvrhi::utils::CreateBindingSetAndLayout(device, nvrhi::ShaderType::Compute, 0, bindings, layout, set))
@@ -102,17 +109,20 @@ bool RunBudgetTest(nvrhi::IDevice *device, unsigned budget, bool fixed = false)
         nvrhi::ComputePipelineDesc().setComputeShader(occupancyShader).addBindingLayout(occupancyLayout));
     auto commands = device->createCommandList();
     std::mt19937 random(20260926);
-    for (unsigned test = 0; test < 40; ++test)
+    for (unsigned test = 0; test < 120; ++test)
     {
+        const unsigned toward = test < 40 ? 0 : (test < 80 ? 4 : 1);
+        const unsigned away = test < 80 ? 0 : 4;
+        const unsigned pattern = test % 40;
         std::vector<uint32_t> occupancy(avboit::VirtualSlices, 0);
-        if (test == 1)
+        if (pattern == 1)
             occupancy[0] = 1;
-        else if (test == 2)
+        else if (pattern == 2)
             occupancy.back() = 1;
-        else if (test == 3)
+        else if (pattern == 3)
             std::fill(occupancy.begin(), occupancy.end(), 1);
-        else if (test > 3)
-            for (unsigned i = 0; i < (test - 3) * 7; ++i)
+        else if (pattern > 3)
+            for (unsigned i = 0; i < (pattern - 3) * 7; ++i)
                 occupancy[random() % occupancy.size()] = 1;
         std::vector<uint32_t> ranges;
         for (uint32_t slice = 0; slice < occupancy.size(); ++slice)
@@ -121,19 +131,24 @@ bool RunBudgetTest(nvrhi::IDevice *device, unsigned budget, bool fixed = false)
                 ranges.push_back(slice);
                 ranges.push_back(slice);
             }
-        auto expected = avboit::BuildDepthWarp(occupancy, budget);
+        auto expected = avboit::BuildDepthWarp(occupancy, budget, toward, away);
         if (fixed)
         {
             std::fill(expected.begin(), expected.end(), 0);
-            expected[0] = expected[1] = budget - 1;
+            expected[0] = budget - 1 - toward - away;
+            expected[1] = budget - 1;
             for (unsigned i = 0; i <= avboit::VirtualSlices; ++i)
             {
-                expected[2 + 2 * i] = std::min(i, budget - 1);
-                if (i < budget - 1)
-                    expected[3 + 2 * i] = 1 | (i == 0 ? 2 : 0) | (i == budget - 2 ? 4 : 0);
+                expected[2 + 2 * i] = std::min(i, budget - 1 - toward - away) + toward;
+                if (i < budget - 1 - toward - away)
+                    expected[3 + 2 * i] = 1 | (i == 0 ? 2 : 0) | (i == budget - 2 - toward - away ? 4 : 0);
             }
         }
         commands->open();
+        float cameraData[13][4] = {};
+        cameraData[12][0] = float(toward);
+        cameraData[12][1] = float(away);
+        commands->writeBuffer(camera, cameraData, sizeof(cameraData));
         commands->clearBufferUInt(input, 0);
         if (!ranges.empty())
         {

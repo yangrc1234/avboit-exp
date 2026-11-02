@@ -26,6 +26,9 @@ constexpr Flag Flags[] = {
     {"--ui-self-test", &ViewerOptions::uiSelfTest, true},
     {"--linear", &ViewerOptions::cubic, false},
     {"--cubic-trilinear", &ViewerOptions::cubicTrilinear, true},
+    {"--lut-cubic", &ViewerOptions::lutCubic, true},
+    {"--lut-min-filter", &ViewerOptions::lutMinFilter, true},
+    {"--conservative-splat", &ViewerOptions::conservativeSplat, true},
     {"--no-frost", &ViewerOptions::frost, false},
     {"--sparse-blur", &ViewerOptions::sparseBlur, true},
     {"--full-blur", &ViewerOptions::fullBlur, true},
@@ -184,8 +187,10 @@ ViewerOptions ParseViewerOptions(int argc, const char *const *argv)
         else if (arg == "--time")
             options.fixtureTime =
                 ReadFloat(arg, value(), -std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+        else if (arg == "--shell-offset-bins")
+            options.shellOffsetBins = ReadFloat(arg, value(), -4.f, 4.f);
         else if (arg == "--stress")
-            options.stressPreset = ReadInteger(arg, value(), 0, 25);
+            options.stressPreset = ReadInteger(arg, value(), 0, 30);
         else if (arg == "--camera-preset")
             options.cameraPreset = ReadInteger(arg, value(), 0, 9);
         else if (arg == "--benchmark")
@@ -256,13 +261,14 @@ Run and debug (benchmarks require Windows Developer Mode for StablePowerState):
   --camera-preset 0..9        Camera (6: sky; 7/8/9: crossing glass +30/+40/-30 degrees)
 
 Scene and materials:
+  --shell-offset-bins N  Initial noise-shell OIT offset, -4..4 bins (positive toward camera)
   --vfx-mode 0..3            Oscillating ring / heat / expanding shock / dual shock; enables VFX
   --vfx-strength 0..64       Global screen-space displacement multiplier in pixels (default 20)
   --vfx-layers 0..3          Diagnostic layer bitmask: 1 primary, 2 secondary, 3 both
   --sponza                   Load Sponza through Donut (default scene backend)
   --legacy-scene             Old Sponza loader for calibration comparisons
   --sponza-path PATH          Explicit Sponza.gltf path; enables Sponza
-  --stress 0..25             Stress preset (19..23: volumes; 24..25: OpenVDB smoke); also in ImGui Test case
+  --stress 0..30             Stress preset (26: noise shell; 27/28: silhouette; 29/30: eight layers); also in ImGui Test case
   --sun-intensity N          Sponza sun irradiance (0..12), default 2
   --spot-intensity N         Sponza dynamic spotlight intensity (0..500), default 80
   --volume-temporal-dither  Animate raymarch sample phases (requires final TAA)
@@ -294,6 +300,7 @@ Quality and references:
   --volume-scale 2|8         Extinction XY divisor, default 8
   --linear                  Bilinear reconstruction (default: cubic)
   --cubic-trilinear         Approximate cubic: 4 trilinear taps instead of 8 bilinear taps
+  --lut-cubic               T-LUT cubic XY / linear Z (4 taps), independent of frost reconstruction
   --no-frost                Disable frost, preserve self-refraction
   --max-frost-sigma 0..24   Material sigma cap in 1440p reference pixels
   --frost-detail-radius 0..64  Offset reserved for post-blur sampling, 1440p pixels (default 24)
@@ -321,6 +328,8 @@ Quality and references:
   --calibration-board       Asymmetric four-color inversion target
   --emissive-gain N          Emissive sphere radiance multiplier, 0..64
   --emissive-front           Put emissive spheres before the frost pane
+  --lut-min-filter          Experimental 3x3 XY min after integration, no new RT
+  --conservative-splat      Experimental hardware conservative surface extinction raster
   --fixed-z                 Uniform log-Z reference (adaptive is default)
   --depth-budget N          Adaptive Z budget: 16, 32, 64, 128 (default 128)
   --follow-window           Follow window size (longest side capped at 2048)

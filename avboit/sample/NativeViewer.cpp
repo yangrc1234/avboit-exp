@@ -80,7 +80,8 @@ class NativeViewer : public app::IRenderPass
     unsigned volumeSampleFrame = 0;
     bool taaEnabled = false;
     std::unique_ptr<avboit::TemporalAA> temporalAA;
-    float initialVolumeExtinction = -1.f;
+    float initialVolumeExtinction = -1.f, initialShellOffset = 0;
+    bool hasCameraOffsets = false;
     float volumeStepSize = .5f, volumeLowT = .1f, volumeStepScale = 4.f;
     int volumeMaxSteps = 256;
     std::vector<avboit::StressVolume> localVolumes;
@@ -174,6 +175,7 @@ class NativeViewer : public app::IRenderPass
     nvrhi::FramebufferHandle opaqueFb;
     nvrhi::SamplerHandle linear;
     bool denseExtinction = false, poisonExtinction = false, slopeSplat = true;
+    bool lutCubic = false, conservativeSplat = false, lutMinFilter = false;
     Pass opaquePass;
     std::vector<nvrhi::GraphicsPipelineHandle> opaqueMaterialPipelines;
     unsigned opaqueVertices = 0, transparentVertices = 0, objectCount = 0;
@@ -182,12 +184,22 @@ class NativeViewer : public app::IRenderPass
     bool cubic = true, frost = true, vfx = false, vfxBehind = false, animate = false;
     bool cubicTrilinear = false;
     float time = 0;
-    std::array<F4, 12> camera;
+    std::array<F4, 13> camera;
     void UpdateCamera()
     {
         float theta = 0;
         for (unsigned index : objectMaterials)
             theta = std::max(theta, materials.Resolve(index, MaterialDefaults()).FrostTheta());
+        float towardBins = 0, awayBins = 0;
+        for (unsigned object = 0; object < objectCount; ++object)
+            if (actors[object].enabled)
+            {
+                const float offset =
+                    materials.Resolve(objectMaterials[object], MaterialDefaults()).OitCameraOffsetBins();
+                towardBins = std::max(towardBins, std::ceil(offset));
+                awayBins = std::max(awayBins, std::ceil(-offset));
+            }
+        hasCameraOffsets = towardBins > 0 || awayBins > 0;
         auto gpuMaterials = materials.GpuRecords(MaterialDefaults());
         if (gpuMaterials != uploadedMaterials)
         {
@@ -218,16 +230,18 @@ class NativeViewer : public app::IRenderPass
                    {-.05f / 79.95f, 4.f / 79.95f, .05f, 80.f},
                    {float(Width), float(Height), float(volumeWidth), float(volumeHeight)},
                    {float(qBound), float(protectBackground), backgroundThreshold,
-                    float((zeroTShortcut ? 1 : 0) | (zeroDepth ? 2 : 0) | (mirrorBlur ? 4 : 0) | (fullVfx ? 8 : 0))},
+                    float((zeroTShortcut ? 1 : 0) | (zeroDepth && !hasCameraOffsets ? 2 : 0) | (mirrorBlur ? 4 : 0) |
+                          (fullVfx ? 8 : 0) | (conservativeSplat ? 16 : 0) | (lutMinFilter ? 32 : 0))},
                    {float(chain.width), float(chain.height), float(chain.mipCount), tileResolve ? 0.f : 1.f},
                    {float(slopeSplat), frostDetailRadius, frostNormalTiling,
                     (temporalVolumeDithering || taaEnabled) ? float(1 + (volumeSampleFrame++ % 4096)) : 0.f},
                    {volumeStepSize, volumeLowT, volumeStepScale, float(volumeMaxSteps)},
-                   {0, 0, 0, 0}}};
+                   {0, 0, 0, float(lutCubic)},
+                   {towardBins, awayBins, 0, 0}}};
         if (temporalAA)
         {
             const auto jitter = temporalAA->Jitter();
-            camera[11] = {jitter.x, jitter.y, float(ditheredVolumeUpsample), 0};
+            camera[11] = {jitter.x, jitter.y, float(ditheredVolumeUpsample), float(lutCubic)};
         }
         auto projected = bounds;
         auto animatedBounds = bounds;
@@ -381,6 +395,8 @@ class NativeViewer : public app::IRenderPass
                 file = "shaders/ExtinctionVolume.hlsl";
             if (std::string(entry) == "integrateLut")
                 file = "shaders/ExtinctionVolume.hlsl";
+            if (std::string(entry) == "integrateMinLut" || std::string(entry) == "integrateDenseMinLut")
+                file = "shaders/ExtinctionVolume.hlsl";
             if (std::string(entry) == "integrateDenseLut")
                 file = "shaders/ExtinctionVolume.hlsl";
             if (std::string(entry) == "clearOccupiedExtinction")
@@ -491,6 +507,26 @@ class NativeViewer : public app::IRenderPass
     void SetFrostChain(unsigned levels) { frostMipCount = levels; }
     void SetFrostDetailRadius(float radius) { frostDetailRadius = std::clamp(radius, 0.f, 64.f); }
     void SetFrostNormalTiling(float tiling) { frostNormalTiling = std::clamp(tiling, .25f, 64.f); }
+    void SetConservativeSplat(bool enabled)
+    {
+        if (enabled && !GetDevice()->queryFeatureSupport(nvrhi::Feature::ConservativeRasterization))
+            throw std::runtime_error("Conservative splat is unsupported on this adapter");
+        conservativeSplat = enabled;
+        if (temporalAA)
+            temporalAA->Invalidate();
+    }
+    void SetLutMinFilter(bool enabled)
+    {
+        lutMinFilter = enabled;
+        if (temporalAA)
+            temporalAA->Invalidate();
+    }
+    void SetLutCubic(bool enabled)
+    {
+        lutCubic = enabled;
+        if (temporalAA)
+            temporalAA->Invalidate();
+    }
     void SetPrecisionAndOrder(bool accumHalf, unsigned order, unsigned seed)
     {
         halfAccumulation = accumHalf;
@@ -661,6 +697,7 @@ class NativeViewer : public app::IRenderPass
         preserveMaterialsOnRebuild = true;
     }
     void SetVolumeUpsample(bool dithered) { ditheredVolumeUpsample = dithered; }
+    void SetInitialShellOffset(float value) { initialShellOffset = value; }
     void SetInitialVolumeExtinction(float value) { initialVolumeExtinction = value; }
     void SetTaa(bool enabled) { taaEnabled = enabled; }
     void SetHardwareDepth(bool enabled) { hardwareDepth = enabled; }
@@ -786,6 +823,14 @@ class NativeViewer : public app::IRenderPass
             ApplyCameraPreset(0);
         ImGui::SameLine();
         ImGui::Checkbox("Animate", &animate);
+        if (stressPreset == 27 || stressPreset == 28)
+            ImGui::TextWrapped(
+                "Front glass edges over rear glass: diagonal / curved cutout / thin strips. Enable Animate for a slow "
+                "XY coverage sweep. Frost and distortion start disabled to isolate LUT aliasing.");
+        if (stressPreset == 26)
+            ImGui::TextWrapped(
+                "Left to right: coincident / 1 cm / 5 cm shell gap. Cyan noise shell over orange inner "
+                "mesh. Select a Noise shell actor and edit OIT offset (bins). Geometry stays unchanged.");
 
         ImGui::Separator();
         if (ImGui::BeginTabBar("Viewer tabs"))
@@ -978,6 +1023,25 @@ class NativeViewer : public app::IRenderPass
                 }
                 if (ImGui::CollapsingHeader("OIT sampling"))
                 {
+                    if (hasCameraOffsets)
+                        ImGui::TextWrapped("Hardware Zero-T depth culling suspended: active OIT camera offsets.");
+                    if (ImGui::Checkbox("T-LUT XY min-filter (experimental)", &lutMinFilter))
+                        SetLutMinFilter(lutMinFilter);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("3x3 XY minimum of independently integrated transmittance. Fused with "
+                                          "integration; no new RT. Test with ordinary splat and linear sampling.");
+                    if (ImGui::Checkbox("Cubic T-LUT (XY)", &lutCubic))
+                        SetLutCubic(lutCubic);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Four hardware taps; Z stays linear. Independent of frost filtering. Applies "
+                                          "live without new RTs.");
+                    ImGui::BeginDisabled(!GetDevice()->queryFeatureSupport(nvrhi::Feature::ConservativeRasterization));
+                    if (ImGui::Checkbox("Conservative surface splat (experimental)", &conservativeSplat))
+                        SetConservativeSplat(conservativeSplat);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Hardware conservative coverage for extinction only. Can double-count shared "
+                                          "triangle edges; opacity cutouts remain point-sampled. No new RTs.");
+                    ImGui::EndDisabled();
                     int choice = depthBudget == 16 ? 0 : depthBudget == 32 ? 1 : depthBudget == 64 ? 2 : 3;
                     if (ImGui::Combo("Z budget", &choice, "16\00032\00064\000128\000"))
                     {
@@ -1219,7 +1283,7 @@ class NativeViewer : public app::IRenderPass
             frostSampler = device->createSampler(
                 nvrhi::SamplerDesc().setAllFilters(true).setAllAddressModes(nvrhi::SamplerAddressMode::Wrap));
         }
-        if (stressPreset >= 24 && !volumeDensity)
+        if ((stressPreset == 24 || stressPreset == 25) && !volumeDensity)
         {
             engine::TextureCache cache(device, fs, nullptr);
             auto path = app::GetDirectoryWithExecutable() / "textures/smoke-volume.dds";
@@ -1232,7 +1296,7 @@ class NativeViewer : public app::IRenderPass
             device->executeCommandList(commands);
             device->waitForIdle();
         }
-        if (stressPreset < 24)
+        if (stressPreset != 24 && stressPreset != 25)
             volumeDensity = nullptr;
         profiler.Initialize(device, detailedProfiling, profilingEnabled);
         cameraBuffer = Buffer(sizeof(camera), nvrhi::Format::RGBA32_FLOAT, false, "Camera and material controls");
@@ -1275,7 +1339,7 @@ class NativeViewer : public app::IRenderPass
                 avboit::AppendEmissiveSphere(vertices, sphere.center, sphere.radius, sphere.radiance);
             }
         }
-        else
+        else if (stressPreset < 26)
             Quad({-.9f, .55f, 7}, {.15f, 0, 0}, {0, .15f, 0}, {15, 8, 2, 1}, {0, 0, 0}, 0, false);
         const unsigned emissiveEnd = unsigned(vertices.size());
         if (calibrationBoard)
@@ -1287,6 +1351,30 @@ class NativeViewer : public app::IRenderPass
         for (const auto &q : fixture.opaque)
             Quad(q.center, q.x, q.y, q.color, q.transmission, q.kind, false);
         opaqueVertices = unsigned(vertices.size() / 4);
+        if (stressPreset == 26)
+        {
+            // Three copies of exactly the same model, each with its own inner
+            // and outer actor/material/draw. Only geometric shell thickness differs.
+            const float gaps[] = {0.f, .01f, .05f};
+            for (unsigned pair = 0; pair < 3; ++pair)
+                for (unsigned layer = 0; layer < 2; ++layer)
+                {
+                    F3 center = {(float(pair) - 1.f) * 1.9f, useSponza ? 1.75f : 0.f, 4.5f};
+                    unsigned first = unsigned(vertices.size());
+                    objectFirstRecords.push_back(first);
+                    avboit::AppendLayeredModel(vertices, center, gaps[pair], layer == 1);
+                    F3 lower = {1e30f, 1e30f, 1e30f}, upper = {-1e30f, -1e30f, -1e30f};
+                    for (unsigned v = first; v < vertices.size(); v += 4)
+                        for (unsigned c = 0; c < 3; ++c)
+                        {
+                            lower[c] = std::min(lower[c], vertices[v][c]);
+                            upper[c] = std::max(upper[c], vertices[v][c]);
+                        }
+                    bounds.push_back({lower[0], lower[1], lower[2], 1});
+                    bounds.push_back({upper[0], upper[1], upper[2], 0});
+                    ++objectCount;
+                }
+        }
         if ((stressPreset == 0 && glassSphere) || fixture.sphere)
         {
             F3 center = {0, useSponza ? 1.8f : .05f, 4.5f};
@@ -1386,8 +1474,42 @@ class NativeViewer : public app::IRenderPass
                 vertices[vertex + 2][3] = float(object);
         }
         BuildSceneActors(emissiveFirst, emissiveEnd);
-        materialBuffer =
-            Buffer(unsigned(materials.entries.size() * 64), nvrhi::Format::RGBA32_FLOAT, false, "Actor material table");
+        if (stressPreset == 27 || stressPreset == 28)
+        {
+            const char *names[] = {"Rear glass",
+                                   "Front glass / diagonal",
+                                   "Front glass / curved cutout",
+                                   "Front glass / thin strip 1",
+                                   "Front glass / thin strip 2",
+                                   "Front glass / thin strip 3"};
+            for (unsigned i = 0; i < 6; ++i)
+                actors[i].name = names[i];
+            if (stressPreset == 28)
+                actors[6].name = "Third glass / behind rear";
+        }
+        if (stressPreset == 26)
+        {
+            const char *gaps[] = {"0 cm", "1 cm", "5 cm"};
+            for (unsigned index = 0; index < 6; ++index)
+            {
+                auto &actor = actors[index];
+                auto &material = materials.entries[actor.material];
+                bool outer = (index & 1u) != 0;
+                actor.name = std::string(outer ? "Noise shell / " : "Inner model / ") + gaps[index / 2];
+                material.surfacePattern = outer ? 1 : 2;
+                material.cameraOffsetBins = outer ? initialShellOffset : 0;
+                for (unsigned v = actor.firstRecord; v < actor.endRecord; v += 4)
+                    for (unsigned c = 0; c < 3; ++c)
+                    {
+                        // Keep the material coordinates in the rest geometry;
+                        // translation/rotation edits must not slide the noise.
+                        float local = vertices[v][c] - actor.position[c];
+                        vertices[v + 1][c] = actorRestVertices[v + 1][c] = local;
+                    }
+            }
+        }
+        materialBuffer = Buffer(unsigned(materials.entries.size() * avboit::MaterialTable::GpuRecordCount * 16),
+                                nvrhi::Format::RGBA32_FLOAT, false, "Actor material table");
         actorGeometryDirty = false;
         actorGizmo.Reset();
         selectedActor = -1;
@@ -1400,7 +1522,7 @@ class NativeViewer : public app::IRenderPass
             }
         if (!objectMaterials.empty())
         {
-            unsigned initialActor = 0;
+            unsigned initialActor = stressPreset == 26 ? 1u : 0u;
             for (unsigned actor = 0; actor < objectMaterials.size(); ++actor)
                 if (materials.entries[objectMaterials[actor]].kind >= 5)
                 {
@@ -1537,7 +1659,8 @@ class NativeViewer : public app::IRenderPass
         for (const auto &material : materials.entries)
         {
             auto shaders = commonShaders;
-            shaders.cullMode = material.kind == 4 ? nvrhi::RasterCullMode::Back : nvrhi::RasterCullMode::None;
+            shaders.cullMode = material.kind == 4 || material.surfacePattern != 0 ? nvrhi::RasterCullMode::Back
+                                                                                  : nvrhi::RasterCullMode::None;
             if (material.kind == 5 || material.kind == 6)
             {
                 shaders.extinctionVertex =
@@ -1849,11 +1972,13 @@ class NativeViewer : public app::IRenderPass
             frame.sparseBlur = sparseBlur;
             frame.cubic = cubic;
             frame.denseExtinction = denseExtinction;
+            frame.conservativeSplat = conservativeSplat;
+            frame.lutMinFilter = lutMinFilter;
             frame.poisonExtinction = poisonExtinction;
             frame.interfaceDraws = interfaceDraws;
             frame.geometryDraws = geometryDraws;
             frame.poisonResolve = poisonResolve;
-            frame.zeroDepth = zeroDepth;
+            frame.zeroDepth = zeroDepth && !hasCameraOffsets;
             frame.lastBlurMip = maxBlurMip;
             if (HasVfxDraws())
             {
@@ -2230,6 +2355,9 @@ int main(int argc, const char **argv)
         viewer.SetFrostChain(o.frostMipCount);
         viewer.SetFrostDetailRadius(o.frostDetailRadius);
         viewer.SetFrostNormalTiling(o.frostNormalTiling);
+        viewer.SetLutCubic(o.lutCubic);
+        viewer.SetLutMinFilter(o.lutMinFilter);
+        viewer.SetConservativeSplat(o.conservativeSplat);
         viewer.SetSparseBlur(o.sparseBlur);
         viewer.SetCubicTrilinear(o.cubicTrilinear);
         viewer.SetPoisonResolve(o.poisonResolve);
@@ -2253,6 +2381,7 @@ int main(int argc, const char **argv)
         viewer.SetTaa(o.taa);
         viewer.SetVolumeUpsample(o.ditheredVolumeUpsample);
         viewer.SetInitialVolumeExtinction(o.initialVolumeExtinction);
+        viewer.SetInitialShellOffset(o.shellOffsetBins);
         viewer.SetVolumeMarch(o.volumeStepSize, o.volumeLowT, o.volumeStepScale, o.volumeMaxSteps);
         viewer.SetCalibration(o.calibrationBoard, o.emissiveGain);
         viewer.SetEmissiveFront(o.emissiveFront);

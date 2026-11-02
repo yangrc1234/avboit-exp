@@ -241,7 +241,7 @@ void DonutSceneHost::Load(nvrhi::IDevice *device, const std::filesystem::path &s
 }
 
 void DonutSceneHost::Record(nvrhi::ICommandList *commands, nvrhi::IFramebuffer *target,
-                            const std::array<std::array<float, 4>, 12> &camera)
+                            const std::array<std::array<float, 4>, 13> &camera)
 {
     auto &state = *m_impl;
     auto v = [&](unsigned index) { return math::float3(camera[index][0], camera[index][1], camera[index][2]); };

@@ -43,6 +43,8 @@ void TransparencyPipeline::Create(nvrhi::IDevice *device, const TransparencyInpu
     volumeInputs.shaders.clear = load("clearOccupiedExtinction", nvrhi::ShaderType::Compute);
     volumeInputs.shaders.integrate = load("integrateLut", nvrhi::ShaderType::Compute);
     volumeInputs.shaders.integrateDense = load("integrateDenseLut", nvrhi::ShaderType::Compute);
+    volumeInputs.shaders.integrateMin = load("integrateMinLut", nvrhi::ShaderType::Compute);
+    volumeInputs.shaders.integrateDenseMin = load("integrateDenseMinLut", nvrhi::ShaderType::Compute);
     m_volume.Create(device, volumeInputs);
     InterfaceInputs interfaceInputs;
     interfaceInputs.indices = inputs.interfaceIndices;
@@ -185,9 +187,9 @@ void TransparencyPipeline::Record(nvrhi::ICommandList *commands, const Transpare
     pass(Stage::ExtinctionClear, "Extinction clear",
          [&] { m_volume.RecordClear(commands, frame.denseExtinction, frame.poisonExtinction); });
     pass(Stage::ExtinctionSplat, "Extinction atomic splat",
-         [&] { m_volume.RecordSplat(commands, frame.geometryDraws); });
+         [&] { m_volume.RecordSplat(commands, frame.geometryDraws, frame.conservativeSplat); });
     pass(Stage::Integration, "Transmittance LUT integration",
-         [&] { m_volume.RecordIntegration(commands, frame.denseExtinction); });
+         [&] { m_volume.RecordIntegration(commands, frame.denseExtinction, frame.lutMinFilter); });
     pass(Stage::ZeroDepth, "Zero-T indirect depth draw / VS neighborhood rejection",
          [&] { m_zero.RecordDepth(commands, frame.zeroDepth); });
     m_resolve.RecordAccumulation(commands, frame.geometryDraws,

@@ -32,7 +32,12 @@ const char *StressPresetName(unsigned preset)
                                   "Volume / intersecting RGB frost",
                                   "Volume / overlapping colored media",
                                   "OpenVDB smoke / imported density",
-                                  "OpenVDB smoke / intersecting frost"};
+                                  "OpenVDB smoke / intersecting frost",
+                                  "Layered model / noise shell (0, 1, 5 cm)",
+                                  "Glass silhouette over rear glass / XY aliasing",
+                                  "Glass silhouette / three layers",
+                                  "Eight overlapping RGB panes",
+                                  "Eight RGB panes / front frost and refraction"};
     return names[preset < StressPresetCount ? preset : 0];
 }
 StressFixture BuildStressFixture(unsigned preset)
@@ -254,12 +259,52 @@ StressFixture BuildStressFixture(unsigned preset)
             }
         }
     }
-    if (preset >= 24)
+    if (preset == 24 || preset == 25)
     {
         result.volumes.push_back({{0, 0, 4.5f}, {.85f, 1.7f, .85f}, {3.f, 3.f, 3.f}, {2.f, 2.2f, 2.5f}, true});
         if (preset == 25)
             pane({-.45f, 0, 4.5f}, {.7f, 0, .15f}, {0, 1.8f, 0}, {.7f, .85f, .93f}, .55f);
     }
+    if (preset == 27 || preset == 28)
+    {
+        // Parallel, well-separated layers isolate XY coverage from Z ordering,
+        // slope bias, frost and refraction. Every front edge lies inside the rear pane.
+        result.opaque.push_back({{0, 0, 7.8f}, {20, 0, 0}, {0, 20, 0}, {.12f, .12f, .12f, 1}, {0, 0, 0}, 0});
+        auto &rear = pane({0, 0, 6}, {4.8f, 0, 0}, {0, 2.1f, 0}, {.8f, .18f, .08f});
+        rear.color = {.9f, .35f, .06f, 1};
+        auto front = [&](std::array<float, 3> center, std::array<float, 3> x, std::array<float, 3> y, float hole = -1.f)
+        {
+            auto &q = pane(center, x, y, {.06f, .45f, .8f});
+            q.color = {.025f, .04f, .055f, 1};
+            q.shape = hole;
+            // Animate causes a slow sub-LUT-texel sweep; --time makes it reproducible.
+            q.motion = {.025f, 0, 0};
+        };
+        front({-1.8f, 0, 3.8f}, {.63f, .16f, 0}, {-.24f, .95f, 0});
+        front({0, 0, 3.8f}, {.65f, 0, 0}, {0, .95f, 0}, .55f);
+        for (unsigned i = 0; i < 3; ++i)
+            front({1.4f + i * .36f, 0, 3.8f}, {.008f * (i + 1), 0, 0}, {.13f, .95f, 0});
+    }
+    if (preset == 28)
+    {
+        auto &third = pane({0, 0, 7}, {5.6f, 0, 0}, {0, 2.45f, 0}, {.25f, .7f, .45f});
+        third.color = {.12f, .35f, .8f, 1};
+    }
+    if (preset == 29 || preset == 30)
+    {
+        result.opaque.push_back({{0, 0, 7.8f}, {20, 0, 0}, {0, 20, 0}, {.12f, .12f, .12f, 1}, {0, 0, 0}, 0});
+        const std::array<float, 3> tint[] = {{.32f, .87f, .94f}, {.93f, .38f, .82f}, {.85f, .91f, .35f}};
+        for (unsigned layer = 0; layer < 8; ++layer)
+        {
+            const float angle = (int(layer) - 3) * .13f, c = std::cos(angle), s = std::sin(angle);
+            auto &q = pane({(int(layer % 3) - 1) * .22f, (int(layer % 2) * 2 - 1) * .08f, 3.1f + layer * .45f},
+                           {1.55f * c, 1.55f * s, 0}, {-1.05f * s, 1.05f * c, 0}, tint[layer % 3],
+                           preset == 30 && layer == 0 ? .4f : 0.f, preset == 30 && layer == 0 ? 12.f : 0.f);
+            q.color = {.08f + .03f * (layer % 3), .14f + .025f * (layer % 2), .2f - .015f * layer, 1};
+        }
+    }
+    if (preset == 26)
+        result.opaque.push_back({{0, 0, 7}, {10, 0, 0}, {0, 10, 0}, {.035f, .045f, .055f, 1}, {0, 0, 0}, 0});
     return result;
 }
 } // namespace avboit

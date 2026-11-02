@@ -107,11 +107,14 @@ void ExtinctionVolume::Create(nvrhi::IDevice *device, const ExtinctionInputs &in
                                .addItem(B::TypedBuffer_UAV(0, m_masks))
                                .addItem(B::Texture_UAV(1, m_screenTiles)),
                            inputs.shaders.bounds);
-    m_warpPass = compute(D().addItem(B::TypedBuffer_SRV(0, m_masks)).addItem(B::TypedBuffer_UAV(0, m_warp)),
+    m_warpPass = compute(D().addItem(B::TypedBuffer_SRV(0, m_masks))
+                             .addItem(B::TypedBuffer_SRV(15, inputs.camera))
+                             .addItem(B::TypedBuffer_UAV(0, m_warp)),
                          inputs.shaders.adaptiveDepth);
     m_physicalPass = compute(D().addItem(B::TypedBuffer_SRV(0, m_masks))
                                  .addItem(B::TypedBuffer_SRV(1, m_warp))
                                  .addItem(B::TypedBuffer_SRV(2, inputs.bounds))
+                                 .addItem(B::TypedBuffer_SRV(15, inputs.camera))
                                  .addItem(B::TypedBuffer_UAV(0, m_physicalMasks)),
                              inputs.shaders.physicalMask);
     auto integration = D().addItem(B::TypedBuffer_SRV(15, inputs.camera))
@@ -126,6 +129,8 @@ void ExtinctionVolume::Create(nvrhi::IDevice *device, const ExtinctionInputs &in
     m_integratePass = compute(integration, inputs.shaders.integrate);
     m_densePass = compute(integration, inputs.shaders.integrateDense);
     m_clearPass = compute(integration, inputs.shaders.clear);
+    m_minPass = compute(integration, inputs.shaders.integrateMin);
+    m_denseMinPass = compute(integration, inputs.shaders.integrateDenseMin);
 
     auto splat = D().addItem(B::TypedBuffer_SRV(0, inputs.vertices, nvrhi::Format::UNKNOWN, inputs.vertexRange))
                      .addItem(B::TypedBuffer_SRV(1, m_warp))
@@ -147,12 +152,23 @@ void ExtinctionVolume::Create(nvrhi::IDevice *device, const ExtinctionInputs &in
     pipeline.renderState.depthStencilState.depthTestEnable = false;
     pipeline.renderState.depthStencilState.depthWriteEnable = false;
     m_splatPipelines.clear();
+    m_conservativeSplatPipelines.clear();
+    const bool supportsConservative = device->queryFeatureSupport(nvrhi::Feature::ConservativeRasterization);
     for (const auto &material : inputs.materialShaders)
     {
         pipeline.VS = material.extinctionVertex ? material.extinctionVertex : material.vertex;
         pipeline.PS = material.extinctionPixel;
         pipeline.renderState.rasterState.cullMode = material.cullMode;
+        pipeline.renderState.rasterState.conservativeRasterEnable = false;
         m_splatPipelines.push_back(device->createGraphicsPipeline(pipeline, m_framebuffer->getFramebufferInfo()));
+        if (supportsConservative)
+        {
+            // Raymarched volume proxies keep ordinary coverage; this experiment
+            // changes surface extinction splats only, never accumulation.
+            pipeline.renderState.rasterState.conservativeRasterEnable = !material.extinctionVertex;
+            m_conservativeSplatPipelines.push_back(
+                device->createGraphicsPipeline(pipeline, m_framebuffer->getFramebufferInfo()));
+        }
     }
 }
 
@@ -205,7 +221,8 @@ void ExtinctionVolume::RecordClear(nvrhi::ICommandList *commands, bool dense, bo
     }
     Barrier(commands);
 }
-void ExtinctionVolume::RecordSplat(nvrhi::ICommandList *commands, const std::vector<GeometryDraw> &draws) const
+void ExtinctionVolume::RecordSplat(nvrhi::ICommandList *commands, const std::vector<GeometryDraw> &draws,
+                                   bool conservative) const
 {
     nvrhi::GraphicsState state;
     state.framebuffer = m_framebuffer;
@@ -217,15 +234,16 @@ void ExtinctionVolume::RecordSplat(nvrhi::ICommandList *commands, const std::vec
         char label[96];
         snprintf(label, sizeof(label), "Extinction actor %u / material %u", draw.actor, draw.material);
         AVBOIT_GPU_SCOPE(commands, label);
-        state.pipeline = m_splatPipelines.at(draw.material);
+        state.pipeline = (conservative ? m_conservativeSplatPipelines : m_splatPipelines).at(draw.material);
         commands->setGraphicsState(state);
         commands->drawIndexed(
             nvrhi::DrawArguments().setStartIndexLocation(draw.firstIndex).setVertexCount(draw.indexCount));
     }
     Barrier(commands);
 }
-void ExtinctionVolume::RecordIntegration(nvrhi::ICommandList *commands, bool dense) const
+void ExtinctionVolume::RecordIntegration(nvrhi::ICommandList *commands, bool dense, bool minFilter) const
 {
-    (dense ? m_densePass : m_integratePass).Record(commands, (m_width + 7) / 8, (m_height + 7) / 8);
+    const auto &pass = minFilter ? (dense ? m_denseMinPass : m_minPass) : (dense ? m_densePass : m_integratePass);
+    pass.Record(commands, (m_width + 7) / 8, (m_height + 7) / 8);
 }
 } // namespace avboit

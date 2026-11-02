@@ -19,10 +19,10 @@ float3 SampleVolumeTransmittance(float2 uv, float viewZ)
         return 1.;
     if (mapped < 1.)
     {
-        float3 first = TransmittanceLut.SampleLevel(LinearClamp, float3(uv, .5 / float(SLICE_COUNT)), 0).rgb;
+        float3 first = SampleTransmittanceAtZ(uv, .5 / float(SLICE_COUNT));
         return lerp(float3(1, 1, 1), first, mapped);
     }
-    return TransmittanceLut.SampleLevel(LinearClamp, float3(uv, (mapped - .5) / float(SLICE_COUNT)), 0).rgb;
+    return SampleTransmittanceAtZ(uv, (mapped - .5) / float(SLICE_COUNT));
 }
 void AccumulateVolumeSegment(float2 segment, float sampleFraction, float rayZ, VolumeVaryings i, bool behind,
                              bool textured, float2 uv, float3 beginT, float3 endT, inout VolumeAccumulation o)

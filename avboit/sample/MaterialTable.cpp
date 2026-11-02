@@ -26,6 +26,14 @@ float EffectiveMaterial::FrostTheta() const
     float rough = value.transmission[3];
     return std::min(.35f, rough * rough * (1.f - 1.f / value.ior)) / 1.177410f;
 }
+bool EffectiveMaterial::SupportsCameraOffset() const
+{
+    return value.kind == 1 || (value.kind == 2 && value.transmission[3] <= 0 && MaximumDisplacement() == 0);
+}
+float EffectiveMaterial::OitCameraOffsetBins() const
+{
+    return SupportsCameraOffset() ? std::clamp(value.cameraOffsetBins, -4.f, 4.f) : 0.f;
+}
 void MaterialTable::Build(std::vector<MaterialRecord> &vertices, const MaterialDefaults &defaults)
 {
     if (vertices.size() % 4)
@@ -77,14 +85,17 @@ EffectiveMaterial MaterialTable::Resolve(unsigned index, const MaterialDefaults 
 std::vector<MaterialRecord> MaterialTable::GpuRecords(const MaterialDefaults &defaults) const
 {
     std::vector<MaterialRecord> records;
-    records.reserve(entries.size() * 4);
+    records.reserve(entries.size() * GpuRecordCount);
     for (unsigned i = 0; i < entries.size(); ++i)
     {
         auto m = Resolve(i, defaults).value;
         records.push_back(m.color);
         records.push_back(m.transmission);
         records.push_back({m.ior, m.gain, m.displacement, float(m.normalSphere)});
-        records.push_back({float(m.kind), float(m.ScalarExtinction()), float(m.vfxPattern), m.vfxPhase});
+        records.push_back({float(m.kind), float(m.ScalarExtinction()),
+                           float(m.kind == 2 ? m.surfacePattern : m.vfxPattern),
+                           m.kind == 2 ? m.patternScale : m.vfxPhase});
+        records.push_back({Resolve(i, defaults).OitCameraOffsetBins(), 0, 0, 0});
     }
     return records;
 }

@@ -14,6 +14,7 @@ Texture2D<float4> InterfaceSurface : register(t8);
 Texture2D<float3> BackNumerator : register(t9);
 #include "DepthMapping.hlsli"
 #include "OpticalDepth.hlsli"
+#include "TransmittanceSampling.hlsli"
 
 // Color-independent weights are shared by B preparation and final composition.
 struct ResolveTerms
@@ -22,13 +23,6 @@ struct ResolveTerms
     float4 transmission;
     bool hasInterface, backgroundValid, opaqueOccluded;
 };
-float3 SampleResolveTransmittance(float2 uv, float viewDepth)
-{
-    float mapped = MapAdaptiveDepth(DepthWarp, viewDepth, 80., 1., 2.);
-    return mapped < 0
-               ? float3(1, 1, 1)
-               : TransmittanceLut.SampleLevel(LinearClamp, float3(uv, (mapped + .5) / float(SLICE_COUNT)), 0).rgb;
-}
 // Displaced sources use bilinear inputs; destination and zero-offset resolves
 // use exact loads. Each caller supplies a compile-time constant.
 float3 ReadResolveRgb(Texture2D<float3> texture, uint2 p, float2 uv, bool filterInputs)
@@ -48,7 +42,7 @@ ResolveTerms GetResolveTerms(uint2 p, float2 uv, bool filterInputs = false)
         // far endpoint: a nearer opaque surface may be in front of the smoke.
         // This also closes per-pixel LUT zeros outside conservative quad tiles.
         float viewDepth = ViewDepthFromDevice(sceneDepth);
-        if (all(SampleResolveTransmittance(uv, viewDepth) == 0))
+        if (all(SampleSurfaceTransmittance(uv, viewDepth) == 0))
             o.totalT = 0;
     }
     o.normalization = (1. - o.totalT) / max(ReadResolveRgb(Denominator, p, uv, filterInputs), .000001);
@@ -70,7 +64,7 @@ ResolveTerms GetResolveTerms(uint2 p, float2 uv, bool filterInputs = false)
         o.backgroundValid = InterfaceSurface.Load(int3(p, 0)).a <= 0;
         return o; // sharp refraction keeps its accepted foreground-sampling rule
     }
-    float3 frontT = SampleResolveTransmittance(uv, hit.r);
+    float3 frontT = SampleSurfaceTransmittance(uv, hit.r);
     float3 interfaceT =
         filterInputs ? InterfaceSurface.SampleLevel(LinearClamp, uv, 0).rgb : InterfaceSurface.Load(int3(p, 0)).rgb;
     float3 q = saturate(frontT * interfaceT);

@@ -44,16 +44,22 @@ int main()
     check(table.Resolve(1, defaults).MaximumDisplacement() == 20);
     check(table.Resolve(3, defaults).value.gain == 1); // VFX does not inherit glass gain.
     auto records = table.GpuRecords(defaults);
-    check(records.size() == 16 && records[6][0] == 1.8f && records[6][1] == 2);
+    check(records.size() == 20 && records[7][0] == 1.8f && records[7][1] == 2);
     check(records[0][3] == .4f); // Coverage survived vertex-index replacement.
     check(table.Resolve(0, defaults).FrostTheta() == 0);
     table.entries[3].vfxPattern = 2;
     table.entries[3].vfxPhase = .35f;
     records = table.GpuRecords(defaults);
-    check(records[15][2] == 2 && records[15][3] == .35f);
+    check(records[18][2] == 2 && records[18][3] == .35f);
     // Imported glass normals must not turn normal.z into a refraction offset.
     vertices = {{{0, 0, 1, 2}}, {{.2f, .3f, .4f, 1}}, {{.9f, .95f, .97f, .26f}}, {{0, 0, -1, -2}}};
     table.Build(vertices, defaults);
     check(table.Resolve(0, defaults).MaximumDisplacement() == 0 && table.Resolve(0, defaults).FrostTheta() > 0);
+    table.entries[0].transmission[3] = 0;
+    table.entries[0].cameraOffsetBins = 2.f;
+    check(table.Resolve(0, defaults).OitCameraOffsetBins() == 2.f);
+    check(table.GpuRecords(defaults)[4][0] == 2.f);
+    table.entries[0].transmission[3] = .2f;
+    check(table.Resolve(0, defaults).OitCameraOffsetBins() == 0); // Interface stays physical.
     std::cout << "Material deduplication, inheritance, scalar/RGB classification and bounds contracts PASS\n";
 }

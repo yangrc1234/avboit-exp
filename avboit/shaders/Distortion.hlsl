@@ -6,6 +6,7 @@ Texture2D<float4> Opaque : register(t3);
 #include "OpaqueDepth.hlsli"
 #include "InterfaceDepth.hlsli"
 #include "DepthMapping.hlsli"
+#include "TransmittanceSampling.hlsli"
 // VFX material output is a signed screen-space displacement in internal pixels.
 // This shock-wave material can be replaced by texture/normal-driven materials.
 float2 vfxPixel(Varyings i) : SV_Target
@@ -34,10 +35,7 @@ float2 vfxPixel(Varyings i) : SV_Target
         ring = exp(-band * band) * smoothstep(0., .08, phase) * (1. - smoothstep(.72, 1., phase));
         direction = i.local / max(r, .001) * (1. - .35 * band);
     }
-    float mapped = MapAdaptiveDepth(DepthWarp, i.depth, 80., 1., 2.);
-    float3 t = mapped < 0
-                   ? float3(1, 1, 1)
-                   : TransmittanceLut.SampleLevel(LinearClamp, float3(uv, (mapped + .5) / float(SLICE_COUNT)), 0).rgb;
+    float3 t = SampleSurfaceTransmittance(uv, i.depth);
     float visibility = dot(t, float3(.2126, .7152, .0722));
     return direction * ring * Camera[3].w * visibility * i.optics.y;
 }

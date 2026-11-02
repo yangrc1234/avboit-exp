@@ -38,6 +38,7 @@ struct TransparencyFrame
 {
     bool denseExtinction = false, poisonExtinction = false;
     bool poisonResolve = false;
+    bool conservativeSplat = false, lutMinFilter = false;
     bool sparseBlur = true, cubic = true;
     unsigned lastBlurMip = 5;
     bool zeroDepth = false;

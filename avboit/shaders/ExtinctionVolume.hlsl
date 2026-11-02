@@ -18,12 +18,15 @@ void splatPixel(Varyings i)
     // one LUT XY texel; its bilinear support reaches up to one texel per axis.
     // Device depth is affine on a projected triangle, unlike view/log/warped Z.
     float depthSpan = abs(ddx(i.position.z)) + abs(ddy(i.position.z));
+    // Include the optional XY min halo as well as the reconstruction footprint.
+    // Keep the existing bounded occupancy guard; no extra Z bins are allocated.
+    depthSpan *= (UseCubicTransmittance() ? 2. : 1.) + ((uint(Camera[7].w) & 32u) != 0 ? 1. : 0.);
     float logDepth = NormalizedLogDepth(i.depth, 80., 1.);
     if (Camera[9].x != 0)
     {
         // Clamp before reciprocal reconstruction to stay inside the far plane.
         float pushedDepth = ViewDepthFromDevice(max(i.position.z - depthSpan, 0.));
-        float pushedLogDepth = NormalizedLogDepth(pushedDepth, 80., 1.);
+        float pushedLogDepth = NormalizedLogDepth(clamp(pushedDepth, Camera[5].z, Camera[5].w), 80., 1.);
         // Bounds occupancy reserves the SAME limit before adaptive compression.
         // No actor-specific shader input or post-warp slice offset is needed.
         logDepth += clamp(pushedLogDepth - logDepth, 0., MaxSlopeSplatPush);
@@ -35,7 +38,7 @@ void splatPixel(Varyings i)
     float3 opacity = Opacity(i);
     if (all(opacity < .00001))
         discard;
-    float mapped = MapAdaptiveLogDepth(DepthWarp, logDepth, 0.);
+    float mapped = MapAdaptiveLogDepth(DepthWarp, logDepth, 0.) - i.cameraOffsetBins;
     SplatExtinction(pixel.y * VOLUME_WIDTH + pixel.x, mapped, TransmittanceToOpticalDepth(1. - opacity),
                     i.scalarExtinction != 0);
 }
@@ -105,11 +108,20 @@ void AppendZeroCandidates(uint2 pixel, uint zeroSlice)
             ZeroCandidates[slot++] = y * tiles.x + x;
 }
 
-void Integrate(uint2 pixel, bool sparse)
+// A 10x10 group integrates 8x8 output columns plus a one-column halo.
+// Each lane retains its own integral. Only integrated T is shared/reduced;
+// never feed a neighbour minimum back into the next Z integration step.
+groupshared float3 IntegratedTile[100];
+void Integrate(uint2 pixel, bool sparse, bool minFilter, uint2 lane)
 {
-    if (any(pixel >= uint2(VOLUME_WIDTH, VOLUME_HEIGHT)))
+    bool writePixel = all(pixel < uint2(VOLUME_WIDTH, VOLUME_HEIGHT));
+    if (minFilter)
+        writePixel = writePixel && all(lane >= 1) && all(lane <= 8);
+    else if (!writePixel)
         return;
-    uint ray = pixel.y * VOLUME_WIDTH + pixel.x, tile = OccupancyTile(pixel);
+    // Halo and partial output groups must participate in every barrier.
+    uint2 source = min(pixel, uint2(VOLUME_WIDTH - 1, VOLUME_HEIGHT - 1));
+    uint ray = source.y * VOLUME_WIDTH + source.x, tile = OccupancyTile(source);
     float3 integral = 0, t = 1;
     bool saturated = false;
     uint zeroSlice = SLICE_COUNT;
@@ -152,7 +164,6 @@ void Integrate(uint2 pixel, bool sparse)
         // nonnegative, so no later sample can become nonzero again.
         if (all(t < (.5 / 255.)))
         {
-            zeroSlice = min(zeroSlice, slice);
             if (sparse)
             {
                 t = 0;
@@ -161,14 +172,46 @@ void Integrate(uint2 pixel, bool sparse)
         }
         // Empty slices still receive the carried transmittance. Leaving them
         // unwritten would leak previous-frame data through linear filtering.
-        Integrated[uint3(pixel, slice)] = float4(t, 1);
+        float3 outputT = t;
+        if (minFilter)
+        {
+            IntegratedTile[lane.y * 10 + lane.x] = t;
+            GroupMemoryBarrierWithGroupSync();
+            if (writePixel)
+            {
+                [unroll] for (int y = -1; y <= 1; ++y)
+                {
+                    [unroll] for (int x = -1; x <= 1; ++x)
+                    {
+                        outputT = min(outputT, IntegratedTile[(int(lane.y) + y) * 10 + int(lane.x) + x]);
+                    }
+                }
+            }
+            GroupMemoryBarrierWithGroupSync();
+        }
+        if (writePixel)
+        {
+            if (all(outputT < (.5 / 255.)))
+                zeroSlice = min(zeroSlice, slice);
+            Integrated[uint3(pixel, slice)] = float4(outputT, 1);
+        }
     }
     // Same threshold as quantized RGB LUT; sentinel means the ray never closed.
-    ZeroSlice[pixel] = zeroSlice;
-    AppendZeroCandidates(pixel, zeroSlice);
+    if (writePixel)
+    {
+        ZeroSlice[pixel] = zeroSlice;
+        AppendZeroCandidates(pixel, zeroSlice);
+    }
 }
 [numthreads(8, 8, 1)] void integrateLut(uint2 pixel : SV_DispatchThreadID)
-{ Integrate(pixel, true); }[numthreads(8, 8, 1)] void integrateDenseLut(uint2 pixel : SV_DispatchThreadID)
+{ Integrate(pixel, true, false, 0); }[numthreads(8, 8, 1)] void integrateDenseLut(uint2 pixel : SV_DispatchThreadID)
 {
-    Integrate(pixel, false);
+    Integrate(pixel, false, false, 0);
+}
+[numthreads(10, 10, 1)] void integrateMinLut(uint2 group : SV_GroupID, uint2 lane : SV_GroupThreadID)
+{
+    Integrate(uint2(max(int2(group * 8 + lane) - 1, 0)), true, true, lane);
+}[numthreads(10, 10, 1)] void integrateDenseMinLut(uint2 group : SV_GroupID, uint2 lane : SV_GroupThreadID)
+{
+    Integrate(uint2(max(int2(group * 8 + lane) - 1, 0)), false, true, lane);
 }

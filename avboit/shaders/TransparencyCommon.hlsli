@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Shared demo geometry/material ABI and camera helpers.
 // Camera[6] carries actual full/volume dimensions; no resolution permutations.
+// Camera[12].xy reserves toward/away physical bins for material ordering offsets.
 #ifndef AVBOIT_TRANSPARENCY_COMMON
 #define AVBOIT_TRANSPARENCY_COMMON
 #define WIDTH uint(Camera[6].x)
@@ -20,13 +21,20 @@ Buffer<float4> Materials : register(t23);
 Buffer<float4> Camera : register(t15);
 #include "DeviceDepth.hlsli"
 SamplerState LinearClamp : register(s0);
+// Independent from Camera[0].w, which selects frost reconstruction.
+bool UseCubicTransmittance()
+{
+    return Camera[11].w != 0;
+}
 struct Varyings
 {
     float4 position : SV_Position;
     float depth : DEPTH;
+    nointerpolation float cameraOffsetBins : CAMERA_OFFSET;
     float4 color : COLOR;
     float3 transmission : TRANSMISSION;
     float2 local : TEXCOORD;
+    float3 materialLocal : TEXCOORD1;
     float3 surfaceNormal : NORMAL;
     nointerpolation float4 sphere : SPHERE;
     float roughness : ROUGHNESS;
@@ -34,7 +42,7 @@ struct Varyings
     nointerpolation uint kind : KIND;
     nointerpolation float4 optics : OPTICS; // IOR, gain, displacement, sphere normal mode
     nointerpolation uint scalarExtinction : SCALAR_EXTINCTION;
-    nointerpolation float2 effect : EFFECT; // VFX pattern and phase offset.
+    nointerpolation float2 effect : EFFECT; // VFX pattern/phase or normal-mesh surface pattern/frequency.
 };
 Varyings meshVertex(uint id : SV_VertexID)
 {
@@ -47,8 +55,9 @@ Varyings meshVertex(uint id : SV_VertexID)
     } // Negative position.w marks geometry already in view space.
     o.position = float4(p.x / (float(WIDTH) / HEIGHT * .57735027), p.y / .57735027, ClipDepthFromView(p.z), p.z);
     o.position.xy += Camera[11].xy * float2(2., -2.) / Camera[6].xy * o.position.w;
-    uint material = uint(Vertices[id * 4 + 1].w) * 4;
+    uint material = uint(Vertices[id * 4 + 1].w) * 5;
     o.depth = p.z;
+    o.cameraOffsetBins = Materials[material + 4].x;
     o.color = Materials[material];
     o.transmission = Materials[material + 1].rgb;
     o.roughness = Materials[material + 1].w;
@@ -57,6 +66,9 @@ Varyings meshVertex(uint id : SV_VertexID)
     o.scalarExtinction = uint(Materials[material + 3].y);
     o.effect = Materials[material + 3].zw;
     o.local = Vertices[id * 4 + 3].xy;
+    // Material import frees record 1.rgb for stable object-local coordinates.
+    // Layered fixtures use these coordinates so noise follows actor transforms.
+    o.materialLocal = Vertices[id * 4 + 1].xyz;
     o.distortion = o.optics.z * o.optics.y;
     o.surfaceNormal = float3(0, 0, -1);
     o.sphere = float4(0, 0, 0, Vertices[id * 4 + 3].w);
@@ -75,11 +87,33 @@ Varyings meshVertex(uint id : SV_VertexID)
     }
     return o;
 }
+float LayerNoiseHash(float3 p)
+{
+    p = frac(p * .1031);
+    p += dot(p, p.yzx + 33.33);
+    return frac((p.x + p.y) * p.z);
+}
+float LayerNoise(float3 p)
+{
+    float3 b = floor(p), f = frac(p);
+    f = f * f * (3. - 2. * f);
+    return lerp(lerp(lerp(LayerNoiseHash(b), LayerNoiseHash(b + float3(1, 0, 0)), f.x),
+                     lerp(LayerNoiseHash(b + float3(0, 1, 0)), LayerNoiseHash(b + float3(1, 1, 0)), f.x), f.y),
+                lerp(lerp(LayerNoiseHash(b + float3(0, 0, 1)), LayerNoiseHash(b + float3(1, 0, 1)), f.x),
+                     lerp(LayerNoiseHash(b + float3(0, 1, 1)), LayerNoiseHash(b + 1.), f.x), f.y),
+                f.z);
+}
 float3 Opacity(Varyings i)
 {
     if (i.kind == 2 && i.sphere.w > 0)
         clip(length(i.local) - i.sphere.w);
     float coverage = i.color.a;
+    if (i.kind == 2 && i.effect.x == 1)
+    {
+        float3 p = i.materialLocal * i.effect.y;
+        float noise = .75 * LayerNoise(p) + .25 * LayerNoise(p * 2.03 + 7.1);
+        coverage *= smoothstep(.32, .68, noise);
+    }
     if (i.kind == 1)
     {
         float r = length(i.local);

@@ -686,6 +686,28 @@ void NativeViewer::TestActorEditing(nvrhi::IFramebuffer *framebuffer)
 {
     if (objectCount == 0)
         throw std::runtime_error("Actor test needs transparent actors");
+    if (stressPreset == 26)
+    {
+        if (objectCount != 6)
+            throw std::runtime_error("Layered fixture needs three independent inner/shell pairs");
+        const float gaps[] = {0, .01f, .05f};
+        for (unsigned pair = 0; pair < 3; ++pair)
+        {
+            const auto &inner = actors[pair * 2], &shell = actors[pair * 2 + 1];
+            if (inner.endRecord - inner.firstRecord != shell.endRecord - shell.firstRecord ||
+                materials.entries[inner.material].surfacePattern != 2 ||
+                materials.entries[shell.material].surfacePattern != 1)
+                throw std::runtime_error("Layered model topology/material mismatch");
+            for (unsigned v = 0; v < inner.endRecord - inner.firstRecord; v += 4)
+                for (unsigned c = 0; c < 3; ++c)
+                {
+                    float expected =
+                        vertices[inner.firstRecord + v][c] + gaps[pair] * vertices[inner.firstRecord + v + 3][c];
+                    if (std::abs(vertices[shell.firstRecord + v][c] - expected) > 1e-5f)
+                        throw std::runtime_error("Shell does not match inner mesh plus normal displacement");
+                }
+        }
+    }
     const auto savedVertices = vertices, savedBounds = bounds;
     const auto savedVolumes = localVolumes;
     auto readColor = [&]()
@@ -710,6 +732,47 @@ void NativeViewer::TestActorEditing(nvrhi::IFramebuffer *framebuffer)
     };
     Render(framebuffer);
     const auto before = readColor();
+    if (stressPreset == 26)
+    {
+        auto &shell = materials.entries[actors[1].material];
+        const float savedOffset = shell.cameraOffsetBins;
+        shell.cameraOffsetBins = 2.f;
+        Render(framebuffer);
+        if (!hasCameraOffsets || (unsigned(camera[7][3]) & 2u) != 0 || vertices != savedVertices ||
+            bounds != savedBounds)
+            throw std::runtime_error("Camera offset changed geometry or left hardware Zero-T enabled");
+        if (readColor() == before && savedOffset != .1f)
+            throw std::runtime_error("Camera offset failed to change layered-shell color");
+        shell.cameraOffsetBins = savedOffset;
+        Render(framebuffer);
+    }
+    const bool savedMinFilter = lutMinFilter;
+    const auto minFilterLut = lut;
+    SetLutMinFilter(!savedMinFilter);
+    Render(framebuffer);
+    if (((unsigned(camera[7][3]) & 32u) != 0) != !savedMinFilter || lut != minFilterLut)
+        throw std::runtime_error("LUT min filter toggle changed allocation or lost its slope flag");
+    SetLutMinFilter(savedMinFilter);
+    Render(framebuffer);
+    const bool savedLutCubic = lutCubic;
+    const auto savedLut = lut;
+    SetLutCubic(!savedLutCubic);
+    Render(framebuffer);
+    if (camera[11][3] != float(!savedLutCubic) || lut != savedLut)
+        throw std::runtime_error("Live LUT filter toggle did not update or reallocated the LUT");
+    SetLutCubic(savedLutCubic);
+    Render(framebuffer);
+    if (GetDevice()->queryFeatureSupport(nvrhi::Feature::ConservativeRasterization))
+    {
+        const bool savedConservative = conservativeSplat;
+        SetConservativeSplat(!savedConservative);
+        Render(framebuffer);
+        if (((unsigned(camera[7][3]) & 16u) != 0) != !savedConservative || lut != savedLut)
+            throw std::runtime_error("Conservative splat live toggle changed RT allocation or lost its occupancy flag");
+        SetConservativeSplat(savedConservative);
+        Render(framebuffer);
+    }
+
     for (unsigned actor = 0; actor < objectCount; ++actor)
     {
         const F3 delta = {1.25f + actor * .1f, .3f, .5f};
@@ -775,6 +838,8 @@ void NativeViewer::TestActorEditing(nvrhi::IFramebuffer *framebuffer)
                     throw std::runtime_error("Rotated mesh escaped its occupancy bounds");
             if (vertices[v + 1][3] != savedVertices[v + 1][3] || vertices[v + 2][3] != savedVertices[v + 2][3])
                 throw std::runtime_error("Rotation corrupted actor/material identity");
+            if (materials.entries[a.material].surfacePattern != 0 && vertices[v + 1] != savedVertices[v + 1])
+                throw std::runtime_error("Rotation changed object-local noise coordinates");
             if (kind >= 5)
             {
                 float xx = 0, yy = 0, xy = 0;

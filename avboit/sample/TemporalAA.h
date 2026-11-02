@@ -16,7 +16,7 @@ class TemporalAA
     TemporalAA(nvrhi::IDevice *device, nvrhi::ITexture *color, nvrhi::ITexture *depth);
     donut::math::float2 Jitter() const;
     void Invalidate() { valid = false; }
-    void Record(nvrhi::ICommandList *commands, const std::array<std::array<float, 4>, 12> &camera);
+    void Record(nvrhi::ICommandList *commands, const std::array<std::array<float, 4>, 13> &camera);
     nvrhi::ITexture *Output() const { return resolved; }
 
   private:

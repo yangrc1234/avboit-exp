@@ -140,7 +140,7 @@ bool RunBoundsTest(nvrhi::IDevice *device)
                                             .setKeepInitialState(true));
     auto screenReadback = device->createStagingTexture(screen->getDesc(), nvrhi::CpuAccessMode::Read);
     auto camera = device->createBuffer(nvrhi::BufferDesc()
-                                           .setByteSize(10 * 16)
+                                           .setByteSize(13 * 16)
                                            .setCanHaveTypedViews(true)
                                            .setFormat(nvrhi::Format::RGBA32_FLOAT)
                                            .setInitialState(nvrhi::ResourceStates::CopyDest)
@@ -172,7 +172,8 @@ bool RunBoundsTest(nvrhi::IDevice *device)
                                                  .setKeepInitialState(true));
     auto warpBindings = nvrhi::BindingSetDesc()
                             .addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(0, output))
-                            .addItem(nvrhi::BindingSetItem::TypedBuffer_UAV(0, warp));
+                            .addItem(nvrhi::BindingSetItem::TypedBuffer_UAV(0, warp))
+                            .addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(15, camera));
     nvrhi::BindingLayoutHandle warpLayout;
     nvrhi::BindingSetHandle warpSet;
     if (!nvrhi::utils::CreateBindingSetAndLayout(device, nvrhi::ShaderType::Compute, 0, warpBindings, warpLayout,
@@ -199,7 +200,8 @@ bool RunBoundsTest(nvrhi::IDevice *device)
                                 .addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(0, output))
                                 .addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(1, warp))
                                 .addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(2, input))
-                                .addItem(nvrhi::BindingSetItem::TypedBuffer_UAV(0, physical));
+                                .addItem(nvrhi::BindingSetItem::TypedBuffer_UAV(0, physical))
+                                .addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(15, camera));
     nvrhi::BindingLayoutHandle physicalLayout;
     nvrhi::BindingSetHandle physicalSet;
     if (!nvrhi::utils::CreateBindingSetAndLayout(device, nvrhi::ShaderType::Compute, 0, physicalBindings,
@@ -263,7 +265,7 @@ bool RunBoundsTest(nvrhi::IDevice *device)
         commands->clearTextureUInt(screen, nvrhi::AllSubresources, 0);
         commands->clearBufferUInt(output, 0);
         commands->writeBuffer(input, data.data(), data.size() * 16);
-        std::array<std::array<float, 4>, 12> cameraData{};
+        std::array<std::array<float, 4>, 13> cameraData{};
         cameraData[9][0] = float(slopeSplat);
         commands->writeBuffer(camera, cameraData.data(), sizeof(cameraData));
         if (!objects.empty())

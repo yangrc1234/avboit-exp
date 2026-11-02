@@ -10,7 +10,7 @@ namespace avboit
 struct ExtinctionShaders
 {
     nvrhi::ShaderHandle bounds, adaptiveDepth, physicalMask;
-    nvrhi::ShaderHandle clear, integrate, integrateDense;
+    nvrhi::ShaderHandle clear, integrate, integrateDense, integrateMin, integrateDenseMin;
 };
 struct ExtinctionInputs
 {
@@ -36,8 +36,9 @@ class ExtinctionVolume
     void RecordAdaptiveDepth(nvrhi::ICommandList *commands) const;
     void RecordPhysicalMask(nvrhi::ICommandList *commands) const;
     void RecordClear(nvrhi::ICommandList *commands, bool dense, bool poison) const;
-    void RecordSplat(nvrhi::ICommandList *commands, const std::vector<GeometryDraw> &draws) const;
-    void RecordIntegration(nvrhi::ICommandList *commands, bool dense) const;
+    void RecordSplat(nvrhi::ICommandList *commands, const std::vector<GeometryDraw> &draws,
+                     bool conservative = false) const;
+    void RecordIntegration(nvrhi::ICommandList *commands, bool dense, bool minFilter = false) const;
 
     nvrhi::ITexture *ScreenTiles() const { return m_screenTiles; }
     nvrhi::IBuffer *Occupancy() const { return m_masks; }
@@ -60,14 +61,15 @@ class ExtinctionVolume
         void Record(nvrhi::ICommandList *commands, unsigned x, unsigned y = 1) const;
     };
     void Barrier(nvrhi::ICommandList *commands) const;
-    ComputePass m_boundsPass, m_warpPass, m_physicalPass, m_clearPass, m_integratePass, m_densePass;
+    ComputePass m_boundsPass, m_warpPass, m_physicalPass, m_clearPass, m_integratePass, m_densePass, m_minPass,
+        m_denseMinPass;
     nvrhi::BufferHandle m_masks, m_warp, m_physicalMasks, m_extinction, m_overflow;
     nvrhi::BufferHandle m_zeroCandidates, m_zeroDrawArgs;
     nvrhi::TextureHandle m_lut, m_rasterTarget, m_zeroSlice, m_screenTiles;
     nvrhi::FramebufferHandle m_framebuffer;
     nvrhi::BindingLayoutHandle m_splatLayout;
     nvrhi::BindingSetHandle m_splatBindings;
-    std::vector<nvrhi::GraphicsPipelineHandle> m_splatPipelines;
+    std::vector<nvrhi::GraphicsPipelineHandle> m_splatPipelines, m_conservativeSplatPipelines;
     nvrhi::BufferHandle m_indices;
     unsigned m_depthBudget = 128;
     unsigned m_width = 0, m_height = 0, m_tiles = 0, m_objects = 0;

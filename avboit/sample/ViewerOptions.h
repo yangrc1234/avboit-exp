@@ -14,6 +14,7 @@ struct ViewerOptions
     bool help = false, headless = false, uiCapture = false, uiSelfTest = false, actorEditorTest = false;
     bool cubic = true, frost = true, sparseBlur = true, fullBlur = false;
     bool cubicTrilinear = false;
+    bool lutCubic = false, conservativeSplat = false, lutMinFilter = false;
     bool sponza = false, emissiveBalls = false, emissiveFront = false, showSmoke = true, glassSphere = false,
          rgbGlass = false;
     bool vfx = false, behind = false, normalSphere = false;
@@ -26,7 +27,7 @@ struct ViewerOptions
     bool volumeShadows = true;
     bool lowResolutionVolumes = false, temporalVolumeDithering = false;
     bool ditheredVolumeUpsample = true, volumeUpsampleTest = false;
-    float initialVolumeExtinction = -1.f;
+    float initialVolumeExtinction = -1.f, shellOffsetBins = 0;
     float volumeStepSize = .5f, volumeLowT = .1f, volumeStepScale = 4.f;
     int volumeMaxSteps = 256;
     float fixtureTime = 0, sigmaLimit = 24;

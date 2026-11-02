@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Independent implementation of the public AVBOIT depth-compaction idea.
 // Input: occupancy in 2048 virtual log-depth slices (one uint per slice).
-// Output: [virtualCount, occupiedCount], then 2049 {prefix, flags} entries.
+// Output: [virtualCount, reservedEnd], then 2049 {prefix, flags} entries.
+// Prefix includes leading offset padding; reservedEnd also includes trailing padding.
 // Flags: bit 0 occupied, bit 1 region start, bit 2 region end.
 // Guard slices cover linear splat and the sampling depth bias. They are
 // regenerated after EVERY coarsening, rather than being shrunk by merging.
+Buffer<float4> Camera : register(t15); // [12].xy: toward/away offset reservation in bins.
 Buffer<uint> InputOccupancy : register(t0);
 RWBuffer<uint> DepthWarp : register(u0);
 #define VIRTUAL_SLICES 2048
@@ -20,6 +22,7 @@ groupshared uint occupiedCount;
 
 void BuildAdaptiveDepth(uint thread, uint physicalBudget)
 {
+    uint2 padding = uint2(Camera[12].xy);
     for (uint i = thread; i < VIRTUAL_SLICES; i += THREADS)
         rawOccupancy[i] = InputOccupancy[i] != 0;
     if (thread == 0)
@@ -53,7 +56,7 @@ void BuildAdaptiveDepth(uint thread, uint physicalBudget)
             occupiedCount = scanA[sliceCount - 1];
         GroupMemoryBarrierWithGroupSync();
         // Reserve a terminal slice for interpolation at the last occupied slice.
-        if (occupiedCount < physicalBudget)
+        if (occupiedCount + padding.x + padding.y < physicalBudget)
             break;
         for (uint i = thread; i < sliceCount / 2; i += THREADS)
             scanB[i] = rawOccupancy[2 * i] | rawOccupancy[2 * i + 1];
@@ -68,7 +71,7 @@ void BuildAdaptiveDepth(uint thread, uint physicalBudget)
     if (thread == 0)
     {
         DepthWarp[0] = sliceCount;
-        DepthWarp[1] = occupiedCount;
+        DepthWarp[1] = occupiedCount + padding.x + padding.y;
     }
     for (uint i = thread; i <= VIRTUAL_SLICES; i += THREADS)
     {
@@ -76,7 +79,7 @@ void BuildAdaptiveDepth(uint thread, uint physicalBudget)
         uint active = i < sliceCount ? scanA[i] - prefix : 0;
         uint previous = i > 0 && i < sliceCount ? scanA[i - 1] - (i > 1 ? scanA[i - 2] : 0) : 0;
         uint next = i + 1 < sliceCount ? scanA[i + 1] - scanA[i] : 0;
-        DepthWarp[2 + 2 * i] = prefix;
+        DepthWarp[2 + 2 * i] = prefix + padding.x;
         DepthWarp[3 + 2 * i] = active | ((active && !previous) ? 2 : 0) | ((active && !next) ? 4 : 0);
     }
 }

@@ -85,6 +85,8 @@ gizmo 只用于编辑，不进入 HDR/TAA。导入的建筑仍作为背景场景
 
 详细公式和资源表：[当前管线](docs/PIPELINE.zh-CN.md)。
 材质提交边界：[actor/material draws](docs/MATERIAL_DRAWS_ZH.md)。
+同模型内外层覆盖测试：[noise 外壳场景](docs/LAYERED_SHELL.zh-CN.md)。
+前后玻璃轮廓混叠测试：[边缘色带复现](docs/GLASS_SILHOUETTE.zh-CN.md)。
 局限包括单特殊界面、屏幕空间前景采样、packed 精度和高 overdraw 溢出、Zero-T 的量化与空间近似，
 以及未接入 TAA/MSAA，见 [已知限制](docs/KNOWN_LIMITATIONS.zh-CN.md)。
 
