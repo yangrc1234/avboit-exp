@@ -106,4 +106,39 @@ void AppendLayeredModel(std::vector<FixtureRecord> &vertices, const std::array<f
             }
         }
 }
+void AppendLayeredCube(std::vector<FixtureRecord> &vertices, const std::array<float, 3> &center, float yaw, bool outer)
+{
+    using V3 = std::array<float, 3>;
+    const float extent = outer ? .71f : .70f;
+    const float angle = yaw * 3.14159265358979323846f / 180.f;
+    auto rotate = [&](V3 p) -> V3
+    {
+        // A small pitch exposes the top; yaw varies the side-plane slope.
+        float y = p[1] * .93969262f - p[2] * .34202014f;
+        float z = p[1] * .34202014f + p[2] * .93969262f;
+        return {p[0] * std::cos(angle) + z * std::sin(angle), y, -p[0] * std::sin(angle) + z * std::cos(angle)};
+    };
+    for (unsigned axis = 0; axis < 3; ++axis)
+        for (int side : {-1, 1})
+        {
+            unsigned u = (axis + 1) % 3, v = (axis + 2) % 3;
+            const int corners[6][2] = {{-1, -1}, {1, -1}, {-1, 1}, {1, -1}, {1, 1}, {-1, 1}};
+            V3 normal = {};
+            normal[axis] = float(side);
+            normal = rotate(normal);
+            for (const auto &corner : corners)
+            {
+                V3 p = {};
+                p[axis] = float(side);
+                p[u] = float(corner[0]);
+                p[v] = float(corner[1] * side);
+                p = rotate(p);
+                vertices.push_back(
+                    {center[0] + p[0] * extent, center[1] + p[1] * extent, center[2] + p[2] * extent, 2});
+                vertices.push_back(outer ? FixtureRecord{.035f, .65f, .95f, 1} : FixtureRecord{1, .22f, .035f, .88f});
+                vertices.push_back({0, 0, 0, 0});
+                vertices.push_back({normal[0], normal[1], normal[2], -2});
+            }
+        }
+}
 } // namespace avboit

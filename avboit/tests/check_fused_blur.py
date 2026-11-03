@@ -23,6 +23,9 @@ def capture(name, flags):
             [
                 str(a.viewer.resolve()),
                 "--headless",
+                "--no-taa",
+                "--volume-full-res",
+                "--no-lut-min-filter",
                 "--render-width",
                 "2560",
                 "--render-height",

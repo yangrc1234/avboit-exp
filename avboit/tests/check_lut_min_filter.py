@@ -27,6 +27,11 @@ for scene in (27, 28, 17, 11, 13):
             [
                 str(root / "bin/avboit_viewer.exe"),
                 "--headless",
+                "--lut-min-retain",
+                "0",
+                "--no-taa",
+                "--volume-full-res",
+                "--no-lut-min-filter",
                 "--stress",
                 str(scene),
                 "--render-width",
@@ -82,14 +87,15 @@ for scene in (27, 28, 17, 11, 13):
     if scene in (27, 28):
         src = luts["ordinary"]
         pad = np.pad(src, ((0, 0), (1, 1), (1, 1), (0, 0)), mode="edge")
-        expected = np.minimum.reduce(
+        neighbour_min = np.minimum.reduce(
             [
                 pad[:, y : y + src.shape[1], x : x + src.shape[2]]
                 for y in range(3)
                 for x in range(3)
             ]
         )
-        assert np.array_equal(expected, luts["min"]), ("not exact XY minimum", scene)
+        expected = np.minimum(src, np.maximum(neighbour_min, 16))
+        assert np.array_equal(expected, luts["min"]), ("not bounded XY minimum", scene)
         canvas = Image.new("RGB", (1440, 516), "#202020")
         draw = ImageDraw.Draw(canvas)
         for i, (name, label) in enumerate(

@@ -95,7 +95,8 @@ std::vector<MaterialRecord> MaterialTable::GpuRecords(const MaterialDefaults &de
         records.push_back({float(m.kind), float(m.ScalarExtinction()),
                            float(m.kind == 2 ? m.surfacePattern : m.vfxPattern),
                            m.kind == 2 ? m.patternScale : m.vfxPhase});
-        records.push_back({Resolve(i, defaults).OitCameraOffsetBins(), 0, 0, 0});
+        records.push_back(
+            {Resolve(i, defaults).OitCameraOffsetBins(), 0, float(m.flatLayer), float(m.flatAnchorActor + 1)});
     }
     return records;
 }

@@ -25,7 +25,7 @@ float3 SampleVolumeTransmittance(float2 uv, float viewZ)
     return SampleTransmittanceAtZ(uv, (mapped - .5) / float(SLICE_COUNT));
 }
 void AccumulateVolumeSegment(float2 segment, float sampleFraction, float rayZ, VolumeVaryings i, bool behind,
-                             bool textured, float2 uv, float3 beginT, float3 endT, inout VolumeAccumulation o)
+                             bool textured, float2 uv, float3 beginT, float3 endT, inout VolumeAccumulation o, inout float shadingCount)
 {
     if (segment.y <= segment.x)
         return;
@@ -47,6 +47,7 @@ void AccumulateVolumeSegment(float2 segment, float sampleFraction, float rayZ, V
     }
     if (!any(tau > 0.))
         return;
+    shadingCount += 1.;
     if (VolumeLights[4].y > 0.)
     {
         float3 world = Camera[0].xyz + WorldRay(uv) * (sampleZ / rayZ);
@@ -101,6 +102,7 @@ VolumeAccumulation ShadeVolume(VolumeVaryings i, bool textured, bool halfResolut
             phase = (phase + uint(Camera[9].w - 1.)) & 3u;
         jitter = (float(phase) + jitter) * .25;
     }
+    float3 stats = 0; // intervals, nonzero-density shading evaluations, skipped intervals
     float z = interval.x;
     float3 t = SampleVolumeTransmittance(uv, z);
     [loop] for (uint step = 0; step < maxSteps && z < stopZ; ++step)
@@ -112,14 +114,26 @@ VolumeAccumulation ShadeVolume(VolumeVaryings i, bool textured, bool halfResolut
         // its density/tau and accidentally making long volumes transparent.
         ds = max(ds, (interval.y - z) / (rayZ * float(maxSteps - step)));
         float endZ = min(z + ds * rayZ, interval.y);
-        float split = clamp(interfaceZ, z, endZ);
         float3 endT = SampleVolumeTransmittance(uv, endZ);
+        stats.x += 1.;
+        // Exact RGB equality is only a quantized empty-space heuristic.
+        // Never skip saturated channels: flat zero T does not imply zero density,
+        // and this pass still owns the totalTau needed by the common resolve.
+        [branch] if (Camera[12].z > 0. && all(t == endT) && all(t > 0.))
+        {
+            stats.z += 1.;
+            z = endZ;
+            t = endT;
+            continue;
+        }
+        float split = clamp(interfaceZ, z, endZ);
         float3 splitT = split <= z ? t : (split >= endZ ? endT : SampleVolumeTransmittance(uv, split));
-        AccumulateVolumeSegment(float2(z, split), jitter, rayZ, i, false, textured, uv, t, splitT, o);
-        AccumulateVolumeSegment(float2(split, endZ), jitter, rayZ, i, true, textured, uv, splitT, endT, o);
+        AccumulateVolumeSegment(float2(z, split), jitter, rayZ, i, false, textured, uv, t, splitT, o, stats.y);
+        AccumulateVolumeSegment(float2(split, endZ), jitter, rayZ, i, true, textured, uv, splitT, endT, o, stats.y);
         z = endZ;
         t = endT;
     }
+    if (Camera[12].w > 0.) o.numerator = stats;
     return o;
 }
 

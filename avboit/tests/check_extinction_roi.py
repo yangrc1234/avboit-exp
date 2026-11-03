@@ -30,6 +30,9 @@ with tempfile.TemporaryDirectory(prefix="avboit-extinction-") as scratch:
             command = [
                 str(viewer),
                 "--headless",
+                "--no-taa",
+                "--volume-full-res",
+                "--no-lut-min-filter",
                 "--sponza",
                 "--vfx",
                 "--camera-preset",

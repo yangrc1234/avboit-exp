@@ -28,6 +28,9 @@ def main():
             [
                 str(root / "bin/avboit_viewer.exe"),
                 "--headless",
+                "--no-taa",
+                "--volume-full-res",
+                "--no-lut-min-filter",
                 "--hardware-depth",
                 "--composition-half",
                 "--render-width",

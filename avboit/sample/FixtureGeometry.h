@@ -15,4 +15,5 @@ void AppendGlassSphere(std::vector<FixtureRecord> &vertices, const std::array<fl
 // Identical topology for both layers; the shell is displaced along mesh normals.
 void AppendLayeredModel(std::vector<FixtureRecord> &vertices, const std::array<float, 3> &center, float shellGap,
                         bool outer);
+void AppendLayeredCube(std::vector<FixtureRecord> &vertices, const std::array<float, 3> &center, float yaw, bool outer);
 } // namespace avboit

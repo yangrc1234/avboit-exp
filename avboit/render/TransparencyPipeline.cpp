@@ -76,7 +76,10 @@ void TransparencyPipeline::Create(nvrhi::IDevice *device, const TransparencyInpu
     oitInputs.indices = inputs.geometryIndices;
     oitInputs.halfAccumulation = inputs.halfAccumulation;
     oitInputs.lowResolutionVolumes = inputs.lowResolutionVolumes;
-    oitInputs.upsamplePixel = load("upsamplePixel", nvrhi::ShaderType::Pixel, "shaders/VolumeUpsample.hlsl");
+    const char *upscaleEntry = inputs.volumeUpsampleKernel == 1   ? "upsampleCoherentPixel"
+                               : inputs.volumeUpsampleKernel == 2 ? "upsampleMatchedPixel"
+                                                                  : "upsamplePixel";
+    oitInputs.upsamplePixel = load(upscaleEntry, nvrhi::ShaderType::Pixel, "shaders/VolumeUpsample.hlsl");
     oitInputs.vertices = inputs.vertices;
     oitInputs.vertexRange = inputs.transparentRange;
     oitInputs.camera = inputs.camera;
@@ -187,7 +190,7 @@ void TransparencyPipeline::Record(nvrhi::ICommandList *commands, const Transpare
     pass(Stage::ExtinctionClear, "Extinction clear",
          [&] { m_volume.RecordClear(commands, frame.denseExtinction, frame.poisonExtinction); });
     pass(Stage::ExtinctionSplat, "Extinction atomic splat",
-         [&] { m_volume.RecordSplat(commands, frame.geometryDraws, frame.conservativeSplat); });
+         [&] { m_volume.RecordSplat(commands, frame.geometryDraws); });
     pass(Stage::Integration, "Transmittance LUT integration",
          [&] { m_volume.RecordIntegration(commands, frame.denseExtinction, frame.lutMinFilter); });
     pass(Stage::ZeroDepth, "Zero-T indirect depth draw / VS neighborhood rejection",

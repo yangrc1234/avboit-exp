@@ -37,6 +37,9 @@ for fixture in (0, 2, 6, 10):
             command = [
                 str(exe),
                 "--headless",
+                "--no-taa",
+                "--volume-full-res",
+                "--no-lut-min-filter",
                 "--stress",
                 str(fixture),
                 "--time",

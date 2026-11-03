@@ -27,6 +27,9 @@ with tempfile.TemporaryDirectory(prefix="avboit-stress-") as scratch:
         command = [
             str(viewer),
             "--headless",
+            "--no-taa",
+            "--volume-full-res",
+            "--no-lut-min-filter",
             "--stress",
             str(preset),
             "--time",

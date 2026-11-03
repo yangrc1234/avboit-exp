@@ -27,6 +27,9 @@ def capture(name, *options):
         [
             str(exe),
             "--headless",
+            "--no-taa",
+            "--volume-full-res",
+            "--no-lut-min-filter",
             "--render-width",
             str(WIDTH),
             "--render-height",

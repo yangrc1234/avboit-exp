@@ -27,10 +27,20 @@ int main()
         Require(defaults.slopeSplat && !Parse({"--no-slope-splat"}).slopeSplat);
         Require(defaults.volumeScale == 8 && Parse({"--camera-preset", "6"}).cameraPreset == 6);
         Require(defaults.occupancyOverlay == 0);
+        Require(defaults.lutMinRetain == .5f && Parse({"--lut-min-retain", "0"}).lutMinRetain == 0.f &&
+                Parse({"--lut-min-retain", "1"}).lutMinRetain == 1.f);
+        Require(defaults.lutMinFilter && !Parse({"--no-lut-min-filter"}).lutMinFilter);
+        Require(!Parse({"--no-taa"}).taa && !Parse({"--volume-full-res"}).lowResolutionVolumes);
+        Require(!defaults.volumeLutSkip && !defaults.volumeMarchStats);
+        Require(Parse({"--volume-lut-skip", "--volume-march-stats"}).volumeLutSkip);
         Require(defaults.shellOffsetBins == 0 && Parse({"--shell-offset-bins", "1.5"}).shellOffsetBins == 1.5f);
-        Require(!defaults.lowResolutionVolumes && !defaults.temporalVolumeDithering);
+        Require(defaults.flattenShell && !Parse({"--geometric-shell"}).flattenShell &&
+                Parse({"--stress", "32"}).stressPreset == 32);
+        Require(defaults.lowResolutionVolumes && !defaults.temporalVolumeDithering);
         Require(Parse({"--volume-half-res"}).lowResolutionVolumes);
-        Require(defaults.ditheredVolumeUpsample);
+        Require(defaults.ditheredVolumeUpsample && defaults.volumeUpsampleKernel == 0);
+        Require(Parse({"--volume-upsample-kernel", "1"}).volumeUpsampleKernel == 1);
+        Require(Parse({"--volume-upsample-kernel", "2"}).volumeUpsampleKernel == 2);
         auto upscaleTest = Parse({"--volume-upsample-test"});
         Require(upscaleTest.headless && upscaleTest.taa && upscaleTest.lowResolutionVolumes &&
                 upscaleTest.volumeUpsampleTest);
@@ -40,7 +50,7 @@ int main()
         Require(march.volumeStepSize == .025f && march.volumeLowT == .05f && march.volumeStepScale == 2.f &&
                 march.volumeMaxSteps == 64);
         Require(Parse({"--volume-stochastic-upsample"}).temporalVolumeDithering);
-        Require(!defaults.taa && Parse({"--taa"}).taa);
+        Require(defaults.taa && Parse({"--taa"}).taa);
         Require(Parse({"--volume-temporal-dither"}).temporalVolumeDithering);
         Require(Parse({"--volume-extinction", "64"}).initialVolumeExtinction == 64.f);
         Require(Parse({"--occupancy-overlay", "7", "--occupancy-slice", "127"}).occupancySlice == 127);
@@ -110,7 +120,9 @@ int main()
                                                                 {"--sphere-ior", "0.9"},
                                                                 {"--refraction-gain", "5"},
                                                                 {"--stress", "-1"},
-                                                                {"--stress", "31"},
+                                                                {"--stress", "34"},
+                                                                {"--lut-min-retain", "-0.1"},
+                                                                {"--lut-min-retain", "1.1"},
                                                                 {"--frost-detail-radius", "65"},
                                                                 {"--frost-detail-radius", "-1"},
                                                                 {"--stress", "1.5"},
@@ -124,6 +136,9 @@ int main()
                                                                 {"--serial-schedule"},
                                                                 {"--max-frost-radius", "129"},
                                                                 {"--max-glass-offset", "-1"},
+                                                                {"--lut-cubic"},
+                                                                {"--conservative-splat"},
+                                                                {"--volume-upsample-kernel", "3"},
                                                                 {"--benchmark", "0"},
                                                                 {"--benchmark", "601"},
                                                                 {"--benchmark", "99999999999999999"},

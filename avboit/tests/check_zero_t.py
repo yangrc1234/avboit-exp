@@ -17,6 +17,9 @@ with tempfile.TemporaryDirectory(prefix="avboit-zero-t-") as scratch:
                 command = [
                     str(args.viewer.resolve()),
                     "--headless",
+                    "--no-taa",
+                    "--volume-full-res",
+                    "--no-lut-min-filter",
                     "--poison-resolve",
                     "--no-zero-depth",
                     "--stress",

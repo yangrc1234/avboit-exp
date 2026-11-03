@@ -36,6 +36,9 @@ def capture(name, stress, *options):
         [
             str(a.viewer.resolve()),
             "--headless",
+            "--no-taa",
+            "--volume-full-res",
+            "--no-lut-min-filter",
             "--poison-resolve",
             "--hardware-depth",
             "--accum-half",

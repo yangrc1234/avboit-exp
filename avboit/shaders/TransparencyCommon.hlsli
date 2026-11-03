@@ -21,16 +21,12 @@ Buffer<float4> Materials : register(t23);
 Buffer<float4> Camera : register(t15);
 #include "DeviceDepth.hlsli"
 SamplerState LinearClamp : register(s0);
-// Independent from Camera[0].w, which selects frost reconstruction.
-bool UseCubicTransmittance()
-{
-    return Camera[11].w != 0;
-}
 struct Varyings
 {
     float4 position : SV_Position;
     float depth : DEPTH;
     nointerpolation float cameraOffsetBins : CAMERA_OFFSET;
+    nointerpolation float2 flatOrdering : FLAT_ORDERING; // anchor view depth, layer; depth=0 disables.
     float4 color : COLOR;
     float3 transmission : TRANSMISSION;
     float2 local : TEXCOORD;
@@ -58,6 +54,7 @@ Varyings meshVertex(uint id : SV_VertexID)
     uint material = uint(Vertices[id * 4 + 1].w) * 5;
     o.depth = p.z;
     o.cameraOffsetBins = Materials[material + 4].x;
+    o.flatOrdering = Materials[material + 4].yz;
     o.color = Materials[material];
     o.transmission = Materials[material + 1].rgb;
     o.roughness = Materials[material + 1].w;

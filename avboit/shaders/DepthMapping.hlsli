@@ -31,4 +31,10 @@ float MapAdaptiveDepth(Buffer<uint> warp, float viewDepth, float farDepth, float
     return MapAdaptiveLogDepth(warp, NormalizedLogDepth(viewDepth, farDepth, linearizationDistance),
                                biasInVirtualSlices);
 }
+// Integer deposit at k; inclusive LUT[k-1] is the prefix excluding this layer.
+float FlattenedOitBin(Buffer<uint> warp, float2 ordering, uint lastBin)
+{
+    float anchor = floor(MapAdaptiveDepth(warp, ordering.x, 80., 1., 0.));
+    return clamp(anchor, 1., float(lastBin)) - ordering.y;
+}
 #endif

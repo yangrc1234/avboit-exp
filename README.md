@@ -66,7 +66,7 @@ lossless conversions of those images, with no compositing or retouching.
 
 Frost width is material-controlled in reference screen pixels. The default
 Gaussian chain has three levels; higher quality adds finer levels. The demo
-defaults to **2560x1440 and a 120 FPS cap**. It does not implement TAA or MSAA.
+defaults to **2560x1440 and a 120 FPS cap**, with **TAA, half-resolution local volumes, and T-LUT XY min-filter enabled**. MSAA is not implemented.
 
 ## Quick start
 

@@ -18,7 +18,7 @@ float4 quadVertex(uint vertex : SV_VertexID, uint instance : SV_InstanceID) : SV
     // Exact footprint of all full-resolution pixel centers, with an extra
     // texel on each side to cover arithmetic and bilinear boundary roundoff.
     float2 ratio = float2(VOLUME_WIDTH, VOLUME_HEIGHT) / float2(WIDTH, HEIGHT);
-    int guard = UseCubicTransmittance() ? 2 : 1;
+    const int guard = 1;
     int2 lo = max(int2(0, 0), int2(floor((begin + .5) * ratio - .5)) - guard);
     int2 hi = min(int2(VOLUME_WIDTH, VOLUME_HEIGHT) - 1, int2(floor((end - .5) * ratio - .5)) + guard + 1);
     uint firstZero = 0;

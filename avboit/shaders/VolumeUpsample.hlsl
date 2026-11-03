@@ -20,9 +20,7 @@ float GuideError(float depth, float reference)
 {
     return abs(depth - reference) / max(.02, reference * .02);
 }
-// Four blue-noise point taps inspired by RDR2 slide 56, with independent
-// bilateral weights instead of its closest-depth selection at discontinuities.
-// The fixed kernel and stratified point sequence are demo choices.
+// The noise phase is shared with the accumulation march and advances with TAA.
 float2 UpscaleNoise(uint2 pixel, uint tap)
 {
     uint2 p = (pixel + uint2(7u, 13u) * tap) & 31u;
@@ -30,33 +28,49 @@ float2 UpscaleNoise(uint2 pixel, uint tap)
     float2 noise = (float2(VolumeBlueNoise[p.y * 32u + p.x], VolumeBlueNoise[q.y * 32u + q.x]) + .5) / 1024.;
     return frac(noise + (Camera[9].w - 1.) * float2(.754877666, .569840296));
 }
-Accumulation upsamplePixel(float4 position : SV_Position)
+// Integral of the unit tent kernel. Its difference gives the exact average
+// bilinear weight under a uniformly jittered center in [-.5, .5].
+float TentIntegral(float x)
+{
+    float a = saturate(x + 1.);
+    float b = saturate(1. - x);
+    return x < 0. ? .5 * a * a : 1. - .5 * b * b;
+}
+float AveragedTent(float x)
+{
+    return TentIntegral(x + .5) - TentIntegral(x - .5);
+}
+// Constant mode per entry point: 0 fixed, 1 legacy, 2 coherent, 3 matched.
+Accumulation ReconstructVolume(float4 position, uint mode)
 {
     uint2 pixel = uint2(position.xy);
     float opaque = LoadOpaqueViewDepth(pixel);
     float interfaceZ = InterfaceDepth.Load(int3(pixel, 0));
     // Low rays use the bottom-right full-resolution texel of each 2x2 block.
     float2 location = (position.xy - 1.5) * .5;
-    // Camera[11].z is enabled only with the demo's final TAA. Without history,
-    // keep the deterministic bilateral reference instead of exposing raw noise.
-    bool dithered = Camera[11].z > 0.;
-    // Fixed one-half-res-texel radius: no extra depth moment RT or volume history.
-    const float radius = 1.;
-    int2 base = int2(floor(location));
-    float2 f = frac(location);
-    float weights[4];
-    int2 taps[4];
+    // Coherent jitter keeps four unique neighboring texels before screen clamp.
+    // Unlike independent rounded taps, even fixed addresses get changing weights.
+    float2 center = location;
+    if (mode == 2)
+        center += UpscaleNoise(pixel, 0) - .5;
+    int2 base = int2(floor(center));
+    if (mode == 3)
+        base = int2(floor(location + .5)) - 1;
+    float2 f = frac(center);
+    const uint count = mode == 3 ? 9 : 4;
+    float weights[9];
+    int2 taps[9];
     float sum = 0., bestError = 1e30, bestDistance = 1e30;
     uint best = 0;
-    [unroll] for (uint j = 0; j < 4; ++j)
+    [unroll] for (uint j = 0; j < count; ++j)
     {
-        int2 offset = int2(j & 1, j >> 1);
+        int2 offset = mode == 3 ? int2(j % 3, j / 3) : int2(j & 1, j >> 1);
         int2 candidate = base + offset;
-        if (dithered)
+        if (mode == 1)
         {
             // One sample per quadrant; each has its own blue-noise offset.
             // Point loads avoid mixing incompatible depths before rejection.
-            float2 delta = (float2(offset) + UpscaleNoise(pixel, j) - 1.) * radius;
+            float2 delta = (float2(offset) + UpscaleNoise(pixel, j) - 1.);
             candidate = int2(floor(location + delta + .5));
         }
         taps[j] = clamp(candidate, 0, int2(WIDTH / 2 - 1, HEIGHT / 2 - 1));
@@ -69,10 +83,15 @@ Accumulation upsamplePixel(float4 position : SV_Position)
                      : (interfaceZ > 0. ? GuideError(ViewDepthFromDevice(iz), ViewDepthFromDevice(interfaceZ)) : 0.);
         float2 delta = float2(taps[j]) - location;
         float distanceSquared = dot(delta, delta);
-        // Use the actual jittered texel position, not the original quadrant,
-        // for spatial weighting. A bad tap suppresses only its own weight.
-        float spatial = dithered ? exp2(-distanceSquared / (radius * radius))
-                                 : (offset.x ? f.x : 1. - f.x) * (offset.y ? f.y : 1. - f.y);
+        float spatial = (offset.x ? f.x : 1. - f.x) * (offset.y ? f.y : 1. - f.y);
+        if (mode == 1)
+            spatial = exp2(-distanceSquared);
+        if (mode == 3)
+        {
+            // Use unclamped positions so duplicate border taps retain their mass.
+            float2 d = float2(candidate) - location;
+            spatial = AveragedTent(d.x) * AveragedTent(d.y);
+        }
         weights[j] = spatial * exp2(-error * error);
         sum += weights[j];
         if (error < bestError || (error == bestError && distanceSquared < bestDistance))
@@ -83,7 +102,7 @@ Accumulation upsamplePixel(float4 position : SV_Position)
         }
     }
     Accumulation o = (Accumulation)0;
-    [unroll] for (uint k = 0; k < 4; ++k)
+    [unroll] for (uint k = 0; k < count; ++k)
     {
         bool selectClosest = sum <= 1e-6;
         float w = selectClosest ? (k == best ? 1. : 0.) : weights[k] / sum;
@@ -93,4 +112,22 @@ Accumulation upsamplePixel(float4 position : SV_Position)
         o.backN += LowBackN.Load(int3(taps[k], 0)) * w;
     }
     return o;
+}
+
+// Without final TAA use a fixed bilateral kernel; do not expose temporal noise.
+Accumulation upsamplePixel(float4 position : SV_Position)
+{
+    return ReconstructVolume(position, Camera[11].z > 0. ? 1 : 0);
+}
+Accumulation upsampleCoherentPixel(float4 position : SV_Position)
+{
+    if (Camera[11].z <= 0.)
+        return ReconstructVolume(position, 0);
+    return ReconstructVolume(position, 2);
+}
+Accumulation upsampleMatchedPixel(float4 position : SV_Position)
+{
+    if (Camera[11].z <= 0.)
+        return ReconstructVolume(position, 0);
+    return ReconstructVolume(position, 3);
 }

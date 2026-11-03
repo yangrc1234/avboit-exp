@@ -39,6 +39,9 @@ def main():
                     [
                         str(native / "bin/avboit_viewer.exe"),
                         "--headless",
+                        "--no-taa",
+                        "--volume-full-res",
+                        "--no-lut-min-filter",
                         "--poison-resolve",
                         *flags,
                         *extra,

@@ -181,6 +181,9 @@ def main():
             command = [
                 str(args.viewer.resolve()),
                 "--headless",
+                "--no-taa",
+                "--volume-full-res",
+                "--no-lut-min-filter",
                 "--stress",
                 "17",
                 "--camera-preset",

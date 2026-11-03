@@ -176,7 +176,7 @@ void DrawMaterialEditor(MaterialTable &materials, const MaterialDefaults &defaul
     }
     {
         auto effective = materials.Resolve(unsigned(selectedMaterial), defaults);
-        ImGui::BeginDisabled(!effective.SupportsCameraOffset());
+        ImGui::BeginDisabled(!effective.SupportsCameraOffset() || material.flatAnchorActor >= 0);
         ImGui::SliderFloat("OIT offset (bins)", &material.cameraOffsetBins, -4.f, 4.f, "%.2f",
                            ImGuiSliderFlags_AlwaysClamp);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
@@ -187,7 +187,9 @@ void DrawMaterialEditor(MaterialTable &materials, const MaterialDefaults &defaul
     }
     if (material.kind == 2 && material.surfacePattern != 0)
     {
-        ImGui::TextUnformatted(material.surfacePattern == 1 ? "Noise opacity shell" : "Striped inner model");
+        ImGui::TextUnformatted(material.surfacePattern == 1
+                                   ? "Noise opacity shell"
+                                   : (material.surfacePattern == 2 ? "Striped inner model" : "Solid inner model"));
         if (material.surfacePattern == 1)
             ImGui::SliderFloat("Noise frequency", &material.patternScale, 1.f, 24.f, "%.2f");
         ImGui::TextWrapped("Coverage and RGB transmission above control this layer. Geometry uses back-face culling.");

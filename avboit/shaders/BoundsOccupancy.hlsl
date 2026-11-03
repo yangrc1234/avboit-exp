@@ -4,7 +4,7 @@
 // Header: (width,height,oitTilePixels,blurTilePixels),
 //         (projectionScaleX,projectionScaleY,nearDepth,farDepth),
 //         (logLinearization,objectCount,0,0).
-// Per object: (viewMin.xyz,flags), (viewMax.xyz,unused).
+// Per object: (viewMin.xyz,flags), (viewMax.xyz,flatAnchorViewDepthOrZero).
 // Flags: 1 RGB extinction, 2 frost, 4 sharp refraction; bits 3+ are the maximum mip.
 // Only the first Gaussian level is masked, directly from actor bounds.
 // All rectangles are half-open pixel intervals, without pixel borders.
@@ -63,11 +63,15 @@ void RasterBounds(uint3 group, uint lane, bool schedule)
         }
         projectedRectangle = int4(floor(low), ceil(high));
         // Sampling expansion is only needed for potentially visible surfaces.
-        sliceRange = uint2(DepthSlice(lower.z, Bounds[2].x, projection.w),
-                           DepthSlice(upper.z, Bounds[2].x, projection.w));
-        // Expand only Z. Both global warp occupancy and per-tile scalar/RGB masks
-        // consume this interval, so sparse clearing/integration cover every push.
-        if (Camera[9].x != 0)
+        sliceRange =
+            uint2(DepthSlice(lower.z, Bounds[2].x, projection.w), DepthSlice(upper.z, Bounds[2].x, projection.w));
+        if (upper.w > 0.)
+        {
+            // Keep real XYZ bounds for raster coverage; only OIT occupancy Z is flat.
+            uint anchor = DepthSlice(upper.w, Bounds[2].x, projection.w);
+            sliceRange = uint2(anchor > 0 ? anchor - 1 : 0, min(anchor + 1, 2047u));
+        }
+        else if (Camera[9].x != 0)
             sliceRange.y = min(VIRTUAL_SLICES - 1u, sliceRange.y + SlopeSplatGuardSlices);
     }
     GroupMemoryBarrierWithGroupSync();
@@ -76,9 +80,8 @@ void RasterBounds(uint3 group, uint lane, bool schedule)
     if (schedule)
         ScheduleFrost(projectedRectangle, objectFlags, lane);
     // XY projection performed once. Tile raster uses one conservative rectangle.
-    float2 rasterGuard = (uint(Camera[7].w) & 16u) != 0 ? oitPitch / 8. : float2(0, 0);
-    int2 first = max(int2(0, 0), int2(floor((float2(projectedRectangle.xy) - rasterGuard) / oitPitch)));
-    int2 end = min(int2(oitSize), int2(ceil((float2(projectedRectangle.zw) + rasterGuard) / oitPitch)));
+    int2 first = max(int2(0, 0), int2(floor(float2(projectedRectangle.xy) / oitPitch)));
+    int2 end = min(int2(oitSize), int2(ceil(float2(projectedRectangle.zw) / oitPitch)));
     uint2 extent = uint2(max(end - first, 0));
     uint xyCount = extent.x * extent.y;
     if (xyCount > 0)

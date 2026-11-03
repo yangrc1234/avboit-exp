@@ -22,6 +22,9 @@ def main():
             [
                 str(root / "bin/avboit_viewer.exe"),
                 "--headless",
+                "--no-taa",
+                "--volume-full-res",
+                "--no-lut-min-filter",
                 "--sponza",
                 "--stress",
                 "24",

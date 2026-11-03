@@ -28,6 +28,9 @@ def capture(name, *flags):
     command = [
         str(args.viewer.resolve()),
         "--headless",
+        "--no-taa",
+        "--volume-full-res",
+        "--no-lut-min-filter",
         "--hardware-depth",
         "--composition-half",
         "--poison-resolve",

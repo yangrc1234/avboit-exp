@@ -70,14 +70,12 @@ def main():
     captures, rows = {}, []
     cases = [
         ("default", 0, []),
-        ("cubic", 0, ["--lut-cubic"]),
         ("fine-xy", 0, ["--volume-scale", "2"]),
         ("no-zero-depth", 0, ["--no-zero-depth"]),
         ("no-slope", 0, ["--no-slope-splat"]),
         ("reverse", 0, ["--submission-order", "1"]),
     ]
     cases += [(f"motion-{i}", i * 0.2, []) for i in range(1, 6)]
-    cases += [(f"cubic-motion-{i}", i * 0.2, ["--lut-cubic"]) for i in range(1, 6)]
     for name, time, flags in cases:
         folder = args.output / name
         folder.mkdir(exist_ok=True)
@@ -85,6 +83,9 @@ def main():
             [
                 str(args.viewer.resolve()),
                 "--headless",
+                "--no-taa",
+                "--volume-full-res",
+                "--no-lut-min-filter",
                 "--stress",
                 "27",
                 "--render-width",
@@ -147,24 +148,6 @@ def main():
             (i * 480, 36),
         )
     canvas.save(args.output / "comparison.png")
-    cubic_panels = [
-        ("Linear XY: 1/8", "default.png"),
-        ("Cubic XY: 1/8", "cubic.png"),
-        ("Exact sorted over", "exact-sorted.png"),
-    ]
-    for i, (title, filename) in enumerate(cubic_panels):
-        draw.rectangle((i * 480, 0, (i + 1) * 480, 36), fill="#202020")
-        draw.text((i * 480 + 12, 10), title, fill="white")
-        canvas.paste(
-            Image.open(args.output / filename)
-            .crop(box)
-            .resize((480, 480), Image.Resampling.NEAREST),
-            (i * 480, 36),
-        )
-    canvas.save(args.output / "cubic-comparison.png")
-    assert (args.output / "default/native-lut.rgba8").read_bytes() == (
-        args.output / "cubic/native-lut.rgba8"
-    ).read_bytes(), "Flat-surface experiment changed splat data"
     frames = [
         Image.open(args.output / f"{name}.png")
         .crop(box)
@@ -175,30 +158,6 @@ def main():
         args.output / "edge-motion.gif",
         save_all=True,
         append_images=frames[1:] + frames[-2:0:-1],
-        duration=180,
-        loop=0,
-    )
-    paired = []
-    for index in range(6):
-        left = "default" if index == 0 else f"motion-{index}"
-        right = "cubic" if index == 0 else f"cubic-motion-{index}"
-        frame = Image.new("RGB", (960, 516), "#202020")
-        label = ImageDraw.Draw(frame)
-        for column, (name, title) in enumerate(
-            ((left, "Linear XY"), (right, "Cubic XY"))
-        ):
-            label.text((column * 480 + 12, 10), title, fill="white")
-            frame.paste(
-                Image.open(args.output / f"{name}.png")
-                .crop(box)
-                .resize((480, 480), Image.Resampling.NEAREST),
-                (column * 480, 36),
-            )
-        paired.append(frame)
-    paired[0].save(
-        args.output / "cubic-motion.gif",
-        save_all=True,
-        append_images=paired[1:] + paired[-2:0:-1],
         duration=180,
         loop=0,
     )

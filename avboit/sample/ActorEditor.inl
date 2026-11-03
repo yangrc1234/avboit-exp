@@ -411,8 +411,35 @@ void DrawActorEditor()
         lightingChanged |= ImGui::Checkbox("Animate light", &a.animate);
         ImGui::TextDisabled("Uses the scene playback clock.");
     }
-    else
+    else if (selectedMaterial >= 0 && unsigned(selectedMaterial) < materials.entries.size())
+    {
         avboit::DrawMaterialEditor(materials, MaterialDefaults(), selectedMaterial);
+        auto &ordering = materials.entries[selectedMaterial];
+        if (materials.Resolve(unsigned(selectedMaterial), MaterialDefaults()).SupportsCameraOffset())
+        {
+            int anchor = ordering.flatAnchorActor;
+            const char *preview =
+                anchor >= 0 && unsigned(anchor) < actors.size() ? actors[anchor].name.c_str() : "Geometric depth";
+            if (ImGui::BeginCombo("OIT depth anchor", preview))
+            {
+                if (ImGui::Selectable("Geometric depth", anchor < 0))
+                    ordering.flatAnchorActor = -1;
+                for (unsigned i = 0; i < actors.size(); ++i)
+                    if (actors[i].type == avboit::ActorType::Transparent &&
+                        ImGui::Selectable(actors[i].name.c_str(), anchor == int(i)))
+                        ordering.flatAnchorActor = int(i);
+                ImGui::EndCombo();
+            }
+            if (ordering.flatAnchorActor >= 0)
+            {
+                int layer = int(ordering.flatLayer);
+                if (ImGui::Combo("OIT flattened layer", &layer, "Inner / anchor bin\0Outer / preceding bin\0"))
+                    ordering.flatLayer = unsigned(layer);
+                ImGui::TextWrapped("Share an anchor between both actors. Replaces camera offset and slope push; "
+                                   "external intersections are approximate.");
+            }
+        }
+    }
     if (lightingChanged && temporalAA)
         temporalAA->Invalidate();
 }

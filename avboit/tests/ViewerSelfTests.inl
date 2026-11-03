@@ -630,6 +630,10 @@ void NativeViewer::TestTemporalAA(nvrhi::IFramebuffer *framebuffer, bool capture
         const bool savedUpscale = ditheredVolumeUpsample;
         auto *color = framebuffer->getDesc().colorAttachments[0].texture;
         auto staging = GetDevice()->createStagingTexture(color->getDesc(), nvrhi::CpuAccessMode::Read);
+        auto *preTaa = transparency.DistortionApply().Output();
+        auto hdrStaging = GetDevice()->createStagingTexture(preTaa->getDesc(), nvrhi::CpuAccessMode::Read);
+        std::ofstream phases("volume-upscale-phases.csv");
+        phases << "dithered,frame,jitter_x,jitter_y,noise_phase\n";
         for (bool dithered : {false, true})
         {
             ditheredVolumeUpsample = dithered;
@@ -645,8 +649,37 @@ void NativeViewer::TestTemporalAA(nvrhi::IFramebuffer *framebuffer, bool capture
                     navigation.SetPose({startEye[0] + float(frame - 39) * .02f, startEye[1], startEye[2]}, heading,
                                        pitchAngle);
                 Render(framebuffer);
+                phases << dithered << "," << frame << "," << camera[11][0] << "," << camera[11][1] << ","
+                       << camera[9][3] << "\n";
                 if (frame < 32)
                     continue;
+                // Capture matching HDR inputs/outputs to distinguish source noise
+                // from temporal reconstruction. Keep every 2x2 phase in a central crop.
+                if (frame < 40 && preTaa->getDesc().format == nvrhi::Format::RGBA16_FLOAT)
+                    for (unsigned stage = 0; stage < 2; ++stage)
+                    {
+                        auto *source = stage == 0 ? preTaa : temporalAA->Output();
+                        commands->open();
+                        commands->copyTexture(hdrStaging, {}, source, {});
+                        commands->close();
+                        GetDevice()->executeCommandList(commands);
+                        GetDevice()->waitForIdle();
+                        size_t hdrPitch = 0;
+                        auto *hdr = static_cast<const unsigned char *>(
+                            GetDevice()->mapStagingTexture(hdrStaging, {}, nvrhi::CpuAccessMode::Read, &hdrPitch));
+                        if (!hdr)
+                            throw std::runtime_error("Temporal HDR audit readback failed");
+                        char hdrName[128];
+                        snprintf(hdrName, sizeof(hdrName), "volume-upscale-%s-%s-%02u.rgba16f",
+                                 dithered ? "dithered" : "bilateral", stage == 0 ? "pre" : "post", frame - 32);
+                        std::ofstream hdrFile(hdrName, std::ios::binary);
+                        const unsigned size[] = {Width / 2, Height / 2};
+                        hdrFile.write(reinterpret_cast<const char *>(size), sizeof(size));
+                        for (unsigned y = Height / 4; y < Height / 4 + size[1]; ++y)
+                            hdrFile.write(reinterpret_cast<const char *>(hdr + y * hdrPitch + (Width / 4) * 8),
+                                          size[0] * 8);
+                        GetDevice()->unmapStagingTexture(hdrStaging);
+                    }
                 commands->open();
                 commands->copyTexture(staging, {}, color, {});
                 commands->close();
@@ -746,6 +779,30 @@ void NativeViewer::TestActorEditing(nvrhi::IFramebuffer *framebuffer)
         shell.cameraOffsetBins = savedOffset;
         Render(framebuffer);
     }
+    if (stressPreset == 32)
+    {
+        if (objectCount != 6 || !hasCameraOffsets || (unsigned(camera[7][3]) & 2u) != 0)
+            throw std::runtime_error("Flattened fixture topology or Zero-T policy mismatch");
+        for (unsigned index = 0; index < 6; ++index)
+        {
+            const auto &m = materials.entries[actors[index].material];
+            const auto &record = uploadedMaterials[actors[index].material * avboit::MaterialTable::GpuRecordCount + 4];
+            const auto &anchor =
+                uploadedMaterials[actors[index & ~1u].material * avboit::MaterialTable::GpuRecordCount + 4];
+            if (m.flatAnchorActor != int(index & ~1u) || record[1] <= 0 || record[1] != anchor[1] ||
+                record[2] != float(index & 1u))
+                throw std::runtime_error("Nested actors do not share an ordering anchor");
+            materials.entries[actors[index].material].flatAnchorActor = -1;
+        }
+        Render(framebuffer);
+        if (vertices != savedVertices || bounds != savedBounds || readColor() == before)
+            throw std::runtime_error("Flat ordering toggle must change shading without changing geometry");
+        for (unsigned index = 0; index < 6; ++index)
+            materials.entries[actors[index].material].flatAnchorActor = int(index & ~1u);
+        Render(framebuffer);
+        if (readColor() != before)
+            throw std::runtime_error("Flat ordering toggle did not restore the original frame");
+    }
     const bool savedMinFilter = lutMinFilter;
     const auto minFilterLut = lut;
     SetLutMinFilter(!savedMinFilter);
@@ -754,25 +811,6 @@ void NativeViewer::TestActorEditing(nvrhi::IFramebuffer *framebuffer)
         throw std::runtime_error("LUT min filter toggle changed allocation or lost its slope flag");
     SetLutMinFilter(savedMinFilter);
     Render(framebuffer);
-    const bool savedLutCubic = lutCubic;
-    const auto savedLut = lut;
-    SetLutCubic(!savedLutCubic);
-    Render(framebuffer);
-    if (camera[11][3] != float(!savedLutCubic) || lut != savedLut)
-        throw std::runtime_error("Live LUT filter toggle did not update or reallocated the LUT");
-    SetLutCubic(savedLutCubic);
-    Render(framebuffer);
-    if (GetDevice()->queryFeatureSupport(nvrhi::Feature::ConservativeRasterization))
-    {
-        const bool savedConservative = conservativeSplat;
-        SetConservativeSplat(!savedConservative);
-        Render(framebuffer);
-        if (((unsigned(camera[7][3]) & 16u) != 0) != !savedConservative || lut != savedLut)
-            throw std::runtime_error("Conservative splat live toggle changed RT allocation or lost its occupancy flag");
-        SetConservativeSplat(savedConservative);
-        Render(framebuffer);
-    }
-
     for (unsigned actor = 0; actor < objectCount; ++actor)
     {
         const F3 delta = {1.25f + actor * .1f, .3f, .5f};

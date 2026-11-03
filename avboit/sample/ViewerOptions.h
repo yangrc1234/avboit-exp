@@ -14,20 +14,24 @@ struct ViewerOptions
     bool help = false, headless = false, uiCapture = false, uiSelfTest = false, actorEditorTest = false;
     bool cubic = true, frost = true, sparseBlur = true, fullBlur = false;
     bool cubicTrilinear = false;
-    bool lutCubic = false, conservativeSplat = false, lutMinFilter = false;
+    bool lutMinFilter = true;
+    float lutMinRetain = .5f;
     bool sponza = false, emissiveBalls = false, emissiveFront = false, showSmoke = true, glassSphere = false,
          rgbGlass = false;
     bool vfx = false, behind = false, normalSphere = false;
     bool denseExtinction = false, poisonExtinction = false, detailedProfiling = true;
     bool slopeSplat = true;
-    bool followWindow = false, taa = false;
+    bool followWindow = false, taa = true;
     bool redrawShadows = false, hardwareDepth = false, donutScene = false, legacyScene = false;
     float sphereRoughness = 0, planarIor = 1.3f, sphereIor = 1.5f, refractionStrength = 1;
     float sunIntensity = 2.f, spotIntensity = 80.f;
     bool volumeShadows = true;
-    bool lowResolutionVolumes = false, temporalVolumeDithering = false;
+    bool lowResolutionVolumes = true, temporalVolumeDithering = false;
     bool ditheredVolumeUpsample = true, volumeUpsampleTest = false;
+    unsigned volumeUpsampleKernel = 0; // Audit: legacy, coherent jitter, matched spatial reference.
     float initialVolumeExtinction = -1.f, shellOffsetBins = 0;
+    bool flattenShell = true;
+    bool volumeLutSkip = false, volumeMarchStats = false;
     float volumeStepSize = .5f, volumeLowT = .1f, volumeStepScale = 4.f;
     int volumeMaxSteps = 256;
     float fixtureTime = 0, sigmaLimit = 24;

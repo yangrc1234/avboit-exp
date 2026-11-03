@@ -75,12 +75,15 @@ class NativeViewer : public app::IRenderPass
     std::unique_ptr<avboit::DonutSceneHost> donutScene;
     avboit::VolumeLighting volumeLighting;
     avboit::SceneLightingSettings sceneLighting;
-    bool lowResolutionVolumes = false, temporalVolumeDithering = false;
+    bool lowResolutionVolumes = true, temporalVolumeDithering = false;
+    unsigned volumeUpsampleKernel = 0;
     bool ditheredVolumeUpsample = true;
+    bool volumeLutSkip = false, volumeMarchStats = false;
     unsigned volumeSampleFrame = 0;
-    bool taaEnabled = false;
+    bool taaEnabled = true;
     std::unique_ptr<avboit::TemporalAA> temporalAA;
     float initialVolumeExtinction = -1.f, initialShellOffset = 0;
+    bool flattenShell = true;
     bool hasCameraOffsets = false;
     float volumeStepSize = .5f, volumeLowT = .1f, volumeStepScale = 4.f;
     int volumeMaxSteps = 256;
@@ -175,7 +178,8 @@ class NativeViewer : public app::IRenderPass
     nvrhi::FramebufferHandle opaqueFb;
     nvrhi::SamplerHandle linear;
     bool denseExtinction = false, poisonExtinction = false, slopeSplat = true;
-    bool lutCubic = false, conservativeSplat = false, lutMinFilter = false;
+    bool lutMinFilter = true;
+    float lutMinRetain = .5f;
     Pass opaquePass;
     std::vector<nvrhi::GraphicsPipelineHandle> opaqueMaterialPipelines;
     unsigned opaqueVertices = 0, transparentVertices = 0, objectCount = 0;
@@ -190,22 +194,46 @@ class NativeViewer : public app::IRenderPass
         float theta = 0;
         for (unsigned index : objectMaterials)
             theta = std::max(theta, materials.Resolve(index, MaterialDefaults()).FrostTheta());
+        auto flatDepth = [&](unsigned materialIndex)
+        {
+            auto m = materials.Resolve(materialIndex, MaterialDefaults());
+            int anchor = m.value.flatAnchorActor;
+            if (!m.SupportsCameraOffset() || anchor < 0 || unsigned(anchor) >= actors.size())
+                return 0.f;
+            auto eye = navigation.Eye(), forward = navigation.Forward();
+            F3 center = ActorCenter(unsigned(anchor)), motion = ActorAnimation(unsigned(anchor));
+            float z = 0;
+            for (unsigned c = 0; c < 3; ++c)
+                z += (center[c] + motion[c] - eye[c]) * forward[c];
+            return std::clamp(z, .05f, 80.f);
+        };
         float towardBins = 0, awayBins = 0;
         for (unsigned object = 0; object < objectCount; ++object)
             if (actors[object].enabled)
             {
                 const float offset =
-                    materials.Resolve(objectMaterials[object], MaterialDefaults()).OitCameraOffsetBins();
+                    flatDepth(objectMaterials[object]) > 0
+                        ? 1.f
+                        : materials.Resolve(objectMaterials[object], MaterialDefaults()).OitCameraOffsetBins();
                 towardBins = std::max(towardBins, std::ceil(offset));
                 awayBins = std::max(awayBins, std::ceil(-offset));
             }
         hasCameraOffsets = towardBins > 0 || awayBins > 0;
         auto gpuMaterials = materials.GpuRecords(MaterialDefaults());
+        for (unsigned m = 0; m < materials.entries.size(); ++m)
+            gpuMaterials[m * avboit::MaterialTable::GpuRecordCount + 4][1] = flatDepth(m);
         if (gpuMaterials != uploadedMaterials)
         {
-            if (temporalAA)
+            // View-dependent anchor updates must not invalidate TAA on every camera move.
+            bool authoredChange = gpuMaterials.size() != uploadedMaterials.size();
+            if (!authoredChange)
+                for (unsigned row = 0; row < gpuMaterials.size(); ++row)
+                    for (unsigned c = 0; c < 4; ++c)
+                        if (!(row % avboit::MaterialTable::GpuRecordCount == 4 && c == 1))
+                            authoredChange |= gpuMaterials[row][c] != uploadedMaterials[row][c];
+            if (temporalAA && authoredChange)
                 temporalAA->Invalidate();
-            interfaceSelectionDirty = true;
+            interfaceSelectionDirty |= authoredChange;
             commands->writeBuffer(materialBuffer, gpuMaterials.data(), gpuMaterials.size() * 16);
             uploadedMaterials = std::move(gpuMaterials);
         }
@@ -231,17 +259,17 @@ class NativeViewer : public app::IRenderPass
                    {float(Width), float(Height), float(volumeWidth), float(volumeHeight)},
                    {float(qBound), float(protectBackground), backgroundThreshold,
                     float((zeroTShortcut ? 1 : 0) | (zeroDepth && !hasCameraOffsets ? 2 : 0) | (mirrorBlur ? 4 : 0) |
-                          (fullVfx ? 8 : 0) | (conservativeSplat ? 16 : 0) | (lutMinFilter ? 32 : 0))},
+                          (fullVfx ? 8 : 0) | (lutMinFilter ? 32 : 0))},
                    {float(chain.width), float(chain.height), float(chain.mipCount), tileResolve ? 0.f : 1.f},
                    {float(slopeSplat), frostDetailRadius, frostNormalTiling,
                     (temporalVolumeDithering || taaEnabled) ? float(1 + (volumeSampleFrame++ % 4096)) : 0.f},
                    {volumeStepSize, volumeLowT, volumeStepScale, float(volumeMaxSteps)},
-                   {0, 0, 0, float(lutCubic)},
-                   {towardBins, awayBins, 0, 0}}};
+                   {0, 0, 0, lutMinRetain},
+                   {towardBins, awayBins, float(volumeLutSkip), float(volumeMarchStats)}}};
         if (temporalAA)
         {
             const auto jitter = temporalAA->Jitter();
-            camera[11] = {jitter.x, jitter.y, float(ditheredVolumeUpsample), float(lutCubic)};
+            camera[11] = {jitter.x, jitter.y, float(ditheredVolumeUpsample), lutMinRetain};
         }
         auto projected = bounds;
         auto animatedBounds = bounds;
@@ -326,7 +354,7 @@ class NativeViewer : public app::IRenderPass
             // Mark special-surface kinds without expanding their screen bounds.
             projected[3 + object * 2][3] = float((material.value.ScalarExtinction() ? 0u : 1u) | (hasFrost ? 2u : 0u) |
                                                  ((!hasFrost && displacement > 0) ? 4u : 0u) | (objectMip << 3));
-            projected[4 + object * 2][3] = 0;
+            projected[4 + object * 2][3] = flatDepth(objectMaterials[object]);
             F3 low = {1e30f, 1e30f, 1e30f}, high = {-1e30f, -1e30f, -1e30f};
             if (std::find(viewObjects.begin(), viewObjects.end(), object) != viewObjects.end())
             {
@@ -507,23 +535,15 @@ class NativeViewer : public app::IRenderPass
     void SetFrostChain(unsigned levels) { frostMipCount = levels; }
     void SetFrostDetailRadius(float radius) { frostDetailRadius = std::clamp(radius, 0.f, 64.f); }
     void SetFrostNormalTiling(float tiling) { frostNormalTiling = std::clamp(tiling, .25f, 64.f); }
-    void SetConservativeSplat(bool enabled)
-    {
-        if (enabled && !GetDevice()->queryFeatureSupport(nvrhi::Feature::ConservativeRasterization))
-            throw std::runtime_error("Conservative splat is unsupported on this adapter");
-        conservativeSplat = enabled;
-        if (temporalAA)
-            temporalAA->Invalidate();
-    }
     void SetLutMinFilter(bool enabled)
     {
         lutMinFilter = enabled;
         if (temporalAA)
             temporalAA->Invalidate();
     }
-    void SetLutCubic(bool enabled)
+    void SetLutMinRetain(float value)
     {
-        lutCubic = enabled;
+        lutMinRetain = std::clamp(value, 0.f, 1.f);
         if (temporalAA)
             temporalAA->Invalidate();
     }
@@ -696,8 +716,18 @@ class NativeViewer : public app::IRenderPass
         rebuildRequested = true;
         preserveMaterialsOnRebuild = true;
     }
-    void SetVolumeUpsample(bool dithered) { ditheredVolumeUpsample = dithered; }
+    void SetVolumeLutSkip(bool enabled, bool stats)
+    {
+        volumeLutSkip = enabled;
+        volumeMarchStats = stats;
+    }
+    void SetVolumeUpsample(bool dithered, unsigned kernel)
+    {
+        ditheredVolumeUpsample = dithered;
+        volumeUpsampleKernel = kernel;
+    }
     void SetInitialShellOffset(float value) { initialShellOffset = value; }
+    void SetFlattenShell(bool value) { flattenShell = value; }
     void SetInitialVolumeExtinction(float value) { initialVolumeExtinction = value; }
     void SetTaa(bool enabled) { taaEnabled = enabled; }
     void SetHardwareDepth(bool enabled) { hardwareDepth = enabled; }
@@ -827,6 +857,22 @@ class NativeViewer : public app::IRenderPass
             ImGui::TextWrapped(
                 "Front glass edges over rear glass: diagonal / curved cutout / thin strips. Enable Animate for a slow "
                 "XY coverage sweep. Frost and distortion start disabled to isolate LUT aliasing.");
+        if (stressPreset == 33)
+            ImGui::TextWrapped(
+                "Three depth layers: broad dark front glass, small middle silhouettes, bright rear glass. Inspect the "
+                "dark outline just outside the middle layer. Toggle T-LUT XY min-filter under Quality / OIT sampling.");
+        if (stressPreset == 32)
+        {
+            if (ImGui::Checkbox("Flatten nested cube OIT ordering", &flattenShell))
+                for (unsigned index = 0; index < 6; ++index)
+                {
+                    auto &m = materials.entries[actors[index].material];
+                    m.flatAnchorActor = flattenShell ? int(index & ~1u) : -1;
+                    m.flatLayer = index & 1u;
+                }
+            ImGui::TextWrapped("0 / 30 / 60 degree cubes, 1 cm shell gap. Off: outer +1 bin camera offset. On: shared "
+                               "anchor, adjacent integer bins. Geometry is unchanged.");
+        }
         if (stressPreset == 26)
             ImGui::TextWrapped(
                 "Left to right: coincident / 1 cm / 5 cm shell gap. Cyan noise shell over orange inner "
@@ -1009,8 +1055,28 @@ class NativeViewer : public app::IRenderPass
                         rebuildRequested = true;
                         preserveMaterialsOnRebuild = true;
                     }
-                    ImGui::TextDisabled(taaEnabled && ditheredVolumeUpsample ? "TAA-aware four-tap upscale."
-                                                                             : "Bilateral upscaling.");
+                    ImGui::BeginDisabled(!lowResolutionVolumes);
+                    int upscale = ditheredVolumeUpsample ? int(volumeUpsampleKernel) + 1 : 0;
+                    ImGui::SetNextItemWidth(230);
+                    if (ImGui::Combo("Volume upsample", &upscale,
+                                     "Fixed bilateral\0Legacy random (4 taps)\0Coherent jitter (4 taps)\0"
+                                     "Matched reference (9 taps)\0"))
+                    {
+                        SetVolumeUpsample(upscale > 0, upscale > 0 ? unsigned(upscale - 1) : 0);
+                        // Reconnect the selected shader and reset TAA history, retaining actor edits.
+                        rebuildRequested = preserveMaterialsOnRebuild = true;
+                    }
+                    ImGui::EndDisabled();
+                    if (!lowResolutionVolumes)
+                        ImGui::TextDisabled("Enable half-resolution volumes to compare upsampling.");
+                    else if (!taaEnabled)
+                        ImGui::TextDisabled("TAA is off: using fixed bilateral for all modes.");
+                    else if (upscale == 2)
+                        ImGui::TextDisabled("Shared jitter; four unique neighbors before screen clamp.");
+                    else if (upscale == 3)
+                        ImGui::TextDisabled("Deterministic spatial reference; no upscale jitter.");
+                    if (ImGui::Checkbox("T-LUT empty interval skip (experimental)", &volumeLutSkip) && temporalAA)
+                        temporalAA->Invalidate();
                     ImGui::SliderFloat("Ray step", &volumeStepSize, .005f, 2.f, "%.3f", ImGuiSliderFlags_Logarithmic);
                     if (ImGui::TreeNode("Marching limits"))
                     {
@@ -1024,23 +1090,20 @@ class NativeViewer : public app::IRenderPass
                 if (ImGui::CollapsingHeader("OIT sampling"))
                 {
                     if (hasCameraOffsets)
-                        ImGui::TextWrapped("Hardware Zero-T depth culling suspended: active OIT camera offsets.");
-                    if (ImGui::Checkbox("T-LUT XY min-filter (experimental)", &lutMinFilter))
+                        ImGui::TextWrapped("Hardware Zero-T depth culling suspended: virtual OIT ordering.");
+                    if (ImGui::Checkbox("T-LUT XY min-filter", &lutMinFilter))
                         SetLutMinFilter(lutMinFilter);
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("3x3 XY minimum of independently integrated transmittance. Fused with "
                                           "integration; no new RT. Test with ordinary splat and linear sampling.");
-                    if (ImGui::Checkbox("Cubic T-LUT (XY)", &lutCubic))
-                        SetLutCubic(lutCubic);
+                    ImGui::BeginDisabled(!lutMinFilter);
+                    if (ImGui::SliderFloat("Min-filter retain", &lutMinRetain, 0.f, 1.f, "%.2f",
+                                           ImGuiSliderFlags_AlwaysClamp))
+                        SetLutMinRetain(lutMinRetain);
                     if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("Four hardware taps; Z stays linear. Independent of frost filtering. Applies "
-                                          "live without new RTs.");
-                    ImGui::BeginDisabled(!GetDevice()->queryFeatureSupport(nvrhi::Feature::ConservativeRasterization));
-                    if (ImGui::Checkbox("Conservative surface splat (experimental)", &conservativeSplat))
-                        SetConservativeSplat(conservativeSplat);
-                    if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("Hardware conservative coverage for extinction only. Can double-count shared "
-                                          "triangle edges; opacity cutouts remain point-sampled. No new RTs.");
+                        ImGui::SetTooltip("Minimum fraction of each centre channel preserved. 0: previous min filter; "
+                                          "0.5: neighbours can at most halve T; 1: unchanged centre T. The existing "
+                                          "16/255 neighbour floor also remains. No resource rebuild.");
                     ImGui::EndDisabled();
                     int choice = depthBudget == 16 ? 0 : depthBudget == 32 ? 1 : depthBudget == 64 ? 2 : 3;
                     if (ImGui::Combo("Z budget", &choice, "16\00032\00064\000128\000"))
@@ -1351,7 +1414,7 @@ class NativeViewer : public app::IRenderPass
         for (const auto &q : fixture.opaque)
             Quad(q.center, q.x, q.y, q.color, q.transmission, q.kind, false);
         opaqueVertices = unsigned(vertices.size() / 4);
-        if (stressPreset == 26)
+        if (stressPreset == 26 || stressPreset == 32)
         {
             // Three copies of exactly the same model, each with its own inner
             // and outer actor/material/draw. Only geometric shell thickness differs.
@@ -1362,7 +1425,10 @@ class NativeViewer : public app::IRenderPass
                     F3 center = {(float(pair) - 1.f) * 1.9f, useSponza ? 1.75f : 0.f, 4.5f};
                     unsigned first = unsigned(vertices.size());
                     objectFirstRecords.push_back(first);
-                    avboit::AppendLayeredModel(vertices, center, gaps[pair], layer == 1);
+                    if (stressPreset == 32)
+                        avboit::AppendLayeredCube(vertices, center, float(pair) * 30.f, layer == 1);
+                    else
+                        avboit::AppendLayeredModel(vertices, center, gaps[pair], layer == 1);
                     F3 lower = {1e30f, 1e30f, 1e30f}, upper = {-1e30f, -1e30f, -1e30f};
                     for (unsigned v = first; v < vertices.size(); v += 4)
                         for (unsigned c = 0; c < 3; ++c)
@@ -1487,7 +1553,14 @@ class NativeViewer : public app::IRenderPass
             if (stressPreset == 28)
                 actors[6].name = "Third glass / behind rear";
         }
-        if (stressPreset == 26)
+        if (stressPreset == 33)
+        {
+            const char *names[] = {"Front glass / broad dark layer", "Middle glass / diagonal edge",
+                                   "Middle glass / cutout edge", "Third glass / bright background"};
+            for (unsigned i = 0; i < 4; ++i)
+                actors[i].name = names[i];
+        }
+        if (stressPreset == 26 || stressPreset == 32)
         {
             const char *gaps[] = {"0 cm", "1 cm", "5 cm"};
             for (unsigned index = 0; index < 6; ++index)
@@ -1496,8 +1569,13 @@ class NativeViewer : public app::IRenderPass
                 auto &material = materials.entries[actor.material];
                 bool outer = (index & 1u) != 0;
                 actor.name = std::string(outer ? "Noise shell / " : "Inner model / ") + gaps[index / 2];
-                material.surfacePattern = outer ? 1 : 2;
-                material.cameraOffsetBins = outer ? initialShellOffset : 0;
+                if (stressPreset == 32)
+                    actor.name = std::string(outer ? "Noise cube shell / " : "Inner cube / ") +
+                                 std::to_string(index / 2 * 30) + " deg";
+                material.surfacePattern = outer ? 1 : (stressPreset == 32 ? 3 : 2);
+                material.flatAnchorActor = stressPreset == 32 && flattenShell ? int(index & ~1u) : -1;
+                material.flatLayer = outer ? 1u : 0u;
+                material.cameraOffsetBins = outer ? (stressPreset == 32 ? 1.f : initialShellOffset) : 0;
                 for (unsigned v = actor.firstRecord; v < actor.endRecord; v += 4)
                     for (unsigned c = 0; c < 3; ++c)
                     {
@@ -1522,7 +1600,7 @@ class NativeViewer : public app::IRenderPass
             }
         if (!objectMaterials.empty())
         {
-            unsigned initialActor = stressPreset == 26 ? 1u : 0u;
+            unsigned initialActor = stressPreset == 26 || stressPreset == 32 ? 1u : 0u;
             for (unsigned actor = 0; actor < objectMaterials.size(); ++actor)
                 if (materials.entries[objectMaterials[actor]].kind >= 5)
                 {
@@ -1627,6 +1705,7 @@ class NativeViewer : public app::IRenderPass
         inputs.objectCount = objectCount;
         inputs.halfAccumulation = halfAccumulation;
         inputs.lowResolutionVolumes = lowResolutionVolumes;
+        inputs.volumeUpsampleKernel = volumeUpsampleKernel;
         inputs.frostMipCount = frostMipCount;
         inputs.fullVfx = fullVfx;
         inputs.interfaceIndices = interfaceIndexBuffer;
@@ -1972,7 +2051,6 @@ class NativeViewer : public app::IRenderPass
             frame.sparseBlur = sparseBlur;
             frame.cubic = cubic;
             frame.denseExtinction = denseExtinction;
-            frame.conservativeSplat = conservativeSplat;
             frame.lutMinFilter = lutMinFilter;
             frame.poisonExtinction = poisonExtinction;
             frame.interfaceDraws = interfaceDraws;
@@ -2355,9 +2433,8 @@ int main(int argc, const char **argv)
         viewer.SetFrostChain(o.frostMipCount);
         viewer.SetFrostDetailRadius(o.frostDetailRadius);
         viewer.SetFrostNormalTiling(o.frostNormalTiling);
-        viewer.SetLutCubic(o.lutCubic);
         viewer.SetLutMinFilter(o.lutMinFilter);
-        viewer.SetConservativeSplat(o.conservativeSplat);
+        viewer.SetLutMinRetain(o.lutMinRetain);
         viewer.SetSparseBlur(o.sparseBlur);
         viewer.SetCubicTrilinear(o.cubicTrilinear);
         viewer.SetPoisonResolve(o.poisonResolve);
@@ -2379,9 +2456,11 @@ int main(int argc, const char **argv)
         viewer.SetSceneLighting(o.sunIntensity, o.spotIntensity, o.volumeShadows);
         viewer.SetVolumeResolution(o.lowResolutionVolumes, o.temporalVolumeDithering);
         viewer.SetTaa(o.taa);
-        viewer.SetVolumeUpsample(o.ditheredVolumeUpsample);
+        viewer.SetVolumeUpsample(o.ditheredVolumeUpsample, o.volumeUpsampleKernel);
+        viewer.SetVolumeLutSkip(o.volumeLutSkip, o.volumeMarchStats);
         viewer.SetInitialVolumeExtinction(o.initialVolumeExtinction);
         viewer.SetInitialShellOffset(o.shellOffsetBins);
+        viewer.SetFlattenShell(o.flattenShell);
         viewer.SetVolumeMarch(o.volumeStepSize, o.volumeLowT, o.volumeStepScale, o.volumeMaxSteps);
         viewer.SetCalibration(o.calibrationBoard, o.emissiveGain);
         viewer.SetEmissiveFront(o.emissiveFront);

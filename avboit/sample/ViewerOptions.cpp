@@ -16,6 +16,11 @@ struct Flag
     bool value;
 };
 constexpr Flag Flags[] = {
+    {"--no-taa", &ViewerOptions::taa, false},
+    {"--volume-full-res", &ViewerOptions::lowResolutionVolumes, false},
+    {"--no-lut-min-filter", &ViewerOptions::lutMinFilter, false},
+    {"--volume-lut-skip", &ViewerOptions::volumeLutSkip, true},
+    {"--volume-march-stats", &ViewerOptions::volumeMarchStats, true},
     {"--dense-blur", &ViewerOptions::sparseBlur, false},
     {"--no-tile-resolve", &ViewerOptions::tileResolve, false},
     {"--poison-resolve", &ViewerOptions::poisonResolve, true},
@@ -26,9 +31,7 @@ constexpr Flag Flags[] = {
     {"--ui-self-test", &ViewerOptions::uiSelfTest, true},
     {"--linear", &ViewerOptions::cubic, false},
     {"--cubic-trilinear", &ViewerOptions::cubicTrilinear, true},
-    {"--lut-cubic", &ViewerOptions::lutCubic, true},
     {"--lut-min-filter", &ViewerOptions::lutMinFilter, true},
-    {"--conservative-splat", &ViewerOptions::conservativeSplat, true},
     {"--no-frost", &ViewerOptions::frost, false},
     {"--sparse-blur", &ViewerOptions::sparseBlur, true},
     {"--full-blur", &ViewerOptions::fullBlur, true},
@@ -164,6 +167,8 @@ ViewerOptions ParseViewerOptions(int argc, const char *const *argv)
         {
             options.volumeUpsampleTest = options.headless = options.taa = options.lowResolutionVolumes = true;
         }
+        else if (arg == "--volume-upsample-kernel")
+            options.volumeUpsampleKernel = ReadInteger(arg, value(), 0, 2);
         else if (arg == "--volume-upsample-bilateral")
             options.ditheredVolumeUpsample = false;
         else if (arg == "--volume-extinction")
@@ -187,10 +192,14 @@ ViewerOptions ParseViewerOptions(int argc, const char *const *argv)
         else if (arg == "--time")
             options.fixtureTime =
                 ReadFloat(arg, value(), -std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+        else if (arg == "--lut-min-retain")
+            options.lutMinRetain = ReadFloat(arg, value(), 0.f, 1.f);
+        else if (arg == "--geometric-shell")
+            options.flattenShell = false;
         else if (arg == "--shell-offset-bins")
             options.shellOffsetBins = ReadFloat(arg, value(), -4.f, 4.f);
         else if (arg == "--stress")
-            options.stressPreset = ReadInteger(arg, value(), 0, 30);
+            options.stressPreset = ReadInteger(arg, value(), 0, 33);
         else if (arg == "--camera-preset")
             options.cameraPreset = ReadInteger(arg, value(), 0, 9);
         else if (arg == "--benchmark")
@@ -268,19 +277,25 @@ Scene and materials:
   --sponza                   Load Sponza through Donut (default scene backend)
   --legacy-scene             Old Sponza loader for calibration comparisons
   --sponza-path PATH          Explicit Sponza.gltf path; enables Sponza
-  --stress 0..30             Stress preset (26: noise shell; 27/28: silhouette; 29/30: eight layers); also in ImGui Test case
+  --geometric-shell         Scene 32: use ordinary camera offset instead of flattened ordering
+  --stress 0..33             Stress preset (26: noise shell; 27/28: silhouette; 29/30: eight layers; 31: zero spread; 32: flattened cubes; 33: third-layer halo); also in ImGui Test case
   --sun-intensity N          Sponza sun irradiance (0..12), default 2
   --spot-intensity N         Sponza dynamic spotlight intensity (0..500), default 80
   --volume-temporal-dither  Animate raymarch sample phases (requires final TAA)
   --volume-upsample-test   Headless static/moving A/B captures (enables half-res + TAA)
+  --volume-upsample-kernel N  Audit kernel: 0 legacy, 1 coherent jitter, 2 matched reference
   --volume-upsample-bilateral  Reference fixed bilateral instead of dithered TAA upscale
   --volume-extinction N    Initial volume material extinction, 0..128 per world unit
+  --volume-lut-skip    Experimental exact-T empty interval skipping
+  --volume-march-stats       Diagnostic numerator = intervals, shading evaluations, skipped intervals
   --volume-step N           World-space accumulation step (default .5)
   --volume-low-t N          Grow steps below this max-RGB T (default .1)
   --volume-step-scale N     Maximum low-T step multiplier, 1..8 (default 4)
   --volume-max-steps N      Per-ray step budget, 16..512 (default 256)
-  --taa                     Enable HDR TAA and temporal volume dithering
-  --volume-half-res         Half-resolution local volume accumulation + bilateral upsample
+  --taa                     Enable HDR TAA and temporal volume dithering (default)
+  --no-taa                  Disable TAA for non-temporal comparisons
+  --volume-half-res         Half-resolution local volume accumulation (default)
+  --volume-full-res         Full-resolution local volume accumulation reference
   --no-volume-shadows        Disable local volume moment shadows for comparison
   --time SECONDS             Finite initial fixture time, default 0
   --glass-sphere             Replace default panes with a sphere
@@ -300,7 +315,6 @@ Quality and references:
   --volume-scale 2|8         Extinction XY divisor, default 8
   --linear                  Bilinear reconstruction (default: cubic)
   --cubic-trilinear         Approximate cubic: 4 trilinear taps instead of 8 bilinear taps
-  --lut-cubic               T-LUT cubic XY / linear Z (4 taps), independent of frost reconstruction
   --no-frost                Disable frost, preserve self-refraction
   --max-frost-sigma 0..24   Material sigma cap in 1440p reference pixels
   --frost-detail-radius 0..64  Offset reserved for post-blur sampling, 1440p pixels (default 24)
@@ -328,8 +342,9 @@ Quality and references:
   --calibration-board       Asymmetric four-color inversion target
   --emissive-gain N          Emissive sphere radiance multiplier, 0..64
   --emissive-front           Put emissive spheres before the frost pane
-  --lut-min-filter          Experimental 3x3 XY min after integration, no new RT
-  --conservative-splat      Experimental hardware conservative surface extinction raster
+  --lut-min-filter          Bounded 3x3 XY min after integration (default), no new RT
+  --no-lut-min-filter       Disable XY min-filter for comparison
+  --lut-min-retain 0..1     Minimum fraction of centre T retained (default .5; 0: old min, 1: no XY change)
   --fixed-z                 Uniform log-Z reference (adaptive is default)
   --depth-budget N          Adaptive Z budget: 16, 32, 64, 128 (default 128)
   --follow-window           Follow window size (longest side capped at 2048)

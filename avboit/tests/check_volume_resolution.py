@@ -18,6 +18,9 @@ for preset in (0, 19, 22, 25):
         args = [
             str(root / "bin/avboit_viewer.exe"),
             "--headless",
+            "--no-taa",
+            "--volume-full-res",
+            "--no-lut-min-filter",
             "--hardware-depth",
             "--stress",
             str(preset),

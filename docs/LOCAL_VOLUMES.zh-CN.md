@@ -83,7 +83,7 @@ SceneDepth 仍包含 Zero-T，因此其人工深度台阶仍可能影响权重�
 默认最多 256 步；长射线会增大有效步长覆盖完整区间，不会直接丢弃剩余光学厚度。
 Interface 仍切分前后段。每个 2×2 quad 的四条射线分配四个步内深度相位，层内用共享蓝噪声偏移，积分区间与长度不变。
 半分辨率模式改用逐像素蓝噪声相位，避免高消光烟雾重建后暴露固定 quad 的横竖排列。积分区间与长度不变，没有新增重建 pass。
-默认只做稳定的空间抖动；启用 TAA 后随帧改变采样相位，并累积最终 HDR 图像。
+默认开启 TAA 和半分辨率体积，采样相位随帧变化并累积最终 HDR 图像；`--no-taa` 可用于固定空间抖动的对比。
 每段采用 4 次分层密度采样和 1 次光照计算；可见性使用区间两端 T 的梯形平均，
 避免单个随机点落入 T=0 区域就丢掉整段的可见散射。相邻步复用共享端点的 T 查询。
 这仍是数值近似，并非逐段精确 Beer 积分。
@@ -122,7 +122,7 @@ ImGui 的 **Quality → Volumes** 可实时调整步长、低 T 阈值、最大�
 使用同一个库实现。TAA 在透明合成与 VFX distortion 后、tonemap 前处理 HDR；
 Halton 投影 jitter 同时用于 opaque、透明几何、occupancy 投影和体积射线。
 启用时自动开启体积采样相位变化：全分辨率轮换 quad 相位，半分辨率偏移逐像素蓝噪声；半分辨率默认使用上述蓝噪声重建。
-关闭时释放 TAA history、motion 和 output RT；默认关闭，便于保留无 TAA 的算法对比。
+关闭时释放 TAA history、motion 和 output RT；默认开启，`--no-taa` 可保留无 TAA 的算法对比。
 
 当前 motion 由场景深度与前后帧相机生成，支持相机移动，但没有透明物体自身的运动矢量，
 也没有为体积积分结果定义独立代表深度。移动透明物体、烟雾与折射区域仍可能拖影；
@@ -130,7 +130,7 @@ Halton 投影 jitter 同时用于 opaque、透明几何、occupancy 投影和体
 切换视角、重建资源和编辑 actor 材质会重置 history。GPU profiler 单独列出 `taa`。
 
 这里借鉴的是 [RDR2 第 56 页及备注的最终上采样](https://advances.realtimerendering.com/s2019/slides_public_release.pptx)。
-不需要前面第 51–55 页的缺失射线历史重建；我们每帧计算全部半分辨率像素。
+我们未实现第 51–55 页的缺失射线历史重建，而是每帧计算全部半分辨率像素；最终 upsample 输入没有体积专用的历史稳定处理。
 按当前取舍，没有实现加权 ray depth 控制 kernel 宽度。原分享没有公布精确点集与阈值，
 四象限分层点集、2%／2cm 深度尺度是 demo 的选择；也改用了逐样本 bilateral 权重，
 而不是分享中的深度不连续处选单点，不能称为逐项复现。
@@ -143,3 +143,5 @@ Halton 投影 jitter 同时用于 opaque、透明几何、occupancy 投影和体
 `python avboit/tests/check_dense_volume.py` 在 2K、packed RT 下检查高消光 Zero-T 开关差异、
 底部零权重黑洞和半分辨率 TAA 有限值。仍允许少量孤立像素的截止差异，
 不能据此宣称任意运动下的时域质量已经通过验证。
+
+ImGui 的 **Quality → Volumes → Volume upsample** 可切换固定bilateral、旧随机核、整体jitter和匹配空间参考；切换清空TAA历史并保留材质编辑。半分辨率体积默认开启，可用`--volume-full-res`关闭。

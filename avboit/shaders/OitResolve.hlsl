@@ -14,7 +14,15 @@ struct Accumulation
     if (i.depth >= LoadOpaqueViewDepth(uint2(i.position.xy)))
         discard;
     float3 alpha = Opacity(i);
-    float3 t = SampleSurfaceTransmittance(uv, i.depth, i.cameraOffsetBins);
+    float3 t;
+    float flatBin = 0.;
+    if (i.flatOrdering.x > 0.)
+    {
+        flatBin = FlattenedOitBin(DepthWarp, i.flatOrdering, SLICE_COUNT - 2);
+        t = flatBin < 1. ? float3(1, 1, 1) : SampleTransmittanceAtZ(uv, (flatBin - .5) / float(SLICE_COUNT));
+    }
+    else
+        t = SampleSurfaceTransmittance(uv, i.depth, i.cameraOffsetBins);
     Accumulation o = (Accumulation)0;
     // Only surviving fragments accumulate tau. The optional shading-only
     // shortcut below preserves tau; hardware zero-T depth rejection does not.
@@ -30,14 +38,18 @@ struct Accumulation
     }
     o.denominator = alpha * t;
     bool behind = BehindInterface(uint2(i.position.xy), i.position.z);
-    if (i.cameraOffsetBins != 0)
+    if (i.cameraOffsetBins != 0 || i.flatOrdering.x > 0.)
     {
         float4 hit = LoadInterface(uint2(i.position.xy));
-        float orderingZ = MapAdaptiveDepth(DepthWarp, i.depth, 80., 1., 0.) - i.cameraOffsetBins;
+        float orderingZ =
+            i.flatOrdering.x > 0. ? flatBin : MapAdaptiveDepth(DepthWarp, i.depth, 80., 1., 0.) - i.cameraOffsetBins;
         float interfaceZ = MapAdaptiveDepth(DepthWarp, hit.x + InterfaceTolerance(hit.x), 80., 1., 0.);
         behind = hit.w != 0 && orderingZ > interfaceZ;
     }
     o.backNumerator = behind ? o.numerator : float3(0, 0, 0);
+    // Diagnostic volume counters use numerator; exclude ordinary surfaces.
+    if (Camera[12].w > 0.)
+        o.numerator = 0;
     return o;
 } Texture2D<uint> ScreenTiles : register(t30);
 Texture2D<float2> InterfaceOffset : register(t14);

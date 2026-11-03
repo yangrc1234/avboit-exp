@@ -22,6 +22,8 @@ struct TransparencyMaterial
     float vfxPhase = 0;          // Phase offset in cycles for expanding shock.
     unsigned surfacePattern = 0; // Normal-mesh fixture: 0 glass, 1 noise shell, 2 striped inner layer.
     float cameraOffsetBins = 0;  // Physical Z bins; positive pulls OIT ordering toward the camera.
+    int flatAnchorActor = -1;    // Shared actor pivot; -1 keeps geometric OIT depth.
+    unsigned flatLayer = 0;      // 0 inner, 1 outer (one bin toward camera).
     float patternScale = 6;      // Material-local noise frequency.
     bool ScalarExtinction() const;
 };

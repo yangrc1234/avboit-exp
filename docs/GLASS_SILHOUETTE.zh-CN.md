@@ -20,47 +20,15 @@ Test case 选择 `Glass silhouette over rear glass / XY aliasing`，或运行 `b
 
 初次验证中，默认 1/8 LUT 的边缘平均 HDR 最大通道误差约 0.0111，1/2 LUT 为 0.0010；两者内部误差均约 0.00047。关闭 Zero-T、关闭 slope splat、反转提交顺序均不改变该测试的 HDR 图像。移动前层后误差随覆盖相位变化。提高 LUT 分辨率只是定位手段，本次没有改变默认质量，也没有实现修复。
 
-## XY cubic 对比
+## 已收敛的对照方案
 
-Quality → OIT sampling → `Cubic T-LUT (XY)` 可以实时切换，或使用 `--lut-cubic`。这个开关与 frost 的 bicubic 重建独立，不增加 RT。默认仍为 linear。
+Cubic T-LUT 与硬件 Conservative splat 的 UI、命令行和实现已移除；当前统一使用普通光栅和硬件线性 T-LUT 查询。Frost 的 bicubic 重建不受影响。
 
-实验采用正权重 cubic B-spline，以四次硬件 trilinear 采样重建 XY；Z 仍为 linear，保留原来的两 slice surface bias。它只验证 XY 滤波影响，并非完整复现论文的 cubic 深度重建。Accumulation、Resolve、体积与 VFX 使用同一采样入口；同时扩大斜率估计和 Zero-T 的保守查询范围，以覆盖新的 XY footprint。
-
-在上述测试中，cubic 柔化了台阶，但亮边扩散得更宽：边缘平均 HDR 误差从 0.0111 增至 0.0186，99 分位误差从 0.0981 降至 0.0919。两种模式的 LUT 内容完全一致，差别来自采样。Cubic 无法恢复低分辨率光栅已经丢失的覆盖信息，因此不能单独作为这个问题的修复。
-
-诊断脚本另外输出 `cubic-comparison.png`（linear / cubic / 精确排序参考）和 `cubic-motion.gif`。Zero-T、磨砂及实时切换回归测试均通过。
-
-RTX 3070、2560×1440、StablePowerState 开启，按 linear / cubic / cubic / linear 顺序，每次预热 30 帧、记录 120 帧，以每次中位数比较：
-
-| 场景 | Linear 整帧 GPU | Cubic 整帧 GPU |
-| --- | ---: | ---: |
-| 27：玻璃轮廓 | 1.25–1.26 ms | 1.29–1.30 ms |
-| 10：磨砂测试 | 0.81–0.82 ms | 0.86 ms |
-
-这里使用默认 packed 格式测性能。数据只代表这两个固定视角，不代表复杂场景或低端 GPU 的成本比例。
-
-## Conservative splat 实验
-
-Quality → OIT sampling → `Conservative surface splat (experimental)`，或 `--conservative-splat`，只改变表面 extinction 的硬件光栅覆盖，accumulation 和体积 raymarch proxy 保持普通光栅。默认关闭；不支持该硬件能力时 UI 禁用，显式命令行请求会报错。不增加 RT，实时切换 PSO 并重置 TAA history。
-
-实验开启时，只有 extinction occupancy 的 XY 范围增加一个低分辨率 texel 的安全边界，覆盖保守光栅的不确定区域；ScreenTiles、frost 和普通模式不变。此模式仍是质量诊断，不是生产用修复。
-
-场景 28（`Glass silhouette / three layers`）在场景 27 的后层后面增加一层蓝色玻璃，可检查前层外侧仍有两层透明时的影响。运行 `avboit/tests/check_conservative_splat.py`，会在 `build/conservative-splat` 生成对照图和 JSON 指标。两种模式都使用 linear T-LUT，2560×1440，FP16 accumulation/composition。
-
-| 场景 27 区域 | 普通光栅平均 HDR 误差 | 保守光栅平均 HDR 误差 |
-| --- | ---: | ---: |
-| 斜边 | 0.00840 | 0.00149 |
-| 带圆孔玻璃的边缘区域 | 0.00534 | 0.00617 |
-| 细条 | 0.02858 | 0.02580 |
-| 玻璃内部 | 0.00047 | 0.00177 |
-
-几何斜边明显改善，但共享三角形边出现暗线：相邻三角形对同一个 LUT texel 各执行一次 atomic add，把同一表面的消光累加两次。材质裁剪的圆孔仍是点采样，硬件保守覆盖不能补足这个轮廓。三层场景内部和前层外侧也有退化。场景 17、27、28 的 poison-extinction 与 dense-extinction 对照均得到完全相同的 HDR 图像，因此这些场景中的暗线不是稀疏清理遗漏。
-
-D3D12 的 ConservativeRaster 只有 ON/OFF。Tier 3 的 SV_InnerCoverage 是“像素是否完全位于当前三角形内部”，不是覆盖率或共享边归属；不能直接修复上述重复累加。见 [D3D12 conservative rasterization](https://learn.microsoft.com/en-us/windows/win32/direct3d12/conservative-rasterization)。
+历史测试中，Cubic 柔化了台阶，但边缘平均 HDR 误差由 .0111 增到 .0186；硬件 conservative raster 改善了部分几何轮廓，却因共享三角形边重复累加 extinction 引入暗线，且不能补足材质裁剪轮廓。因此保留积分后有下限保护的 XY min-filter。
 
 ## 积分后的 T-LUT XY min-filter
 
-Quality → OIT sampling → `T-LUT XY min-filter (experimental)`，或 `--lut-min-filter`。默认关闭。对比时保持普通 splat、linear T-LUT 查询，不同时开启前两个实验。
+Quality → OIT sampling → `T-LUT XY min-filter`，默认开启；命令行 `--no-lut-min-filter` 可关闭做对比。使用普通 splat 和 linear T-LUT 查询。下列早期对比数据保留当时的测试条件。
 
 每根柱先独立积分，随后在同一 Z slice 对邻近 3×3 柱的 RGB T 分别取 min。不得把该 min 结果反馈到下一 slice 的积分中，也不对原始 extinction 做 max，否则倾斜表面可能被累加成厚层。
 
@@ -92,8 +60,56 @@ ZeroSlice 和 Zero-T candidate 根据最终过滤后的 T 生成，避免深度�
 | 27/28 两层、三层玻璃轮廓 | 改善明显；有精确排序参考支持 |
 | 29/30 八层 RGB、八层加前层磨砂折射 | 开关变化较小，未见明显新增接缝或整体变暗 |
 | 3 细条与烟雾 | 细条更清晰，约 8.01% 全屏像素变化超过 2/255；缺少参考，不能把全部变化视为改善 |
-| 26 noise 外壳与内层 | 青色外壳和内部橙色的相对权重明显变化，局部条纹变化；约 3.77% 全屏像素超过 2/255，仍不适合直接全局默认开启 |
+| 26 noise 外壳与内层 | 青色外壳和内部橙色的相对权重明显变化，局部条纹变化；约 3.77% 全屏像素超过 2/255，当时仍不建议直接全局默认开启（早期结果，后续加入下述零透射保护） |
 | 0–2、4–18 其余玻璃、磨砂、折射、浓烟 | 当前视角变化大多局限于局部边缘；场景 14 烟雾有轻微变化 |
 | 19–25 均匀体积、重叠体积、OpenVDB | 当前视角差异较小，未见明显新增块状瑕疵 |
 
 31 个场景的 HDR 均为有限数，LUT 沿 Z 单调。另记录到一个尚未定位的既有一致性问题：场景 6/14/26 中，有些柱子的量化 LUT 已全 RGB 为零，而 ZeroSlice 未指向捕获 LUT 的首个零 slice；OFF 就存在，ON 下对应柱数从 58/1034/64 变为 70/1075/114。不能将这些场景声明为 Zero-T 元数据完全一致，后续需要单独检查量化阈值与 metadata 生成。此轮没有为掩盖该问题修改比较条件或渲染算法，报告保留了统计。
+
+## 零透射邻居扩散保护
+
+纯 XY min 会把邻居的零 T 扩散到中心，导致 accumulation 分子/分母归零；即便关闭 Zero-T depth draw 和 shading shortcut 仍会发生。场景31专门覆盖两个不透明前层的斜边及单独红通道饱和，后面是高 opacity 的明亮半透明面。
+
+现在逐通道使用 `min(centerT, max(neighbourMinT, 16/255))`。中心自己的零值和低透射率保持原样，只限制邻居引起的额外衰减。下限为16个RGBA8码值，是兼顾R11G11B10 accumulation的实验选择，不是任意opacity/颜色下的数值保证。直接排除零值邻居会在邻居从正数变为零时改变参与集合，可能使T随Z上升；有下限的min则保持Z单调。无新增RT/pass或额外查询。
+
+本次2K验证关闭硬件Zero-T和shading shortcut：旧min在场景26/31分别新增1803/13112个有消光但零分母的FP16颜色通道。新处理消除了这两个测试里的FP16零分母。场景26 packed accumulation相对不做min的基线，1/255、4/255、16/255分别新增12、5、3个零分母通道；很小opacity/颜色仍可能受格式量化影响，不能宣称完全消除所有数值问题。
+
+前面纯min的画质/计时数据属于历史实验；当前回归脚本使用带16/255邻居下限的参考。过滤当前默认开启。
+
+
+## 内外壳压平排序实验
+
+场景 32（Nested cubes）包含三组 0/30/60 度倾角的立方体，外壳与内层相差 1 cm，分别是独立 actor/material/draw。场景顶部的 `Flatten nested cube OIT ordering` 开关可对比共享锚点压平与普通外壳 +1 bin camera offset。Actor 材质面板也可以选择 `OIT depth anchor` 和 `OIT flattened layer`；内外层必须指向同一个 actor 锚点。
+
+锚点投影为视空间深度，经 Adaptive Z 映射并取整得到 k。内层仅写 k，外壳仅写 k−1；查询 inclusive T-LUT 时分别读 k−1、k−2 的 bin 中心，排除自身。该模式绕过 slope push 和普通 camera offset；真实顶点、opaque depth test、着色和 totalTau 不变。Occupancy 使用真实 XY bounds 和锚点附近的虚拟 Z；复用现有向前一个 physical bin 的保留逻辑。没有额外 RT/pass，材质 GPU 记录大小也未增加。
+
+2K、无 TAA、FP16 accumulation/composition 验证：正面捕获只有两个相邻的 LUT 跃迁（4、5）；关闭 slope、16-bin budget、poison 和 dense 对照的 HDR 逐值相同。逆序提交只有 FP16 混合舍入差异（该捕获最大 HDR 差约 0.00147）。普通 +1 bin 模式可见的斜面周期条纹，在当前压平对照中消失；另检查了三个侧移／环绕视角，低分辨率 XY 覆盖和 noise 边缘误差仍然存在。
+
+这只提供层级排序近似：同层内部的真实前后关系被丢弃，与其他模型的穿插仍按共享 LUT 的虚拟深度处理。Frost/refraction interface 和 local volume 不启用此模式；沿用 camera offset 的限制，启用时暂停硬件 Zero-T 深度剔除。测试脚本为 `avboit/tests/check_flat_ordering.py`，图片位于 `build/flat-ordering`。
+
+
+## 第三层轮廓黑边复现
+
+场景 33（Third-layer halo）专门测试之前未覆盖的布局：前层是整片较暗的玻璃，中间是低透射率的斜边和孔洞，第三层是明亮的半透明面。三层彼此分离、平行于相机；没有 camera offset、frost/refraction 或零透射率材质。
+
+中间层真实轮廓外的像素只覆盖第一、第三层，但低分辨率 LUT 的线性采样和 XY min-filter 会把中间层消光带入该像素。第一层的 T 查询在中间层之前，保持不变；第三层的权重下降，归一化不能同时恢复两层正确的相对贡献，因此产生暗轮廓。16/255 邻居下限可以避免传播零值，却不能消除非零 T 的错误衰减。关闭 min 仍有普通低分辨率覆盖/双线性插值的残余；不能将 min-filter 视为多层轮廓问题的完整修复。
+
+`avboit/tests/check_third_layer_halo.py` 生成精确逐像素排序参考与对照图。当前 2560×1440、无 TAA 的固定视角，在中间层轮廓外 2–16 像素的区域统计，最大 RGB 通道平均 HDR 变暗量为：默认 1/8 LUT + min 约 0.213、关闭 min 约 0.016、提高到 1/2 LUT + min 约 0.037。这里是特定高反差场景的误差，不是通用画质分数。
+
+关闭硬件 Zero-T 和 shading shortcut，捕获 HDR 逐值不变。改 FP16 accumulation 后黑边依旧（同一测量约 0.213）；原 packed 格式逆序提交还存在混合舍入差异，但不是主要暗轮廓的来源。本次仅加入复现场景和诊断，没有为了该案例修改默认滤波策略。
+
+
+## 限制 min-filter 的额外消光
+
+Quality → OIT sampling → `Min-filter retain` 可以实时调整，试验默认值 0.5。计算仍在同一个 integration 中完成：`min(centerT, max(neighbourMinT, max(16/255, centerT * retain)))`。centerT 始终是当前柱独立积分的原值，不是遍历邻域时不断变小的结果。原有 16/255 零扩散保护保留；当前柱自身的零或低 T 不被抬高。无新增 RT、pass 或纹理采样，改动是寄存器内的相对下限计算。
+
+retain=0 对应之前仅有绝对下限的 min；0.5 限制邻居最多把当前柱的 T 再减半；1 不改变中心 T。retain=1 用于画面对照，仍执行 min 的线程组和同步；性能上不等价于关闭 min-filter。
+
+`avboit/tests/check_relative_lut_min.py` 的 2560×1440、无 TAA、FP16 诊断结果（与精确排序参考的平均最大 RGB 通道 HDR 误差）：
+
+| 测量区域 | 旧 min | retain=0.25 | retain=0.5 | 关闭 min |
+| --- | ---: | ---: | ---: | ---: |
+| 场景 27：前层轮廓内侧 | 0.00065 | 0.00276 | 0.00563 | 0.01113 |
+| 场景 33：中间层轮廓外侧 | 0.21267 | 0.15033 | 0.09063 | 0.01596 |
+
+这是抑制黑边与背景漏色之间的折中，不是恢复真实覆盖。两类 ROI 不同，不能横向比较绝对数值。当前测试 retain=1 与关闭 min 的 HDR 完全一致；0.5 的 sparse/poison/dense 结果一致，场景 27/33/31 未新增零 T，LUT 沿 Z 保持单调。更精确地恢复遮挡仍然需要额外信息。本轮没有加入预先计算 totalTau 的绘制。

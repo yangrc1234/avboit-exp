@@ -36,8 +36,7 @@ class ExtinctionVolume
     void RecordAdaptiveDepth(nvrhi::ICommandList *commands) const;
     void RecordPhysicalMask(nvrhi::ICommandList *commands) const;
     void RecordClear(nvrhi::ICommandList *commands, bool dense, bool poison) const;
-    void RecordSplat(nvrhi::ICommandList *commands, const std::vector<GeometryDraw> &draws,
-                     bool conservative = false) const;
+    void RecordSplat(nvrhi::ICommandList *commands, const std::vector<GeometryDraw> &draws) const;
     void RecordIntegration(nvrhi::ICommandList *commands, bool dense, bool minFilter = false) const;
 
     nvrhi::ITexture *ScreenTiles() const { return m_screenTiles; }
@@ -69,7 +68,7 @@ class ExtinctionVolume
     nvrhi::FramebufferHandle m_framebuffer;
     nvrhi::BindingLayoutHandle m_splatLayout;
     nvrhi::BindingSetHandle m_splatBindings;
-    std::vector<nvrhi::GraphicsPipelineHandle> m_splatPipelines, m_conservativeSplatPipelines;
+    std::vector<nvrhi::GraphicsPipelineHandle> m_splatPipelines;
     nvrhi::BufferHandle m_indices;
     unsigned m_depthBudget = 128;
     unsigned m_width = 0, m_height = 0, m_tiles = 0, m_objects = 0;

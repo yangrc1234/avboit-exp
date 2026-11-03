@@ -39,6 +39,9 @@ def main():
                 cmd = [
                     str(root / "bin/avboit_viewer.exe"),
                     "--headless",
+                    "--no-taa",
+                    "--volume-full-res",
+                    "--no-lut-min-filter",
                     "--stress",
                     str(scene),
                     "--render-width",

@@ -26,6 +26,9 @@ for name, bins, flags in [
         [
             str(root / "bin/avboit_viewer.exe"),
             "--headless",
+            "--no-taa",
+            "--volume-full-res",
+            "--no-lut-min-filter",
             "--stress",
             "26",
             "--shell-offset-bins",

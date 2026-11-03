@@ -28,7 +28,7 @@ struct StressFixture
     std::vector<StressVolume> volumes;
     bool sphere = false;
 };
-constexpr unsigned StressPresetCount = 31;
+constexpr unsigned StressPresetCount = 34;
 const char *StressPresetName(unsigned preset);
 StressFixture BuildStressFixture(unsigned preset);
 // View-space prototype receiver: opaque frame and three optical skin panels.

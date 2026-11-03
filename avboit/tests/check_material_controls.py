@@ -64,7 +64,7 @@ with tempfile.TemporaryDirectory(prefix="avboit-materials-") as scratch:
 
     def capture(flags):
         result = subprocess.run(
-            [str(viewer), "--headless", "--emissive-balls", "--no-smoke", *flags],
+            [str(viewer), "--headless", "--no-taa", "--volume-full-res", "--no-lut-min-filter", "--emissive-balls", "--no-smoke", *flags],
             cwd=directory,
             capture_output=True,
         )

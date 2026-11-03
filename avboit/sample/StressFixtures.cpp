@@ -37,7 +37,10 @@ const char *StressPresetName(unsigned preset)
                                   "Glass silhouette over rear glass / XY aliasing",
                                   "Glass silhouette / three layers",
                                   "Eight overlapping RGB panes",
-                                  "Eight RGB panes / front frost and refraction"};
+                                  "Eight RGB panes / front frost and refraction",
+                                  "XY min / zero-transmittance spread",
+                                  "Nested cubes / flattened OIT ordering",
+                                  "Third-layer halo / front glass and middle silhouettes"};
     return names[preset < StressPresetCount ? preset : 0];
 }
 StressFixture BuildStressFixture(unsigned preset)
@@ -303,7 +306,40 @@ StressFixture BuildStressFixture(unsigned preset)
             q.color = {.08f + .03f * (layer % 3), .14f + .025f * (layer % 2), .2f - .015f * layer, 1};
         }
     }
-    if (preset == 26)
+    if (preset == 33)
+    {
+        // Three separated depth layers. A broad front layer prevents the resolve
+        // normalization from cancelling the LUT error on the bright rear layer.
+        result.opaque.push_back({{0, 0, 7.8f}, {20, 0, 0}, {0, 20, 0}, {.12f, .12f, .12f, 1}, {0, 0, 0}, 0});
+        auto &front = pane({0, 0, 3}, {8, 0, 0}, {0, 5, 0}, {.6f, .7f, .8f});
+        front.color = {.025f, .035f, .045f, 1};
+        auto &middle = pane({-.95f, 0, 4.5f}, {.65f, .18f, 0}, {-.22f, 1.05f, 0}, {.04f, .05f, .06f});
+        middle.color = {.035f, .045f, .055f, 1};
+        middle.motion = {.025f, 0, 0};
+        auto &cutout = pane({1.f, 0, 4.5f}, {.65f, 0, 0}, {0, 1.05f, 0}, {.04f, .05f, .06f});
+        cutout.color = {.035f, .045f, .055f, 1};
+        cutout.shape = .55f;
+        cutout.motion = {.025f, 0, 0};
+        auto &rear = pane({0, 0, 7}, {18, 0, 0}, {0, 12, 0}, {.1f, .1f, .1f});
+        rear.color = {1.2f, 1.2f, 1.2f, 1};
+    }
+    if (preset == 31)
+    {
+        result.opaque.push_back({{0, 0, 7.8f}, {20, 0, 0}, {0, 20, 0}, {.12f, .12f, .12f, 1}, {0, 0, 0}, 0});
+        auto &rear = pane({0, 0, 6}, {4.8f, 0, 0}, {0, 2.1f, 0}, {.001f, .001f, .001f});
+        rear.color = {.9f, .5f, .2f, 1};
+        // Left: all-channel zero. Right: only red reaches zero. The bright rear
+        // surface extends beyond both silhouettes and must retain a nonzero weight.
+        for (int side : {-1, 1})
+            for (unsigned layer = 0; layer < 2; ++layer)
+            {
+                auto &front =
+                    pane({side * 1.f, 0, 3.5f + layer * .05f}, {.65f, .15f, 0}, {-.2f, .85f, 0},
+                         side < 0 ? std::array<float, 3>{.005f, .005f, .005f} : std::array<float, 3>{.005f, .8f, .9f});
+                front.color = {.08f, .18f, .3f, 1};
+            }
+    }
+    if (preset == 26 || preset == 32)
         result.opaque.push_back({{0, 0, 7}, {10, 0, 0}, {0, 10, 0}, {.035f, .045f, .055f, 1}, {0, 0, 0}, 0});
     return result;
 }

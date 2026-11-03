@@ -27,6 +27,9 @@ def run(name, width=2560, height=1440, count=3, flags=()):
             [
                 str(native / "bin/avboit_viewer.exe"),
                 "--headless",
+                "--no-taa",
+                "--volume-full-res",
+                "--no-lut-min-filter",
                 "--render-width",
                 str(width),
                 "--render-height",

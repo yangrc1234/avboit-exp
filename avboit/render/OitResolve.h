@@ -13,7 +13,7 @@ struct OitResolveInputs
 {
     unsigned width = 0, height = 0;
     bool halfAccumulation = false;
-    bool lowResolutionVolumes = false;
+    bool lowResolutionVolumes = true;
     nvrhi::BufferHandle vertices, indices, camera, materials, warp;
     nvrhi::BufferRange vertexRange;
     nvrhi::TextureHandle lut, opaque, interfaceDepth, interfaceSurface, interfaceOffset, screenTiles;

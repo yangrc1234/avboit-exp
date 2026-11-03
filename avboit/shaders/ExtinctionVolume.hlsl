@@ -20,9 +20,9 @@ void splatPixel(Varyings i)
     float depthSpan = abs(ddx(i.position.z)) + abs(ddy(i.position.z));
     // Include the optional XY min halo as well as the reconstruction footprint.
     // Keep the existing bounded occupancy guard; no extra Z bins are allocated.
-    depthSpan *= (UseCubicTransmittance() ? 2. : 1.) + ((uint(Camera[7].w) & 32u) != 0 ? 1. : 0.);
+    depthSpan *= 1. + ((uint(Camera[7].w) & 32u) != 0 ? 1. : 0.);
     float logDepth = NormalizedLogDepth(i.depth, 80., 1.);
-    if (Camera[9].x != 0)
+    if (Camera[9].x != 0 && i.flatOrdering.x <= 0.)
     {
         // Clamp before reciprocal reconstruction to stay inside the far plane.
         float pushedDepth = ViewDepthFromDevice(max(i.position.z - depthSpan, 0.));
@@ -38,7 +38,8 @@ void splatPixel(Varyings i)
     float3 opacity = Opacity(i);
     if (all(opacity < .00001))
         discard;
-    float mapped = MapAdaptiveLogDepth(DepthWarp, logDepth, 0.) - i.cameraOffsetBins;
+    float mapped = i.flatOrdering.x > 0. ? FlattenedOitBin(DepthWarp, i.flatOrdering, SLICE_COUNT - 2)
+                                         : MapAdaptiveLogDepth(DepthWarp, logDepth, 0.) - i.cameraOffsetBins;
     SplatExtinction(pixel.y * VOLUME_WIDTH + pixel.x, mapped, TransmittanceToOpticalDepth(1. - opacity),
                     i.scalarExtinction != 0);
 }
@@ -173,6 +174,9 @@ void Integrate(uint2 pixel, bool sparse, bool minFilter, uint2 lane)
         // Empty slices still receive the carried transmittance. Leaving them
         // unwritten would leak previous-frame data through linear filtering.
         float3 outputT = t;
+        // Bound added optical depth relative to the ORIGINAL centre, not the
+        // running minimum. Retain=0 reproduces the previous absolute-floor filter.
+        float3 neighbourFloor = max(16. / 255., t * saturate(Camera[11].w));
         if (minFilter)
         {
             IntegratedTile[lane.y * 10 + lane.x] = t;
@@ -183,7 +187,12 @@ void Integrate(uint2 pixel, bool sparse, bool minFilter, uint2 lane)
                 {
                     [unroll] for (int x = -1; x <= 1; ++x)
                     {
-                        outputT = min(outputT, IntegratedTile[(int(lane.y) + y) * 10 + int(lane.x) + x]);
+                        // Do not spread a neighbour's quantized zero into a ray
+                        // whose own extinction has not closed. Sixteen UNORM8 codes
+                        // leave headroom for packed accumulation and preserve Z monotonicity.
+                        // outputT starts at the unmodified centre: its real zeros survive.
+                        float3 neighbour = IntegratedTile[(int(lane.y) + y) * 10 + int(lane.x) + x];
+                        outputT = min(outputT, max(neighbour, neighbourFloor));
                     }
                 }
             }

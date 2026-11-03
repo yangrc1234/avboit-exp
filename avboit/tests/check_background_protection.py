@@ -27,6 +27,9 @@ with tempfile.TemporaryDirectory(prefix="avboit-background-") as directory:
             [
                 str(args.viewer.resolve()),
                 "--headless",
+                "--no-taa",
+                "--volume-full-res",
+                "--no-lut-min-filter",
                 "--poison-resolve",
                 "--no-zero-depth",
                 "--stress",

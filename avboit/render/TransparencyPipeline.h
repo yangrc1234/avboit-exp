@@ -21,7 +21,8 @@ struct TransparencyInputs
     unsigned depthBudget = 128;
     bool fixedDepth = false, hardwareDepth = false;
     bool halfAccumulation = false, fullVfx = true;
-    bool lowResolutionVolumes = false;
+    bool lowResolutionVolumes = true;
+    unsigned volumeUpsampleKernel = 0;
     nvrhi::BufferHandle vertices, bounds, camera, materials, interfaceIndices, geometryIndices;
     nvrhi::BufferRange transparentRange;
     nvrhi::TextureHandle opaqueColorDepth;
@@ -38,7 +39,7 @@ struct TransparencyFrame
 {
     bool denseExtinction = false, poisonExtinction = false;
     bool poisonResolve = false;
-    bool conservativeSplat = false, lutMinFilter = false;
+    bool lutMinFilter = true;
     bool sparseBlur = true, cubic = true;
     unsigned lastBlurMip = 5;
     bool zeroDepth = false;

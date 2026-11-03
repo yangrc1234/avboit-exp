@@ -15,6 +15,9 @@ with tempfile.TemporaryDirectory(prefix="avboit-depth-") as directory:
             [
                 str(viewer),
                 "--headless",
+                "--no-taa",
+                "--volume-full-res",
+                "--no-lut-min-filter",
                 "--legacy-scene",
                 "--hardware-depth",
                 "--composition-half",

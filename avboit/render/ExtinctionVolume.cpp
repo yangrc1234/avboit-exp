@@ -152,8 +152,6 @@ void ExtinctionVolume::Create(nvrhi::IDevice *device, const ExtinctionInputs &in
     pipeline.renderState.depthStencilState.depthTestEnable = false;
     pipeline.renderState.depthStencilState.depthWriteEnable = false;
     m_splatPipelines.clear();
-    m_conservativeSplatPipelines.clear();
-    const bool supportsConservative = device->queryFeatureSupport(nvrhi::Feature::ConservativeRasterization);
     for (const auto &material : inputs.materialShaders)
     {
         pipeline.VS = material.extinctionVertex ? material.extinctionVertex : material.vertex;
@@ -161,14 +159,6 @@ void ExtinctionVolume::Create(nvrhi::IDevice *device, const ExtinctionInputs &in
         pipeline.renderState.rasterState.cullMode = material.cullMode;
         pipeline.renderState.rasterState.conservativeRasterEnable = false;
         m_splatPipelines.push_back(device->createGraphicsPipeline(pipeline, m_framebuffer->getFramebufferInfo()));
-        if (supportsConservative)
-        {
-            // Raymarched volume proxies keep ordinary coverage; this experiment
-            // changes surface extinction splats only, never accumulation.
-            pipeline.renderState.rasterState.conservativeRasterEnable = !material.extinctionVertex;
-            m_conservativeSplatPipelines.push_back(
-                device->createGraphicsPipeline(pipeline, m_framebuffer->getFramebufferInfo()));
-        }
     }
 }
 
@@ -221,8 +211,7 @@ void ExtinctionVolume::RecordClear(nvrhi::ICommandList *commands, bool dense, bo
     }
     Barrier(commands);
 }
-void ExtinctionVolume::RecordSplat(nvrhi::ICommandList *commands, const std::vector<GeometryDraw> &draws,
-                                   bool conservative) const
+void ExtinctionVolume::RecordSplat(nvrhi::ICommandList *commands, const std::vector<GeometryDraw> &draws) const
 {
     nvrhi::GraphicsState state;
     state.framebuffer = m_framebuffer;
@@ -234,7 +223,7 @@ void ExtinctionVolume::RecordSplat(nvrhi::ICommandList *commands, const std::vec
         char label[96];
         snprintf(label, sizeof(label), "Extinction actor %u / material %u", draw.actor, draw.material);
         AVBOIT_GPU_SCOPE(commands, label);
-        state.pipeline = (conservative ? m_conservativeSplatPipelines : m_splatPipelines).at(draw.material);
+        state.pipeline = m_splatPipelines.at(draw.material);
         commands->setGraphicsState(state);
         commands->drawIndexed(
             nvrhi::DrawArguments().setStartIndexLocation(draw.firstIndex).setVertexCount(draw.indexCount));

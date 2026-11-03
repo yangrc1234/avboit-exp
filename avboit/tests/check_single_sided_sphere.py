@@ -12,6 +12,9 @@ with tempfile.TemporaryDirectory(prefix="avboit-single-sphere-") as directory:
         command = [
             str(root / "bin/avboit_viewer.exe"),
             "--headless",
+            "--no-taa",
+            "--volume-full-res",
+            "--no-lut-min-filter",
             "--glass-sphere",
             "--no-smoke",
             "--calibration-board",

@@ -22,7 +22,7 @@ def main():
         folder.mkdir(parents=True, exist_ok=True)
         with (folder / "run.log").open("w") as log:
             subprocess.run(
-                [str(root / "bin/avboit_viewer.exe"), "--headless", *flags],
+                [str(root / "bin/avboit_viewer.exe"), "--headless", "--no-taa", "--volume-full-res", "--no-lut-min-filter", *flags],
                 cwd=folder,
                 stdout=log,
                 stderr=subprocess.STDOUT,

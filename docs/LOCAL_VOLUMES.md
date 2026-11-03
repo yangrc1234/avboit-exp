@@ -191,7 +191,7 @@ and reset edits. The imported Sponza architecture remains the background scene.
 
 ### Demo TAA
 
-Enable `--taa` or **Quality → Display → Temporal anti-aliasing** in ImGui. This uses the same Donut
+TAA and half-resolution local volumes are enabled by default. Use `--no-taa` / `--volume-full-res` for references, or the **Quality** controls in ImGui. This uses the same Donut
 TAA pass as the neighboring ADS demo, after transparency/VFX distortion and before
 tonemapping. Halton projection jitter is shared by opaque and transparent geometry,
 occupancy projection and volume rays. TAA also varies ray phases over time (quad rotation at full resolution, blue-noise
@@ -204,7 +204,7 @@ selection. Only a near-zero total weight falls back to the closest-depth tap;
 equal depth errors prefer the spatially nearest candidate.
 N/A/totalTau/BackN share the same normalized weights. The sampling radius is fixed
 at one half-resolution texel; there is no depth-moment RT or volume-history buffer.
-This follows TAA automatically; there is no separate upscaling switch in ImGui.
+**Quality → Volumes → Volume upsample** selects fixed bilateral, legacy random, coherent jitter, or the matched spatial reference. Switching resets TAA history and preserves material edits.
 Without TAA, four fixed bilinear neighbors use spatial bilinear weights instead.
 `--volume-upsample-bilateral` retains that fixed-neighbor reference for automation.
 
@@ -226,7 +226,7 @@ Upsampling does not query the T-LUT. Its scene-depth guide still contains Zero-T
 quads, so artificial cutoff-depth changes can still affect the weights. Independent
 weighting removes the all-or-nothing selection rule, not this underlying ambiguity.
 Disabling TAA releases its history,
-motion and output textures. It defaults off to preserve non-temporal comparisons.
+motion and output textures. Use `--no-taa` for non-temporal comparisons.
 
 Motion is reconstructed from scene depth and camera transforms. There are no
 transparent-object motion vectors or volume representative depths yet, so moving
