@@ -56,9 +56,7 @@ for case, flags in [
             m = a[:, 0] > 0
             data[mode] = a[m].mean(0).tolist()
         else:
-            Image.open(folder / "native-raster.ppm").save(
-                out / (case + "-" + mode + ".png")
-            )
+            Image.open(folder / "native-raster.ppm").save(out / (case + "-" + mode + ".png"))
             a, tau = read("native-composition.rgba16f"), read("native-total-tau.raw")
             assert np.isfinite(a).all() and np.isfinite(tau).all()
             if mode == "base":
@@ -70,9 +68,7 @@ for case, flags in [
                     max=float(error.max()),
                     p99=float(np.quantile(error.max(1), 0.99)),
                     tau_max=float(np.abs(tau - tau_reference).max()),
-                    opacity_max=float(
-                        np.abs(np.exp(-tau) - np.exp(-tau_reference)).max()
-                    ),
+                    opacity_max=float(np.abs(np.exp(-tau) - np.exp(-tau_reference)).max()),
                 )
         print(case, mode, data.get(mode, "captured"), flush=True)
     report[case] = data

@@ -59,15 +59,17 @@ GPU timer 拆成互不重叠的四项：`accumulation_clear`（全分辨率 RT �
 `accumulation`（全分辨率 actor 绘制）。与旧 CSV 对比时，需要将四项相加；
 旧版 `accumulation` 包含了全部这些开销。关闭的阶段记录空计时间隔，支持实时切换。
 
-启用半分辨率和 TAA 后，使用四个分层蓝噪声 point taps，每个样本独立计算
-“实际采样 texel 距离的 Gaussian 空间权重 × 场景／interface 深度相似度”。
+启用半分辨率和 TAA 后，使用 coherent 四邻居 point taps，每个样本计算
+“抖动中心对应的 bilinear 空间权重 × 场景／interface 深度相似度”。
 一个候选不匹配只降低自身权重，不再让整个像素退回单点。
 只有权重总和接近零时才选择深度最匹配的候选；深度差相同则优先空间最近的样本。
 四张 RT 共用归一化后的权重。采样半径固定为一个半分辨率 texel，
 不生成深度矩，不增加 RT 或体积 history，也不查询 T-LUT。
 SceneDepth 仍包含 Zero-T，因此其人工深度台阶仍可能影响权重；这个改动不消除深度本身的歧义。
 上采样跟随 TAA 自动选择，不再单独提供 ImGui 对比开关。
-没有 TAA 时使用固定四邻居与 bilinear 空间权重；CLI 参数 `--volume-upsample-bilateral` 仅用于自动化对照。
+统一使用 coherent 四邻居重建：同一个蓝噪声偏移移动 bilinear 采样中心，
+空间权重乘 opaque/interface 深度权重后归一化；屏幕 clamp 前四个邻居不会重复。
+没有 TAA 时关闭中心抖动，使用固定四邻居。已删除核选择菜单、CLI 选项以及旧随机核和 9-tap 对照核。
 `Temporal volume dithering (requires TAA)` / `--volume-temporal-dither`
 只改变 raymarch 的时域采样相位，用于接入宿主自己的 TAA。
 旧参数 `--volume-stochastic-upsample` 仅保留为别名，不再抖动 upsample 地址。

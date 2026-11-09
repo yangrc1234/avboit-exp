@@ -626,8 +626,9 @@ void NativeViewer::TestTemporalAA(nvrhi::IFramebuffer *framebuffer, bool capture
     if (lowResolutionVolumes && captureUpscaleSequence)
     {
         // Deterministic A/B sequences at the requested render resolution. These
-        // exercise the same live mode switch; no separate rendering test path.
+        // exercise coherent jitter and its fixed-neighbor fallback.
         const bool savedUpscale = ditheredVolumeUpsample;
+        const float savedSmokeFrame = smokeFrame;
         auto *color = framebuffer->getDesc().colorAttachments[0].texture;
         auto staging = GetDevice()->createStagingTexture(color->getDesc(), nvrhi::CpuAccessMode::Read);
         auto *preTaa = transparency.DistortionApply().Output();
@@ -645,6 +646,12 @@ void NativeViewer::TestTemporalAA(nvrhi::IFramebuffer *framebuffer, bool capture
             const float pitchAngle = std::asin(std::clamp(direction[1], -1.f, 1.f));
             for (unsigned frame = 0; frame < 48; ++frame)
             {
+                // Headless rendering does not call Animate. Advance both A/B
+                // sequences identically so baked smoke exercises moving density,
+                // frame uploads and TAA history instead of a frozen VDB frame.
+                if (bakedSmoke && !smokeFrames.empty())
+                    smokeFrame =
+                        std::min(savedSmokeFrame + float(frame) * smokeFps / 60.f, float(smokeFrames.size() - 1));
                 if (frame >= 40)
                     navigation.SetPose({startEye[0] + float(frame - 39) * .02f, startEye[1], startEye[2]}, heading,
                                        pitchAngle);
@@ -708,6 +715,7 @@ void NativeViewer::TestTemporalAA(nvrhi::IFramebuffer *framebuffer, bool capture
             }
         }
         ditheredVolumeUpsample = savedUpscale;
+        smokeFrame = savedSmokeFrame;
         ApplyCameraPreset(savedPreset);
         temporalAA->Invalidate();
         Render(framebuffer);

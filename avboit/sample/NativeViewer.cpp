@@ -8,6 +8,7 @@
 #include <nvrhi/utils.h>
 #include <array>
 #include <fstream>
+#include <cstring>
 #include <vector>
 #include <stdexcept>
 #include <cmath>
@@ -76,9 +77,8 @@ class NativeViewer : public app::IRenderPass
     avboit::VolumeLighting volumeLighting;
     avboit::SceneLightingSettings sceneLighting;
     bool lowResolutionVolumes = true, temporalVolumeDithering = false;
-    unsigned volumeUpsampleKernel = 0;
-    bool ditheredVolumeUpsample = true;
-    bool volumeLutSkip = false, volumeMarchStats = false;
+    bool ditheredVolumeUpsample = true; // Disabled only by the fixed-kernel regression capture.
+    bool volumeLutSkip = false, volumeMarchStats = false, volumeReferenceSampling = false;
     unsigned volumeSampleFrame = 0;
     bool taaEnabled = true;
     std::unique_ptr<avboit::TemporalAA> temporalAA;
@@ -139,7 +139,38 @@ class NativeViewer : public app::IRenderPass
     nvrhi::IBuffer *masks = nullptr, *warp = nullptr, *extinction = nullptr, *physicalMasks = nullptr;
     nvrhi::ITexture *lut = nullptr;
     nvrhi::TextureHandle opaque, depth;
-    nvrhi::TextureHandle frostNormal, volumeDensity;
+    nvrhi::TextureHandle frostNormal, volumeDensity, gameplaySmokeMask;
+    nvrhi::BufferHandle smokeBricks;
+    std::vector<std::vector<uint32_t>> smokeFrames;
+    std::vector<uint32_t> smokeUpload;
+    std::filesystem::path smokeSequencePath;
+    float smokeFrame = 15.f, smokeFps = 24.f;
+    bool playSmoke = true, smokeBrickSkip = true, smokeInterpolation = true;
+    int uploadedSmokeA = -1, uploadedSmokeB = -1;
+    void UploadSmokeFrame()
+    {
+        if (smokeFrames.empty())
+            return;
+        float f = std::clamp(smokeFrame, 0.f, float(smokeFrames.size() - 1));
+        unsigned a = unsigned(f);
+        unsigned b = smokeInterpolation ? std::min(a + 1, unsigned(smokeFrames.size() - 1)) : a;
+        float blend = smokeInterpolation ? f - float(a) : 0.f;
+        if (uploadedSmokeA != int(a) || uploadedSmokeB != int(b))
+        {
+            smokeUpload = smokeFrames[a];
+            smokeUpload[6] = smokeInterpolation ? unsigned(smokeUpload.size()) : 0;
+            if (smokeInterpolation)
+                smokeUpload.insert(smokeUpload.end(), smokeFrames[b].begin(), smokeFrames[b].end());
+            commands->writeBuffer(smokeBricks, smokeUpload.data(), smokeUpload.size() * 4);
+            uploadedSmokeA = int(a);
+            uploadedSmokeB = int(b);
+        }
+        smokeUpload[0] = (smokeFrames[a][0] == 3 ? 2u : 0u) + (smokeBrickSkip ? 1u : 2u);
+        std::memcpy(&smokeUpload[7], &blend, sizeof(blend));
+        commands->writeBuffer(smokeBricks, smokeUpload.data(), 32);
+    }
+
+    bool bakedSmoke = false, smokeMask = true, smokeDoorOpen = true;
     nvrhi::SamplerHandle frostSampler;
     nvrhi::ITexture *numerator = nullptr, *denominator = nullptr, *totalTau = nullptr;
     nvrhi::ITexture *backNumerator = nullptr;
@@ -265,7 +296,8 @@ class NativeViewer : public app::IRenderPass
                     (temporalVolumeDithering || taaEnabled) ? float(1 + (volumeSampleFrame++ % 4096)) : 0.f},
                    {volumeStepSize, volumeLowT, volumeStepScale, float(volumeMaxSteps)},
                    {0, 0, 0, lutMinRetain},
-                   {towardBins, awayBins, float(volumeLutSkip), float(volumeMarchStats)}}};
+                   {towardBins, awayBins, float(unsigned(volumeLutSkip) | (unsigned(volumeReferenceSampling) << 1)),
+                    float(volumeMarchStats)}}};
         if (temporalAA)
         {
             const auto jitter = temporalAA->Jitter();
@@ -382,6 +414,7 @@ class NativeViewer : public app::IRenderPass
                 projected[4 + object * 2][j] = high[j];
             }
         }
+        UploadSmokeFrame();
         commands->writeBuffer(cameraBuffer, camera.data(), sizeof(camera));
         commands->writeBuffer(boundsBuffer, projected.data(), projected.size() * 16);
     }
@@ -607,6 +640,10 @@ class NativeViewer : public app::IRenderPass
             eye[2] -= 14.f;
         if (preset == 5)
             heading = 3.14159265f;
+        if (preset == 10)
+            eye = {0.f, 1.75f, 2.65f}; // Immediately before the smoke bounds.
+        if (preset == 11)
+            eye = {0.f, 1.75f, 4.f}; // Inside the smoke, facing forward.
         if (preset >= 7 && preset <= 9)
         {
             // Orbit the crossing at z=4.5 without changing its projected center.
@@ -642,6 +679,105 @@ class NativeViewer : public app::IRenderPass
         emissiveGain = gain;
     }
     void SetEmissiveFront(bool front) { emissiveFront = front; }
+    void SetSmokeAnimation(float frame, bool skip, const std::string &path, bool play, bool interpolate)
+    {
+        smokeFrame = frame;
+        smokeBrickSkip = skip;
+        smokeInterpolation = interpolate;
+        smokeSequencePath = path;
+        playSmoke = play;
+    }
+    void SetBakedSmoke(bool enabled, bool mask, bool door)
+    {
+        bakedSmoke = enabled;
+        smokeMask = mask;
+        smokeDoorOpen = door;
+    }
+    void CreateBakedSmokeResources()
+    {
+        auto device = GetDevice();
+        smokeFrames.clear();
+        uploadedSmokeA = uploadedSmokeB = -1;
+        std::vector<uint32_t> data(8, 0);
+        if (bakedSmoke && (stressPreset == 24 || stressPreset == 25))
+        {
+            auto directory = smokeSequencePath.empty() ? app::GetDirectoryWithExecutable() / "textures/smoke-sequence"
+                                                       : smokeSequencePath;
+            std::ifstream manifest(directory / "sequence.txt");
+            unsigned count = 0;
+            if (!(manifest >> count >> smokeFps) || count == 0 || count > 1024 || !std::isfinite(smokeFps) ||
+                smokeFps <= 0)
+                throw std::runtime_error("Invalid smoke sequence manifest");
+            for (unsigned frame = 1; frame <= count; ++frame)
+            {
+                auto path = directory / (std::to_string(frame) + ".bin");
+                std::ifstream file(path, std::ios::binary | std::ios::ate);
+                if (!file)
+                    throw std::runtime_error("Cannot load baked smoke: " + path.string());
+                auto bytes = file.tellg();
+                if (bytes < 32 || bytes % 4)
+                    throw std::runtime_error("Invalid smoke brick file");
+                data.resize(size_t(bytes) / 4);
+                file.seekg(0);
+                if (!file.read(reinterpret_cast<char *>(data.data()), bytes))
+                    throw std::runtime_error("Incomplete smoke brick file");
+                uint64_t cells = 1;
+                for (unsigned k = 1; k <= 3; ++k)
+                {
+                    if (!data[k] || data[k] > 2048 || data[k] % 4)
+                        throw std::runtime_error("Invalid smoke dimensions");
+                    cells *= data[k] / 4;
+                }
+                if ((data[0] != 1 && data[0] != 3) || data[4] != 8 || data[5] != 8 + (cells + 1) / 2 ||
+                    data[5] > data.size())
+                    throw std::runtime_error("Invalid smoke table");
+                for (uint64_t j = 0; j < cells; ++j)
+                {
+                    uint32_t index = (data[8 + j / 2] >> ((j & 1) * 16)) & 65535;
+                    if (uint64_t(data[5]) + uint64_t(index) * (data[0] == 3 ? 64 : 17) > data.size())
+                        throw std::runtime_error("Invalid smoke brick index");
+                }
+                if (!smokeFrames.empty() &&
+                    !std::equal(data.begin() + 1, data.begin() + 4, smokeFrames.front().begin() + 1))
+                    throw std::runtime_error("Smoke sequence frames must share fixed dimensions");
+                smokeFrames.push_back(data);
+            }
+            smokeFrame = std::clamp(smokeFrame, 0.f, float(smokeFrames.size() - 1));
+        }
+        size_t maxWords = 8;
+        for (const auto &frame : smokeFrames)
+            maxWords = std::max(maxWords, frame.size() * (smokeInterpolation ? 2u : 1u));
+        smokeBricks = Buffer(unsigned(maxWords * 4), nvrhi::Format::R32_UINT, false, "Baked smoke bricks");
+        constexpr unsigned size = 32;
+        std::vector<uint8_t> mask(size * size * size, 255);
+        // CPU stand-in for gameplay coverage: a dividing wall with a doorway.
+        // UVs match this single smoke actor; production supplies its own coverage transform.
+        if (smokeMask)
+            for (unsigned z = 0; z < size; ++z)
+                for (unsigned y = 0; y < size; ++y)
+                    for (unsigned x = 0; x < size; ++x)
+                    {
+                        bool wall = x >= 14 && x <= 17;
+                        bool doorway = y < 22 && z >= 11 && z <= 20;
+                        if ((wall && !(smokeDoorOpen && doorway)) || (!smokeDoorOpen && x > 17))
+                            mask[x + size * (y + size * z)] = 0;
+                    }
+        gameplaySmokeMask = device->createTexture(nvrhi::TextureDesc()
+                                                      .setWidth(size)
+                                                      .setHeight(size)
+                                                      .setDepth(size)
+                                                      .setDimension(nvrhi::TextureDimension::Texture3D)
+                                                      .setFormat(nvrhi::Format::R8_UNORM)
+                                                      .setInitialState(nvrhi::ResourceStates::ShaderResource)
+                                                      .setKeepInitialState(true)
+                                                      .setDebugName("Gameplay smoke coverage"));
+        commands->open();
+        commands->writeBuffer(smokeBricks, data.data(), data.size() * 4);
+        commands->writeTexture(gameplaySmokeMask, 0, 0, mask.data(), size, size * size);
+        commands->close();
+        device->executeCommandList(commands);
+        device->waitForIdle();
+    }
     void SetVolumeMarch(float step, float threshold, float scale, int budget)
     {
         volumeStepSize = step;
@@ -716,15 +852,11 @@ class NativeViewer : public app::IRenderPass
         rebuildRequested = true;
         preserveMaterialsOnRebuild = true;
     }
-    void SetVolumeLutSkip(bool enabled, bool stats)
+    void SetVolumeLutSkip(bool enabled, bool stats, bool reference)
     {
         volumeLutSkip = enabled;
         volumeMarchStats = stats;
-    }
-    void SetVolumeUpsample(bool dithered, unsigned kernel)
-    {
-        ditheredVolumeUpsample = dithered;
-        volumeUpsampleKernel = kernel;
+        volumeReferenceSampling = reference;
     }
     void SetInitialShellOffset(float value) { initialShellOffset = value; }
     void SetFlattenShell(bool value) { flattenShell = value; }
@@ -1050,31 +1182,35 @@ class NativeViewer : public app::IRenderPass
                 }
                 if (ImGui::CollapsingHeader("Volumes", ImGuiTreeNodeFlags_DefaultOpen))
                 {
+                    bool smokeChanged = ImGui::Checkbox("Baked smoke (scenes 24 / 25)", &bakedSmoke);
+                    if (bakedSmoke)
+                    {
+                        ImGui::Checkbox("Play baked smoke", &playSmoke);
+                        if (ImGui::Button("Restart smoke"))
+                        {
+                            smokeFrame = 0.f;
+                            playSmoke = true;
+                            if (temporalAA)
+                                temporalAA->Invalidate();
+                        }
+                        float lastFrame = float(smokeFrames.empty() ? 0 : smokeFrames.size() - 1);
+                        if (ImGui::SliderFloat("Smoke frame", &smokeFrame, 0.f, lastFrame, "%.2f"))
+                        {
+                            playSmoke = false;
+                            if (temporalAA)
+                                temporalAA->Invalidate();
+                        }
+                        ImGui::Checkbox("Brick empty-space skipping", &smokeBrickSkip);
+                        smokeChanged |= ImGui::Checkbox("Gameplay smoke mask", &smokeMask);
+                        smokeChanged |= ImGui::Checkbox("Smoke doorway open", &smokeDoorOpen);
+                    }
+                    if (smokeChanged)
+                        rebuildRequested = preserveMaterialsOnRebuild = true;
                     if (ImGui::Checkbox("Half-resolution local volumes", &lowResolutionVolumes))
                     {
                         rebuildRequested = true;
                         preserveMaterialsOnRebuild = true;
                     }
-                    ImGui::BeginDisabled(!lowResolutionVolumes);
-                    int upscale = ditheredVolumeUpsample ? int(volumeUpsampleKernel) + 1 : 0;
-                    ImGui::SetNextItemWidth(230);
-                    if (ImGui::Combo("Volume upsample", &upscale,
-                                     "Fixed bilateral\0Legacy random (4 taps)\0Coherent jitter (4 taps)\0"
-                                     "Matched reference (9 taps)\0"))
-                    {
-                        SetVolumeUpsample(upscale > 0, upscale > 0 ? unsigned(upscale - 1) : 0);
-                        // Reconnect the selected shader and reset TAA history, retaining actor edits.
-                        rebuildRequested = preserveMaterialsOnRebuild = true;
-                    }
-                    ImGui::EndDisabled();
-                    if (!lowResolutionVolumes)
-                        ImGui::TextDisabled("Enable half-resolution volumes to compare upsampling.");
-                    else if (!taaEnabled)
-                        ImGui::TextDisabled("TAA is off: using fixed bilateral for all modes.");
-                    else if (upscale == 2)
-                        ImGui::TextDisabled("Shared jitter; four unique neighbors before screen clamp.");
-                    else if (upscale == 3)
-                        ImGui::TextDisabled("Deterministic spatial reference; no upscale jitter.");
                     if (ImGui::Checkbox("T-LUT empty interval skip (experimental)", &volumeLutSkip) && temporalAA)
                         temporalAA->Invalidate();
                     ImGui::SliderFloat("Ray step", &volumeStepSize, .005f, 2.f, "%.3f", ImGuiSliderFlags_Logarithmic);
@@ -1361,6 +1497,7 @@ class NativeViewer : public app::IRenderPass
         }
         if (stressPreset != 24 && stressPreset != 25)
             volumeDensity = nullptr;
+        CreateBakedSmokeResources();
         profiler.Initialize(device, detailedProfiling, profilingEnabled);
         cameraBuffer = Buffer(sizeof(camera), nvrhi::Format::RGBA32_FLOAT, false, "Camera and material controls");
         bounds = {{{float(Width), float(Height), float(volumeScale * 8), 64}},
@@ -1481,6 +1618,14 @@ class NativeViewer : public app::IRenderPass
         localVolumeRecords.clear();
         for (auto volume : fixture.volumes)
         {
+            if (bakedSmoke && volume.textured)
+            {
+                // The baked sequence has a fixed cubic simulation domain. The
+                // legacy smoke DDS is a tall plume; do not reuse its 1:2:1 scale.
+                // Retain the floor and centre instead of cropping each frame's
+                // active density (which would move/stretch the animation).
+                volume.extent = {1.7f, 1.7f, 1.7f};
+            }
             if (useSponza)
                 volume.center[1] += 1.75f;
             localVolumes.push_back(volume);
@@ -1690,7 +1835,8 @@ class NativeViewer : public app::IRenderPass
         using B = nvrhi::BindingSetItem;
         using D = nvrhi::BindingSetDesc;
         volumeLighting.Create(device, Shader("main", nvrhi::ShaderType::Compute, "shaders/VolumeShadow.hlsl"),
-                              volumeDensity, linear, unsigned(localVolumes.size()), donutScene != nullptr);
+                              volumeDensity, linear, unsigned(localVolumes.size()), donutScene != nullptr, smokeBricks,
+                              gameplaySmokeMask);
         if (donutScene)
             donutScene->SetVolumeLighting(volumeLighting);
         avboit::TransparencyInputs inputs;
@@ -1705,7 +1851,6 @@ class NativeViewer : public app::IRenderPass
         inputs.objectCount = objectCount;
         inputs.halfAccumulation = halfAccumulation;
         inputs.lowResolutionVolumes = lowResolutionVolumes;
-        inputs.volumeUpsampleKernel = volumeUpsampleKernel;
         inputs.frostMipCount = frostMipCount;
         inputs.fullVfx = fullVfx;
         inputs.interfaceIndices = interfaceIndexBuffer;
@@ -1720,6 +1865,8 @@ class NativeViewer : public app::IRenderPass
         inputs.linear = linear;
         inputs.frostNormal = frostNormal;
         inputs.volumeDensity = volumeDensity;
+        inputs.smokeBricks = smokeBricks;
+        inputs.gameplaySmokeMask = gameplaySmokeMask;
         inputs.volumeLights = volumeLighting.lights;
         inputs.regularLightDepth = donutScene ? donutScene->ShadowTexture() : volumeLighting.fallbackDepth.Get();
         inputs.lightMoments = volumeLighting.moments;
@@ -1926,6 +2073,13 @@ class NativeViewer : public app::IRenderPass
         {
             keyboardCaptured = ImGui::GetIO().WantCaptureKeyboard;
             mouseCaptured = ImGui::GetIO().WantCaptureMouse;
+        }
+        if (bakedSmoke && playSmoke && !smokeFrames.empty())
+        {
+            float lastFrame = float(smokeFrames.size() - 1);
+            smokeFrame = std::min(smokeFrame + std::min(elapsed, .1f) * smokeFps, lastFrame);
+            if (smokeFrame >= lastFrame)
+                playSmoke = false;
         }
         if (animate)
             time += std::min(elapsed, .1f);
@@ -2456,11 +2610,13 @@ int main(int argc, const char **argv)
         viewer.SetSceneLighting(o.sunIntensity, o.spotIntensity, o.volumeShadows);
         viewer.SetVolumeResolution(o.lowResolutionVolumes, o.temporalVolumeDithering);
         viewer.SetTaa(o.taa);
-        viewer.SetVolumeUpsample(o.ditheredVolumeUpsample, o.volumeUpsampleKernel);
-        viewer.SetVolumeLutSkip(o.volumeLutSkip, o.volumeMarchStats);
+        viewer.SetVolumeLutSkip(o.volumeLutSkip, o.volumeMarchStats, o.volumeReferenceSampling);
         viewer.SetInitialVolumeExtinction(o.initialVolumeExtinction);
         viewer.SetInitialShellOffset(o.shellOffsetBins);
         viewer.SetFlattenShell(o.flattenShell);
+        viewer.SetBakedSmoke(o.bakedSmoke, o.smokeMask, o.smokeDoorOpen);
+        viewer.SetSmokeAnimation(o.smokeFrame, o.smokeBrickSkip, o.smokeSequencePath, o.playSmoke,
+                                 o.smokeInterpolation);
         viewer.SetVolumeMarch(o.volumeStepSize, o.volumeLowT, o.volumeStepScale, o.volumeMaxSteps);
         viewer.SetCalibration(o.calibrationBoard, o.emissiveGain);
         viewer.SetEmissiveFront(o.emissiveFront);

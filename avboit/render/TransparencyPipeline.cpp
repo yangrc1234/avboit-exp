@@ -28,6 +28,8 @@ void TransparencyPipeline::Create(nvrhi::IDevice *device, const TransparencyInpu
     volumeInputs.opaqueHardwareDepth = inputs.opaqueHardwareDepth;
     volumeInputs.materials = inputs.materials;
     volumeInputs.volumeDensity = inputs.volumeDensity;
+    volumeInputs.smokeBricks = inputs.smokeBricks;
+    volumeInputs.gameplaySmokeMask = inputs.gameplaySmokeMask;
     volumeInputs.linear = inputs.linear;
     volumeInputs.vertexRange = inputs.transparentRange;
     volumeInputs.opaqueColorDepth = inputs.opaqueColorDepth;
@@ -76,16 +78,15 @@ void TransparencyPipeline::Create(nvrhi::IDevice *device, const TransparencyInpu
     oitInputs.indices = inputs.geometryIndices;
     oitInputs.halfAccumulation = inputs.halfAccumulation;
     oitInputs.lowResolutionVolumes = inputs.lowResolutionVolumes;
-    const char *upscaleEntry = inputs.volumeUpsampleKernel == 1   ? "upsampleCoherentPixel"
-                               : inputs.volumeUpsampleKernel == 2 ? "upsampleMatchedPixel"
-                                                                  : "upsamplePixel";
-    oitInputs.upsamplePixel = load(upscaleEntry, nvrhi::ShaderType::Pixel, "shaders/VolumeUpsample.hlsl");
+    oitInputs.upsamplePixel = load("upsamplePixel", nvrhi::ShaderType::Pixel, "shaders/VolumeUpsample.hlsl");
     oitInputs.vertices = inputs.vertices;
     oitInputs.vertexRange = inputs.transparentRange;
     oitInputs.camera = inputs.camera;
     oitInputs.opaqueHardwareDepth = inputs.opaqueHardwareDepth;
     oitInputs.materials = inputs.materials;
     oitInputs.volumeDensity = inputs.volumeDensity;
+    oitInputs.smokeBricks = inputs.smokeBricks;
+    oitInputs.gameplaySmokeMask = inputs.gameplaySmokeMask;
     oitInputs.volumeLights = inputs.volumeLights;
     oitInputs.regularLightDepth = inputs.regularLightDepth;
     oitInputs.lightMoments = inputs.lightMoments;

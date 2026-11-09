@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 SamplerState LinearClamp : register(s0);
 #include "VolumeLighting.hlsli"
-Texture3D<float2> Density : register(t26);
+#include "BakedSmoke.hlsli"
 Buffer<float4> Casters : register(t32);
 RWTexture2DArray<float4> MomentsOut : register(u0);
 RWTexture2DArray<float> TauOut : register(u1);
@@ -50,11 +50,21 @@ RWTexture2DArray<float> TauOut : register(u1);
         // shaders can later replace the density evaluator without changing MSM.
         uint steps = center.w > 0 ? 96 : 32;
         float ds = (leave - enter) / steps;
+        float emptyUntil = -1.;
         for (uint step = 0; step < steps; ++step)
         {
             float3 world = origin + ray * (enter + (step + .5) * ds);
             float3 local = localOrigin + localRay * (enter + (step + .5) * ds);
-            float density = center.w > 0 ? Density.SampleLevel(LinearClamp, local / (2. * extent) + .5, 0).r : 1.;
+            float sampleDistance = enter + (step + .5) * ds;
+            if (center.w > 0 && sampleDistance >= emptyUntil)
+                emptyUntil = sampleDistance + SmokeEmptyRun(local / (2. * extent) + .5, localRay / (2. * extent));
+            if (center.w > 0 && sampleDistance < emptyUntil)
+            {
+                uint skip = uint(max(0., ceil((emptyUntil - sampleDistance) / ds) - 1.));
+                step += min(skip, steps - 1 - step);
+                continue;
+            }
+            float density = center.w > 0 ? SampleSmokeDensity(local / (2. * extent) + .5).r : 1.;
             float tau = sigma * density * ds;
             float4 projected = LightTransform(float4(world, 1), 13 + id.z * 4);
             float z = MomentDepth(projected.z / projected.w, id.z);

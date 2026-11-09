@@ -21,6 +21,13 @@ tangent-frame refraction solve. Sphere and sharp-glass shading are unchanged.
 
 ## OpenVDB smoke volume
 
+`smoke-sequence/` is an original Blender Mantaflow smoke probe generated for
+this MIT-licensed project with `tools/bake_smoke_vdb.py` (48 cubed, 32 frames,
+all 32 frames). It stores density only, converted from Blender Z-up to viewer Y-up.
+It does not contain third-party JangaFX assets. The four-bit brick encoder is
+`tools/pack_smoke_bricks.py`; input is a cubic X-fastest float32 density array.
+Reproduce with `tools/prepare_smoke_sequence.py`. This animated probe is not a final-quality or seamless-loop asset.
+
 `smoke-volume.dds` is converted from the OpenVDB project's official `smoke.vdb`
 sample, distributed by the Academy Software Foundation / OpenVDB contributors.
 

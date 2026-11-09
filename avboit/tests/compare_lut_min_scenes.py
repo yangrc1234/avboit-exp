@@ -31,9 +31,7 @@ def main():
         zero_checks = {}
         for mode in ("off", "on"):
             # Only these newly created temporary captures are removed on exit.
-            with tempfile.TemporaryDirectory(
-                prefix=f"capture-{scene}-{mode}-", dir=out
-            ) as temp:
+            with tempfile.TemporaryDirectory(prefix=f"capture-{scene}-{mode}-", dir=out) as temp:
                 folder = Path(temp)
                 assert folder.resolve().is_relative_to(out)
                 cmd = [
@@ -58,9 +56,9 @@ def main():
                 im = Image.open(folder / "native-raster.ppm").convert("RGB")
                 im.save(out / f"{scene:02}-{mode}.png")
                 images.append(im)
-                hdr = texture(folder / "native-composition.rgba16f", "<f2", 4)[
-                    ..., :3
-                ].astype("float32")
+                hdr = texture(folder / "native-composition.rgba16f", "<f2", 4)[..., :3].astype(
+                    "float32"
+                )
                 assert np.isfinite(hdr).all()
                 hdrs.append(hdr)
                 raw = (folder / "native-lut.rgba8").read_bytes()
@@ -85,9 +83,7 @@ def main():
         diff = abs(a - b).max(axis=2)
         hdrdiff = abs(hdrs[0] - hdrs[1]).max(axis=2)
         # Find a region with large average visible change, rather than one outlier.
-        smooth = np.asarray(
-            Image.fromarray(diff.astype("uint8")).filter(ImageFilter.BoxBlur(40))
-        )
+        smooth = np.asarray(Image.fromarray(diff.astype("uint8")).filter(ImageFilter.BoxBlur(40)))
         y, x = np.unravel_index(smooth.argmax(), smooth.shape)
         x = int(np.clip(x, 160, 2400))
         y = int(np.clip(y, 160, 1280))

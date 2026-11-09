@@ -142,6 +142,8 @@ void ExtinctionVolume::Create(nvrhi::IDevice *device, const ExtinctionInputs &in
                      .addItem(B::TypedBuffer_SRV(23, inputs.materials));
     if (inputs.volumeDensity)
         splat.addItem(B::Texture_SRV(26, inputs.volumeDensity)).addItem(B::Sampler(0, inputs.linear));
+    if (inputs.smokeBricks)
+        splat.addItem(B::TypedBuffer_SRV(33, inputs.smokeBricks)).addItem(B::Texture_SRV(34, inputs.gameplaySmokeMask));
     m_splatLayout = nullptr;
     m_splatBindings = nullptr;
     if (!nvrhi::utils::CreateBindingSetAndLayout(device, nvrhi::ShaderType::AllGraphics, 0, splat, m_splatLayout,

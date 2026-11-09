@@ -16,7 +16,16 @@ with tempfile.TemporaryDirectory(prefix="avboit-shadow-") as scratch:
     for preset in range(6):
         images = []
         for redraw in (False, True):
-            command = [str(viewer), "--headless", "--no-taa", "--volume-full-res", "--no-lut-min-filter", "--sponza", "--camera-preset", str(preset)]
+            command = [
+                str(viewer),
+                "--headless",
+                "--no-taa",
+                "--volume-full-res",
+                "--no-lut-min-filter",
+                "--sponza",
+                "--camera-preset",
+                str(preset),
+            ]
             if args.legacy_scene:
                 command.append("--legacy-scene")
             elif args.donut_scene:

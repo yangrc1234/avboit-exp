@@ -20,9 +20,15 @@ void InjectVolume(VolumeVaryings i, bool textured)
     // tiny segment independently would erase low-density media at high Z budgets.
     float3 cumulative = 0;
     uint3 previous = 0;
+    float emptyUntil = -1.;
     for (uint cell = range.x; cell < range.y; ++cell)
     {
         float2 segment = VolumeSegment(cell, count, interval);
+        float sampleZ = (segment.x + segment.y) * .5;
+        if (textured && sampleZ >= emptyUntil)
+            emptyUntil = sampleZ + VolumeEmptyRun(i, uv, sampleZ, rayZ);
+        if (textured && sampleZ < emptyUntil)
+            continue;
         float density = textured ? SampleVolumeData(i, uv, (segment.x + segment.y) * .5, rayZ).r : 1.;
         cumulative += i.sigma * density * max(segment.y - segment.x, 0.) / rayZ;
         uint3 code = uint3(floor(cumulative * (255. / ExtinctionTauMax) + .5));

@@ -20,7 +20,8 @@ struct ExtinctionInputs
     nvrhi::BufferHandle frostWorkMask, frostRectangles;
     nvrhi::BufferRange vertexRange;
     nvrhi::TextureHandle opaqueColorDepth;
-    nvrhi::TextureHandle opaqueHardwareDepth, volumeDensity;
+    nvrhi::TextureHandle opaqueHardwareDepth, volumeDensity, gameplaySmokeMask;
+    nvrhi::BufferHandle smokeBricks;
     nvrhi::SamplerHandle linear;
     ExtinctionShaders shaders;
     std::vector<MaterialShaders> materialShaders;

@@ -24,9 +24,7 @@ def reference(width, height, time, third_layer=False):
     shift = 0.025 * np.sin(time)
     front = np.zeros((height, width), dtype=bool)
     quads = [(-1.8, (0.63, 0.16), (-0.24, 0.95), -1), (0, (0.65, 0), (0, 0.95), 0.55)]
-    quads += [
-        (1.4 + i * 0.36, (0.008 * (i + 1), 0), (0.13, 0.95), -1) for i in range(3)
-    ]
+    quads += [(1.4 + i * 0.36, (0.008 * (i + 1), 0), (0.13, 0.95), -1) for i in range(3)]
     for center, a, b, hole in quads:
         px = x - center - shift
         det = a[0] * b[1] - a[1] * b[0]
@@ -55,9 +53,7 @@ def reference(width, height, time, third_layer=False):
 
 def display(hdr):
     v = np.maximum(hdr, 0)
-    return Image.fromarray(
-        np.rint((v / (1 + v)) ** (1 / 2.2) * 255).clip(0, 255).astype("uint8")
-    )
+    return Image.fromarray(np.rint((v / (1 + v)) ** (1 / 2.2) * 255).clip(0, 255).astype("uint8"))
 
 
 def main():
@@ -104,16 +100,12 @@ def main():
         (folder / "run.log").write_bytes(run.stdout + run.stderr)
         if run.returncode:
             raise RuntimeError(f'{name}: see {folder / "run.log"}')
-        hdr = texture(folder / "native-composition.rgba16f", "<f2", 4)[..., :3].astype(
-            "float32"
-        )
+        hdr = texture(folder / "native-composition.rgba16f", "<f2", 4)[..., :3].astype("float32")
         assert np.isfinite(hdr).all(), name
         h, w = hdr.shape[:2]
         expected, edge, interior = reference(w, h, time)
         error = np.abs(hdr - expected).max(axis=2)
-        assert (
-            error[interior].mean() < 0.002
-        ), "Reference disagrees away from silhouettes"
+        assert error[interior].mean() < 0.002, "Reference disagrees away from silhouettes"
         rows.append(
             dict(
                 case=name,
@@ -169,9 +161,7 @@ def main():
             for name in ("no-zero-depth", "no-slope", "reverse")
         },
     )
-    (args.output / "report.json").write_text(
-        json.dumps(report, indent=2), encoding="utf-8"
-    )
+    (args.output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
 
 

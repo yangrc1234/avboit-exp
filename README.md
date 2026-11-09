@@ -70,6 +70,13 @@ defaults to **2560x1440 and a 120 FPS cap**, with **TAA, half-resolution local v
 
 ## Quick start
 
+To test artist-controlled ordering for nested translucent shells, run
+`bin/avboit_viewer.exe --stress 32` (Nested cubes). **OIT depth anchor** and
+**OIT flattened layer** in the actor material editor place the inner model in
+one shared bin and the outer shell in the preceding bin, without moving geometry
+or adding a pass. This approximation sacrifices ordering within a layer and exact
+intersections with other objects. See the [implementation notes](docs/GLASS_SILHOUETTE.zh-CN.md).
+
 Requirements: Windows x64, Visual Studio 2022 with C++ tools and Windows SDK,
 CMake 3.18+, Python 3.9+, and a DX12 GPU.
 

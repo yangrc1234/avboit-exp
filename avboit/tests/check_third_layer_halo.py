@@ -48,9 +48,7 @@ for name, flags in [
     )
     (folder / "run.log").write_bytes(run.stdout + run.stderr)
     assert run.returncode == 0, (name, run.stderr[-1500:])
-    hdr = texture(folder / "native-composition.rgba16f", "<f2", 4)[..., :3].astype(
-        "float32"
-    )
+    hdr = texture(folder / "native-composition.rgba16f", "<f2", 4)[..., :3].astype("float32")
     assert np.isfinite(hdr).all(), name
     images[name] = hdr
     display(hdr).save(out / (name + ".png"))
@@ -81,9 +79,7 @@ for name, flags in [
         tm = np.array([0.04, 0.05, 0.06])
         rear = np.array([1.2, 1.2, 1.2]) * 0.9 + 0.12 * 0.1
         middle = (1 - tm) * [0.035, 0.045, 0.055] + tm * rear
-        expected = np.broadcast_to(
-            (1 - tf) * [0.025, 0.035, 0.045] + tf * rear, (h, w, 3)
-        ).copy()
+        expected = np.broadcast_to((1 - tf) * [0.025, 0.035, 0.045] + tf * rear, (h, w, 3)).copy()
         expected[mask] = (1 - tf) * [0.025, 0.035, 0.045] + tf * middle
         display(expected).save(out / "reference.png")
         darkness = np.maximum(expected - hdr, 0).max(axis=2)
@@ -121,13 +117,9 @@ for i, (name, label) in enumerate(
 ):
     draw.text((420 * i + 10, 10), label, fill="white")
     canvas.paste(
-        Image.open(out / (name + ".png"))
-        .crop(box)
-        .resize((420, 420), Image.Resampling.NEAREST),
+        Image.open(out / (name + ".png")).crop(box).resize((420, 420), Image.Resampling.NEAREST),
         (420 * i, 36),
     )
 canvas.save(out / "comparison.png")
-(out / "report.json").write_text(
-    json.dumps(dict(crop=box, measurements=report), indent=2)
-)
+(out / "report.json").write_text(json.dumps(dict(crop=box, measurements=report), indent=2))
 print("Artifacts:", out)

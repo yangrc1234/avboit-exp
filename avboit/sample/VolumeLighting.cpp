@@ -9,7 +9,8 @@
 namespace avboit
 {
 void VolumeLighting::Create(nvrhi::IDevice *device, nvrhi::IShader *shader, nvrhi::ITexture *density,
-                            nvrhi::ISampler *sampler, unsigned capacity, bool enabled)
+                            nvrhi::ISampler *sampler, unsigned capacity, bool enabled, nvrhi::IBuffer *bricks,
+                            nvrhi::ITexture *mask)
 {
     m_resolution = enabled && capacity ? 256 : 1;
     auto buffer = [&](unsigned size, const char *name)
@@ -65,6 +66,8 @@ void VolumeLighting::Create(nvrhi::IDevice *device, nvrhi::IShader *shader, nvrh
     bindings.addItem(B::TypedBuffer_SRV(27, lights))
         .addItem(B::TypedBuffer_SRV(32, m_volumes))
         .addItem(B::Texture_SRV(26, density))
+        .addItem(B::TypedBuffer_SRV(33, bricks))
+        .addItem(B::Texture_SRV(34, mask))
         .addItem(B::Sampler(0, sampler))
         .addItem(B::Texture_UAV(0, moments))
         .addItem(B::Texture_UAV(1, opticalDepth));

@@ -26,12 +26,14 @@ struct ViewerOptions
     float sphereRoughness = 0, planarIor = 1.3f, sphereIor = 1.5f, refractionStrength = 1;
     float sunIntensity = 2.f, spotIntensity = 80.f;
     bool volumeShadows = true;
+    bool bakedSmoke = false, smokeMask = true, smokeDoorOpen = true;
+    bool smokeBrickSkip = true, playSmoke = true, smokeInterpolation = true;
+    float smokeFrame = 15.f;
     bool lowResolutionVolumes = true, temporalVolumeDithering = false;
-    bool ditheredVolumeUpsample = true, volumeUpsampleTest = false;
-    unsigned volumeUpsampleKernel = 0; // Audit: legacy, coherent jitter, matched spatial reference.
+    bool volumeUpsampleTest = false;
     float initialVolumeExtinction = -1.f, shellOffsetBins = 0;
     bool flattenShell = true;
-    bool volumeLutSkip = false, volumeMarchStats = false;
+    bool volumeLutSkip = false, volumeMarchStats = false, volumeReferenceSampling = false;
     float volumeStepSize = .5f, volumeLowT = .1f, volumeStepScale = 4.f;
     int volumeMaxSteps = 256;
     float fixtureTime = 0, sigmaLimit = 24;
@@ -51,7 +53,7 @@ struct ViewerOptions
     unsigned submissionOrder = 0, orderSeed = 1;
     unsigned vfxMode = 0, vfxLayers = 3;
     float vfxStrength = 20;
-    std::string sponzaAssetPath, benchmarkPath = "native-benchmark.csv";
+    std::string sponzaAssetPath, smokeSequencePath, benchmarkPath = "native-benchmark.csv";
 };
 // Parse before device creation: help and invalid arguments never require a GPU.
 ViewerOptions ParseViewerOptions(int argc, const char *const *argv);

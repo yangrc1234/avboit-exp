@@ -19,7 +19,15 @@ def capture(name, flags):
     folder.mkdir(exist_ok=True)
     exe = a.viewer
     run = subprocess.run(
-        [str(exe.resolve()), "--headless", "--no-taa", "--volume-full-res", "--no-lut-min-filter", "--poison-resolve", *flags],
+        [
+            str(exe.resolve()),
+            "--headless",
+            "--no-taa",
+            "--volume-full-res",
+            "--no-lut-min-filter",
+            "--poison-resolve",
+            *flags,
+        ],
         cwd=folder,
         capture_output=True,
     )

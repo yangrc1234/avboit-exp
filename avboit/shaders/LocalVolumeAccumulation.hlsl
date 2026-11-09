@@ -25,7 +25,8 @@ float3 SampleVolumeTransmittance(float2 uv, float viewZ)
     return SampleTransmittanceAtZ(uv, (mapped - .5) / float(SLICE_COUNT));
 }
 void AccumulateVolumeSegment(float2 segment, float sampleFraction, float rayZ, VolumeVaryings i, bool behind,
-                             bool textured, float2 uv, float3 beginT, float3 endT, inout VolumeAccumulation o, inout float shadingCount)
+                             bool textured, float2 uv, float3 beginT, float3 endT, inout VolumeAccumulation o,
+                             inout float shadingCount)
 {
     if (segment.y <= segment.x)
         return;
@@ -35,12 +36,28 @@ void AccumulateVolumeSegment(float2 segment, float sampleFraction, float rayZ, V
     float sampleZ = lerp(segment.x, segment.y, sampleFraction);
     if (textured)
     {
-        // Integrate density more finely than lighting. A single 50cm sample
-        // can miss the visible skin while the LUT already sees opaque smoke.
-        // Four stratified taps share one lighting evaluation and one LUT interval.
+        uint taps = 4;
+        if (SmokeBricks[0] != 0 && (uint(Camera[12].z) & 2u) == 0)
+        {
+            // Keep roughly one density sample per crossed voxel on the fastest
+            // changing axis. Include the gameplay mask's spatial frequency.
+            uint mx, my, mz;
+            GameplaySmokeMask.GetDimensions(mx, my, mz);
+            float3 resolution = max(float3(SmokeBricks[1], SmokeBricks[2], SmokeBricks[3]), float3(mx, my, mz));
+            float3 delta =
+                abs(VolumeLocal(i, WorldRay(uv))) * ((segment.y - segment.x) / rayZ) / (2. * i.extent) * resolution;
+            float footprint = max(delta.x, max(delta.y, delta.z));
+            taps = footprint <= 1. ? 1u : footprint <= 2. ? 2u : 4u;
+        }
         float2 data = 0;
-        [unroll] for (uint tap = 0; tap < 4; ++tap) data +=
-            SampleVolumeData(i, uv, lerp(segment.x, segment.y, (float(tap) + sampleFraction) * .25), rayZ) * .25;
+        [unroll] for (uint tap = 0; tap < 4; ++tap)
+        {
+            if (tap < taps)
+            {
+                float fraction = (float(tap) + sampleFraction) / float(taps);
+                data += SampleVolumeData(i, uv, lerp(segment.x, segment.y, fraction), rayZ) / float(taps);
+            }
+        }
         tau *= data.r;
         if (VolumeLights[4].y == 0.)
             i.source *= .18 + .82 * exp(-i.sigma * data.g * (2. * i.extent.y));
@@ -51,7 +68,15 @@ void AccumulateVolumeSegment(float2 segment, float sampleFraction, float rayZ, V
     if (VolumeLights[4].y > 0.)
     {
         float3 world = Camera[0].xyz + WorldRay(uv) * (sampleZ / rayZ);
-        i.source *= EvaluateVolumeLighting(world);
+        // Preserve density, denominator and BackN accounting in the tail.
+        // Only direct lighting/shadow evaluation is omitted at very low RGB T.
+        // Retaining the ambient source avoids turning the entire tail black.
+        float3 visibility = .5 * (beginT + endT);
+        bool lowContribution = max(visibility.r, max(visibility.g, visibility.b)) < .001;
+        if (lowContribution && (uint(Camera[12].z) & 2u) == 0)
+            i.source *= VolumeLights[4].xxx;
+        else
+            i.source *= EvaluateVolumeLighting(world);
     }
     // Integrate the visibility over the segment instead of allowing a random
     // point behind the quantized zero frontier to erase the entire interval.
@@ -103,6 +128,7 @@ VolumeAccumulation ShadeVolume(VolumeVaryings i, bool textured, bool halfResolut
         jitter = (float(phase) + jitter) * .25;
     }
     float3 stats = 0; // intervals, nonzero-density shading evaluations, skipped intervals
+    float emptyUntil = -1.;
     float z = interval.x;
     float3 t = SampleVolumeTransmittance(uv, z);
     [loop] for (uint step = 0; step < maxSteps && z < stopZ; ++step)
@@ -114,12 +140,24 @@ VolumeAccumulation ShadeVolume(VolumeVaryings i, bool textured, bool halfResolut
         // its density/tau and accidentally making long volumes transparent.
         ds = max(ds, (interval.y - z) / (rayZ * float(maxSteps - step)));
         float endZ = min(z + ds * rayZ, interval.y);
+        if (textured && z >= emptyUntil)
+            emptyUntil = z + VolumeEmptyRun(i, uv, z, rayZ);
+        if (textured && endZ <= emptyUntil)
+        {
+            // Keep the exact original integration lattice and budget. T can
+            // change inside empty smoke due to other transparent actors.
+            stats.x += 1.;
+            stats.z += 1.;
+            z = endZ;
+            t = SampleVolumeTransmittance(uv, z);
+            continue;
+        }
         float3 endT = SampleVolumeTransmittance(uv, endZ);
         stats.x += 1.;
         // Exact RGB equality is only a quantized empty-space heuristic.
         // Never skip saturated channels: flat zero T does not imply zero density,
         // and this pass still owns the totalTau needed by the common resolve.
-        [branch] if (Camera[12].z > 0. && all(t == endT) && all(t > 0.))
+        [branch] if ((uint(Camera[12].z) & 1u) != 0 && all(t == endT) && all(t > 0.))
         {
             stats.z += 1.;
             z = endZ;
@@ -133,7 +171,8 @@ VolumeAccumulation ShadeVolume(VolumeVaryings i, bool textured, bool halfResolut
         z = endZ;
         t = endT;
     }
-    if (Camera[12].w > 0.) o.numerator = stats;
+    if (Camera[12].w > 0.)
+        o.numerator = stats;
     return o;
 }
 

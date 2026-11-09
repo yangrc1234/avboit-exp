@@ -48,9 +48,7 @@ for scene in (27, 28, 17, 11, 13):
         (folder / "run.log").write_bytes(run.stdout + run.stderr)
         if run.returncode:
             raise RuntimeError(str(folder))
-        hdr = texture(folder / "native-composition.rgba16f", "<f2", 4)[..., :3].astype(
-            "float32"
-        )
+        hdr = texture(folder / "native-composition.rgba16f", "<f2", 4)[..., :3].astype("float32")
         assert np.isfinite(hdr).all()
         images[name] = hdr
         display(hdr).save(folder / "image.png")
@@ -88,11 +86,7 @@ for scene in (27, 28, 17, 11, 13):
         src = luts["ordinary"]
         pad = np.pad(src, ((0, 0), (1, 1), (1, 1), (0, 0)), mode="edge")
         neighbour_min = np.minimum.reduce(
-            [
-                pad[:, y : y + src.shape[1], x : x + src.shape[2]]
-                for y in range(3)
-                for x in range(3)
-            ]
+            [pad[:, y : y + src.shape[1], x : x + src.shape[2]] for y in range(3) for x in range(3)]
         )
         expected = np.minimum(src, np.maximum(neighbour_min, 16))
         assert np.array_equal(expected, luts["min"]), ("not bounded XY minimum", scene)

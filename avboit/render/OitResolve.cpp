@@ -61,6 +61,9 @@ void OitResolve::Create(nvrhi::IDevice *device, const OitResolveInputs &inputs)
         desc.addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(23, inputs.materials));
         if (additive && inputs.volumeDensity)
             desc.addItem(nvrhi::BindingSetItem::Texture_SRV(26, inputs.volumeDensity));
+        if (additive && inputs.smokeBricks)
+            desc.addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(33, inputs.smokeBricks))
+                .addItem(nvrhi::BindingSetItem::Texture_SRV(34, inputs.gameplaySmokeMask));
         if (additive && inputs.volumeLights)
         {
             desc.addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(27, inputs.volumeLights));

@@ -13,7 +13,16 @@ with tempfile.TemporaryDirectory(prefix="avboit-calibration-") as directory:
 
     def run(options):
         p = subprocess.run(
-            [str(args.viewer.resolve()), "--headless", "--no-taa", "--volume-full-res", "--no-lut-min-filter", *options], cwd=directory, capture_output=True
+            [
+                str(args.viewer.resolve()),
+                "--headless",
+                "--no-taa",
+                "--volume-full-res",
+                "--no-lut-min-filter",
+                *options,
+            ],
+            cwd=directory,
+            capture_output=True,
         )
         if p.returncode:
             raise RuntimeError(

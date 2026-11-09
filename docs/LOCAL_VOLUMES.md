@@ -196,17 +196,16 @@ TAA pass as the neighboring ADS demo, after transparency/VFX distortion and befo
 tonemapping. Halton projection jitter is shared by opaque and transparent geometry,
 occupancy projection and volume rays. TAA also varies ray phases over time (quad rotation at full resolution, blue-noise
 phase offsets at half resolution).
-With half-resolution volumes and TAA enabled, reconstruction uses four stratified
-blue-noise point taps. Each tap has an independent spatial Gaussian weight based
-on its actual texel position, multiplied by a scene/interface depth similarity
-weight. One incompatible tap no longer switches all four taps to closest-sample
-selection. Only a near-zero total weight falls back to the closest-depth tap;
-equal depth errors prefer the spatially nearest candidate.
-N/A/totalTau/BackN share the same normalized weights. The sampling radius is fixed
-at one half-resolution texel; there is no depth-moment RT or volume-history buffer.
-**Quality → Volumes → Volume upsample** selects fixed bilateral, legacy random, coherent jitter, or the matched spatial reference. Switching resets TAA history and preserves material edits.
-Without TAA, four fixed bilinear neighbors use spatial bilinear weights instead.
-`--volume-upsample-bilateral` retains that fixed-neighbor reference for automation.
+With half-resolution volumes and TAA enabled, reconstruction uses coherent jitter:
+a single blue-noise offset moves the bilinear sample center, selecting four distinct
+neighbors before screen clamping. Bilinear spatial weights are multiplied by
+scene/interface depth similarity and normalized. Only a near-zero total weight
+falls back to the closest-depth tap; ties prefer the spatially nearest candidate.
+N/A/totalTau/BackN share the same weights. Without TAA, the same four-neighbor
+kernel disables jitter. There is no depth-moment RT or volume-history buffer.
+This is the only runtime upsample path; the kernel selector and legacy/random
+and matched-reference shaders have been removed. The headless upsample regression
+still compares coherent jitter with its fixed-neighbor fallback.
 
 Upsampling is a pixel-shader tile draw using the existing occupancy-generated
 `ScreenTiles` transparency bit (64x64 screen pixels). Empty tiles collapse in the

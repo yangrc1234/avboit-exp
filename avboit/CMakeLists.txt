@@ -34,7 +34,10 @@ add_custom_target(avboit_textures
         "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/textures/frost-normal.dds"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/assets/textures/smoke-volume.dds"
-        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/textures/smoke-volume.dds")
+        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/textures/smoke-volume.dds"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/assets/textures/smoke-sequence"
+        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/textures/smoke-sequence")
 add_dependencies(avboit_viewer avboit_textures)
 
 

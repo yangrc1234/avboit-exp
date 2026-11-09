@@ -17,7 +17,8 @@ struct OitResolveInputs
     nvrhi::BufferHandle vertices, indices, camera, materials, warp;
     nvrhi::BufferRange vertexRange;
     nvrhi::TextureHandle lut, opaque, interfaceDepth, interfaceSurface, interfaceOffset, screenTiles;
-    nvrhi::TextureHandle opaqueHardwareDepth, volumeDensity;
+    nvrhi::TextureHandle opaqueHardwareDepth, volumeDensity, gameplaySmokeMask;
+    nvrhi::BufferHandle smokeBricks;
     nvrhi::BufferHandle volumeLights;
     nvrhi::TextureHandle regularLightDepth, lightMoments, lightOpticalDepth;
     nvrhi::SamplerHandle linear;

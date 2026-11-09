@@ -22,11 +22,11 @@ struct TransparencyInputs
     bool fixedDepth = false, hardwareDepth = false;
     bool halfAccumulation = false, fullVfx = true;
     bool lowResolutionVolumes = true;
-    unsigned volumeUpsampleKernel = 0;
     nvrhi::BufferHandle vertices, bounds, camera, materials, interfaceIndices, geometryIndices;
     nvrhi::BufferRange transparentRange;
     nvrhi::TextureHandle opaqueColorDepth;
-    nvrhi::TextureHandle opaqueHardwareDepth, volumeDensity;
+    nvrhi::TextureHandle opaqueHardwareDepth, volumeDensity, gameplaySmokeMask;
+    nvrhi::BufferHandle smokeBricks;
     nvrhi::BufferHandle volumeLights;
     nvrhi::TextureHandle regularLightDepth, lightMoments, lightOpticalDepth;
     nvrhi::SamplerHandle linear;

@@ -7,6 +7,7 @@
 /assets/gltf-sample-assets/
 __pycache__/
 *.pyc
+/waveletNoiseTile.bin
 # Generated captures and timing exports are local diagnostics, not source.
 /native-*
 /*.log

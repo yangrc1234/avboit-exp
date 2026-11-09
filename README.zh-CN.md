@@ -75,6 +75,12 @@ gizmo 只用于编辑，不进入 HDR/TAA。导入的建筑仍作为背景场景
 
 ## 当前方案
 
+**内外壳排序测试：** `bin/avboit_viewer.exe --stress 32`，或在 ImGui 选择
+`Nested cubes / flattened OIT ordering`。Actor 材质中的 `OIT depth anchor`
+指定共享锚点，`OIT flattened layer` 让内层压到一个 bin、外壳压到前一个 bin；
+不移动实际几何，不增加 pass。同层内部排序和与其他物体的穿插是近似的，
+不用于 frost/refraction interface 或 local volume。详见[压平排序说明](docs/GLASS_SILHOUETTE.zh-CN.md)。
+
 - occupancy + adaptive Z，packed atomic extinction，RGBA8 的 T-LUT；默认 XY 为 1/8，Z 为 128 slices。
 - 全分辨率 `N / A / totalTau / BackN` 四 MRT，支持 RGB transmittance。
 - 每像素选最近的特殊界面；支持同一界面的折射 + 磨砂。

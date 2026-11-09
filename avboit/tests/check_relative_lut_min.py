@@ -38,9 +38,7 @@ def three_layer_reference(w, h):
     tf = np.array([0.6, 0.7, 0.8])
     tm = np.array([0.04, 0.05, 0.06])
     rear = np.array([1.2, 1.2, 1.2]) * 0.9 + 0.12 * 0.1
-    expected = np.broadcast_to(
-        (1 - tf) * [0.025, 0.035, 0.045] + tf * rear, (h, w, 3)
-    ).copy()
+    expected = np.broadcast_to((1 - tf) * [0.025, 0.035, 0.045] + tf * rear, (h, w, 3)).copy()
     expected[mask] = (1 - tf) * [0.025, 0.035, 0.045] + tf * (
         (1 - tm) * [0.035, 0.045, 0.055] + tm * rear
     )
@@ -92,9 +90,7 @@ for scene in (27, 33, 31):
         )
         (folder / "run.log").write_bytes(run.stdout + run.stderr)
         assert run.returncode == 0, (scene, name)
-        hdr = texture(folder / "native-composition.rgba16f", "<f2", 4)[..., :3].astype(
-            "float32"
-        )
+        hdr = texture(folder / "native-composition.rgba16f", "<f2", 4)[..., :3].astype("float32")
         assert np.isfinite(hdr).all()
         images[name] = hdr
         raw = (folder / "native-lut.rgba8").read_bytes()
@@ -138,9 +134,7 @@ for scene in (27, 33, 31):
         row = dict(scene=scene, mode=name)
         if scene != 31:
             expected, edge, inside = (
-                three_layer_reference(2560, 1440)
-                if scene == 33
-                else reference(2560, 1440, 0)
+                three_layer_reference(2560, 1440) if scene == 33 else reference(2560, 1440, 0)
             )
             err = abs(hdr - expected).max(axis=2)
             row.update(

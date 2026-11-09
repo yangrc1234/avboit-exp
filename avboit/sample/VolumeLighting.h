@@ -24,7 +24,7 @@ class VolumeLighting
 {
   public:
     void Create(nvrhi::IDevice *device, nvrhi::IShader *shader, nvrhi::ITexture *density, nvrhi::ISampler *sampler,
-                unsigned volumeCapacity, bool enabled);
+                unsigned volumeCapacity, bool enabled, nvrhi::IBuffer *bricks, nvrhi::ITexture *mask);
     void Record(nvrhi::ICommandList *commands, VolumeLightData data, const std::vector<StressVolume> &volumes);
     nvrhi::BufferHandle lights;
     nvrhi::TextureHandle moments, opticalDepth, fallbackDepth;

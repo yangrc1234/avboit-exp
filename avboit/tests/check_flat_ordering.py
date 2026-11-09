@@ -61,9 +61,7 @@ for name, flags in [
     if name == "flat":
         data = (folder / "native-lut.rgba8").read_bytes()
         w, h, d = map(int, np.frombuffer(data[:12], "<u4"))
-        lut = (
-            np.frombuffer(data[12:], "u1").reshape(d, h, w, 4)[..., :3].astype("int16")
-        )
+        lut = np.frombuffer(data[12:], "u1").reshape(d, h, w, 4)[..., :3].astype("int16")
         changes = np.any(
             np.diff(np.concatenate([np.full((1, h, w, 3), 255), lut]), axis=0) != 0,
             axis=(1, 2, 3),
@@ -81,7 +79,5 @@ for row, (name, label) in enumerate(
     ]
 ):
     draw.text((12, row * 756 + 10), label, fill="white")
-    canvas.paste(
-        Image.open(out / (name + ".png")).resize((1280, 720)), (0, row * 756 + 36)
-    )
+    canvas.paste(Image.open(out / (name + ".png")).resize((1280, 720)), (0, row * 756 + 36))
 canvas.save(out / "comparison.png")

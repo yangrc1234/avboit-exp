@@ -32,25 +32,25 @@ int main()
         Require(defaults.lutMinFilter && !Parse({"--no-lut-min-filter"}).lutMinFilter);
         Require(!Parse({"--no-taa"}).taa && !Parse({"--volume-full-res"}).lowResolutionVolumes);
         Require(!defaults.volumeLutSkip && !defaults.volumeMarchStats);
+        Require(!defaults.volumeReferenceSampling && Parse({"--volume-reference-sampling"}).volumeReferenceSampling);
         Require(Parse({"--volume-lut-skip", "--volume-march-stats"}).volumeLutSkip);
         Require(defaults.shellOffsetBins == 0 && Parse({"--shell-offset-bins", "1.5"}).shellOffsetBins == 1.5f);
         Require(defaults.flattenShell && !Parse({"--geometric-shell"}).flattenShell &&
                 Parse({"--stress", "32"}).stressPreset == 32);
         Require(defaults.lowResolutionVolumes && !defaults.temporalVolumeDithering);
         Require(Parse({"--volume-half-res"}).lowResolutionVolumes);
-        Require(defaults.ditheredVolumeUpsample && defaults.volumeUpsampleKernel == 0);
-        Require(Parse({"--volume-upsample-kernel", "1"}).volumeUpsampleKernel == 1);
-        Require(Parse({"--volume-upsample-kernel", "2"}).volumeUpsampleKernel == 2);
         auto upscaleTest = Parse({"--volume-upsample-test"});
         Require(upscaleTest.headless && upscaleTest.taa && upscaleTest.lowResolutionVolumes &&
                 upscaleTest.volumeUpsampleTest);
-        Require(!Parse({"--volume-upsample-bilateral"}).ditheredVolumeUpsample);
         auto march = Parse(
             {"--volume-step", ".025", "--volume-low-t", ".05", "--volume-step-scale", "2", "--volume-max-steps", "64"});
         Require(march.volumeStepSize == .025f && march.volumeLowT == .05f && march.volumeStepScale == 2.f &&
                 march.volumeMaxSteps == 64);
         Require(Parse({"--volume-stochastic-upsample"}).temporalVolumeDithering);
         Require(defaults.taa && Parse({"--taa"}).taa);
+        auto sequence = Parse({"--smoke-sequence", "smoke path", "--smoke-frame", "100.5"});
+        Require(sequence.bakedSmoke && sequence.smokeSequencePath == "smoke path" && sequence.smokeFrame == 100.5f);
+        Require(sequence.smokeInterpolation && !Parse({"--smoke-single-frame"}).smokeInterpolation);
         Require(Parse({"--volume-temporal-dither"}).temporalVolumeDithering);
         Require(Parse({"--volume-extinction", "64"}).initialVolumeExtinction == 64.f);
         Require(Parse({"--occupancy-overlay", "7", "--occupancy-slice", "127"}).occupancySlice == 127);
@@ -126,7 +126,7 @@ int main()
                                                                 {"--frost-detail-radius", "65"},
                                                                 {"--frost-detail-radius", "-1"},
                                                                 {"--stress", "1.5"},
-                                                                {"--camera-preset", "10"},
+                                                                {"--camera-preset", "12"},
                                                                 {"--volume-scale", "4"},
                                                                 {"--occupancy-overlay", "8"},
                                                                 {"--occupancy-slice", "128"},
@@ -138,7 +138,8 @@ int main()
                                                                 {"--max-glass-offset", "-1"},
                                                                 {"--lut-cubic"},
                                                                 {"--conservative-splat"},
-                                                                {"--volume-upsample-kernel", "3"},
+                                                                {"--volume-upsample-kernel", "1"},
+                                                                {"--volume-upsample-bilateral"},
                                                                 {"--benchmark", "0"},
                                                                 {"--benchmark", "601"},
                                                                 {"--benchmark", "99999999999999999"},
@@ -163,6 +164,8 @@ int main()
                 !Parse({"--no-mirror-blur"}).mirrorBlur);
         Require(Parse({"--stress", "16"}).stressPreset == 16);
         Require(Parse({"--stress", "17", "--camera-preset", "9"}).cameraPreset == 9);
+        Require(Parse({"--camera-preset", "10"}).cameraPreset == 10);
+        Require(Parse({"--camera-preset", "11"}).cameraPreset == 11);
         Require(Parse({"--stress", "18", "--frost-detail-radius", "64"}).frostDetailRadius == 64);
         Require(defaults.frostNormalTiling == 1 && Parse({"--frost-normal-tiling", ".25"}).frostNormalTiling == .25f &&
                 Parse({"--frost-normal-tiling", "64"}).frostNormalTiling == 64);

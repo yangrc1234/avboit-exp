@@ -84,11 +84,17 @@ float2 VolumeSegment(uint cell, uint count, float2 interval)
     return float2(max(z.x, interval.x), min(z.y, interval.y));
 }
 // Optional imported density (R) and vertical optical-depth integral in UV units (G).
-Texture3D<float2> VolumeDensity : register(t26);
+#include "BakedSmoke.hlsli"
 float2 SampleVolumeData(VolumeVaryings i, float2 uv, float viewZ, float rayZ)
 {
     float3 world = Camera[0].xyz + WorldRay(uv) * (viewZ / rayZ);
     float3 local = VolumeLocal(i, world - i.center) / (2. * i.extent) + .5;
-    return VolumeDensity.SampleLevel(LinearClamp, local, 0);
+    return SampleSmokeDensity(local);
+}
+float VolumeEmptyRun(VolumeVaryings i, float2 uv, float z, float rayZ)
+{
+    float3 direction = WorldRay(uv) / rayZ;
+    float3 local = VolumeLocal(i, Camera[0].xyz + direction * z - i.center) / (2. * i.extent) + .5;
+    return SmokeEmptyRun(local, VolumeLocal(i, direction) / (2. * i.extent));
 }
 #endif

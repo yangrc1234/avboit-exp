@@ -1,4 +1,8 @@
-# 半分辨率 dithering 审计
+# 半分辨率 dithering 审计（历史对照）
+
+当前已统一为 coherent 四邻居重建；下述旧核、选择菜单和选择参数仅为历史实验记录，
+已从运行时代码删除，旧对照命令不再适用。现有 `--volume-upsample-test` 比较 coherent
+与其无抖动 fallback，保留静止／移动镜头捕获。
 
 第一轮审计只增加测试捕获；第二轮新增独立 shader 对照入口，默认仍保留旧核，TAA 参数不变。测试位置：`ViewerSelfTests.inl::TestTemporalAA`。`--volume-upsample-test --composition-half` 额外输出匹配的 TAA 前/后中央半宽半高 HDR crop 和逐帧 jitter/noise phase CSV；每个原始像素都保留，避免只采到同一种 2×2 相位。RGBA16F 前置输出才开启 HDR 捕获，原 packed 测试仍只输出原有 PPM。
 

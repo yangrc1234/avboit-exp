@@ -53,11 +53,7 @@ for name, flags in [
 src = luts["off"]
 padded = np.pad(src, ((0, 0), (1, 1), (1, 1), (0, 0)), mode="edge")
 minimum = np.minimum.reduce(
-    [
-        padded[:, y : y + src.shape[1], x : x + src.shape[2]]
-        for y in range(3)
-        for x in range(3)
-    ]
+    [padded[:, y : y + src.shape[1], x : x + src.shape[2]] for y in range(3) for x in range(3)]
 )
 expected = np.minimum(src, np.maximum(minimum, 16))
 assert np.array_equal(luts["min"], expected)

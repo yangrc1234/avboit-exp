@@ -19,6 +19,13 @@ constexpr Flag Flags[] = {
     {"--no-taa", &ViewerOptions::taa, false},
     {"--volume-full-res", &ViewerOptions::lowResolutionVolumes, false},
     {"--no-lut-min-filter", &ViewerOptions::lutMinFilter, false},
+    {"--no-smoke-brick-skip", &ViewerOptions::smokeBrickSkip, false},
+    {"--baked-smoke", &ViewerOptions::bakedSmoke, true},
+    {"--smoke-paused", &ViewerOptions::playSmoke, false},
+    {"--smoke-single-frame", &ViewerOptions::smokeInterpolation, false},
+    {"--no-smoke-mask", &ViewerOptions::smokeMask, false},
+    {"--smoke-door-closed", &ViewerOptions::smokeDoorOpen, false},
+    {"--volume-reference-sampling", &ViewerOptions::volumeReferenceSampling, true},
     {"--volume-lut-skip", &ViewerOptions::volumeLutSkip, true},
     {"--volume-march-stats", &ViewerOptions::volumeMarchStats, true},
     {"--dense-blur", &ViewerOptions::sparseBlur, false},
@@ -167,12 +174,15 @@ ViewerOptions ParseViewerOptions(int argc, const char *const *argv)
         {
             options.volumeUpsampleTest = options.headless = options.taa = options.lowResolutionVolumes = true;
         }
-        else if (arg == "--volume-upsample-kernel")
-            options.volumeUpsampleKernel = ReadInteger(arg, value(), 0, 2);
-        else if (arg == "--volume-upsample-bilateral")
-            options.ditheredVolumeUpsample = false;
         else if (arg == "--volume-extinction")
             options.initialVolumeExtinction = ReadFloat(arg, value(), 0.f, 128.f);
+        else if (arg == "--smoke-frame")
+            options.smokeFrame = ReadFloat(arg, value(), 0.f, 1023.f);
+        else if (arg == "--smoke-sequence")
+        {
+            options.smokeSequencePath = value();
+            options.bakedSmoke = true;
+        }
         else if (arg == "--volume-step")
             options.volumeStepSize = ReadFloat(arg, value(), .005f, 2.f);
         else if (arg == "--volume-low-t")
@@ -201,7 +211,7 @@ ViewerOptions ParseViewerOptions(int argc, const char *const *argv)
         else if (arg == "--stress")
             options.stressPreset = ReadInteger(arg, value(), 0, 33);
         else if (arg == "--camera-preset")
-            options.cameraPreset = ReadInteger(arg, value(), 0, 9);
+            options.cameraPreset = ReadInteger(arg, value(), 0, 11);
         else if (arg == "--benchmark")
             options.benchmarkFrames = ReadInteger(arg, value(), 1, 600);
         else if (arg == "--emissive-gain")
@@ -267,7 +277,7 @@ Run and debug (benchmarks require Windows Developer Mode for StablePowerState):
   --ui-self-test             Exercise live ImGui controls and resource rebuilding
   --occupancy-overlay 0..7  Off / requests RGB / transparent / frost / sharp B / B work / volume XY / volume Z
   --occupancy-slice 0..127  Physical Z slice for overlay 7 (clamped to current Z budget)
-  --camera-preset 0..9        Camera (6: sky; 7/8/9: crossing glass +30/+40/-30 degrees)
+  --camera-preset 0..11       Camera (6: sky; 7/8/9: crossing glass; 10/11: near/inside smoke)
 
 Scene and materials:
   --shell-offset-bins N  Initial noise-shell OIT offset, -4..4 bins (positive toward camera)
@@ -283,9 +293,16 @@ Scene and materials:
   --spot-intensity N         Sponza dynamic spotlight intensity (0..500), default 80
   --volume-temporal-dither  Animate raymarch sample phases (requires final TAA)
   --volume-upsample-test   Headless static/moving A/B captures (enables half-res + TAA)
-  --volume-upsample-kernel N  Audit kernel: 0 legacy, 1 coherent jitter, 2 matched reference
-  --volume-upsample-bilateral  Reference fixed bilateral instead of dithered TAA upscale
   --volume-extinction N    Initial volume material extinction, 0..128 per world unit
+  --baked-smoke       Use compressed animated density in scenes 24/25
+  --smoke-frame N     Initial zero-based frame, clamped to sequence (default 15)
+  --smoke-sequence PATH  Load a local sequence directory instead of the bundled probe
+  --smoke-paused      Start paused; use Play baked smoke / Restart smoke to play
+  --smoke-single-frame Use floor(frame); upload and sample only one density frame
+  --no-smoke-brick-skip Disable brick traversal for comparison
+  --no-smoke-mask     Disable gameplay coverage for baked smoke
+  --smoke-door-closed Close the example coverage doorway
+  --volume-reference-sampling  Validation: four density taps and full tail lighting
   --volume-lut-skip    Experimental exact-T empty interval skipping
   --volume-march-stats       Diagnostic numerator = intervals, shading evaluations, skipped intervals
   --volume-step N           World-space accumulation step (default .5)
