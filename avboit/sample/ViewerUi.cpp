@@ -151,7 +151,7 @@ void DrawMaterialEditor(MaterialTable &materials, const MaterialDefaults &defaul
             material.transmission[0] = material.transmission[1] = material.transmission[2] = extinction;
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Higher extinction makes smoke denser. This slider sets all RGB channels together.");
-        if (ImGui::TreeNode("RGB extinction"))
+        if (material.kind == 5 && ImGui::TreeNode("RGB extinction"))
         {
             ImGui::DragFloat3("Extinction RGB", material.transmission.data(), .05f, 0.f, 128.f, "%.3f",
                               ImGuiSliderFlags_AlwaysClamp);

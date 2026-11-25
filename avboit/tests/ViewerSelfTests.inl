@@ -37,6 +37,36 @@ void NativeViewer::TestUiInteractions(avboit::ViewerUi &ui, nvrhi::IFramebuffer 
         pump();
         click(uiTabs[index]);
     };
+    if (stressPreset == 24 && bakedSmoke)
+    {
+        for (unsigned choice : {24u, JangaFxDemo})
+        {
+            if (choice == JangaFxDemo && !std::filesystem::exists(JangaFxSequence() / "sequence.txt"))
+                continue;
+            click(uiDemoCase);
+            click(uiDemoChoices[choice]);
+            if (CurrentDemoCase() != choice || selectedActor < 0 || !actors[selectedActor].vdb)
+                throw std::runtime_error("VDB preset did not create and select its actor");
+            auto &state = *actors[selectedActor].vdb;
+            if (!state.playing || smokeFrames.empty())
+                throw std::runtime_error("VDB preset did not start playback");
+            state.frame = 40.f;
+            Animate(1.f / 60.f);
+            if (state.frame <= 40.f && smokeFrames.size() > 42)
+                throw std::runtime_error("VDB actor did not advance");
+            state.playing = false;
+            const float paused = state.frame;
+            Animate(1.f / 60.f);
+            if (state.frame != paused)
+                throw std::runtime_error("Paused VDB actor advanced");
+            state.frame = std::min(80.f, float(smokeFrames.size() - 1));
+            chooseTab(0);
+            pump();
+        }
+        Capture(framebuffer->getDesc().colorAttachments[0].texture, "jangafx-actor.ppm");
+        printf("VDB preset and actor playback tests passed\n");
+        return;
+    }
     auto checkCompactResources = [&]()
     {
         if (transparency.Zero().Depth() != depth.Get())
@@ -418,6 +448,12 @@ void NativeViewer::TestUiInteractions(avboit::ViewerUi &ui, nvrhi::IFramebuffer 
     // Scene changes intentionally rebuild geometry; test them after the resource
     // identity and image round-trip checks for quality-only changes.
     const auto savedStress = stressPreset;
+    const bool savedGrenade = gameplayGrenade, savedBaked = bakedSmoke;
+    const auto savedSequencePath = smokeSequencePath;
+    const auto savedPlayback = SmokePlayback();
+    const bool savedSmokeMask = smokeMask;
+    const float savedStepSize = volumeStepSize;
+    const float savedExtinction = initialVolumeExtinction;
     const bool savedSphere = glassSphere, savedRgb = rgbGlass, savedBalls = emissiveBalls, savedSmoke = showSmoke;
     const bool savedBoard = calibrationBoard, savedPanes = sceneGlassPanes, savedVfx = vfx, savedAnimate = animate,
                savedBehind = vfxBehind, savedFront = emissiveFront;
@@ -426,16 +462,45 @@ void NativeViewer::TestUiInteractions(avboit::ViewerUi &ui, nvrhi::IFramebuffer 
     uiScrollRequest = -100000;
     pump();
     pump();
-    for (unsigned choice :
-         {16u, 17u, 18u, avboit::StressPresetCount, avboit::StressPresetCount + 1, avboit::StressPresetCount + 2})
+    for (unsigned choice : {0u, 1u, 18u, avboit::StressPresetCount, avboit::StressPresetCount + 1,
+                            avboit::StressPresetCount + 2, GrenadeDemo, 24u, JangaFxDemo})
     {
+        if (choice == JangaFxDemo && !std::filesystem::exists(JangaFxSequence() / "sequence.txt"))
+            continue;
         click(uiDemoCase);
         click(uiDemoChoices[choice]);
         if (CurrentDemoCase() != choice || rebuildRequested)
             throw std::runtime_error("ImGui scene preset did not apply immediately");
-        if (choice == 17 && (glassSphere || emissiveBalls || objectCount != 2 || cameraPreset != 8))
-            throw std::runtime_error("Crossing glass preset must isolate two panes at the grazing view");
+        if (choice == GrenadeDemo && (!gameplayGrenade || bakedSmoke || stressPreset != 24 || localVolumes.empty()))
+            throw std::runtime_error("Gameplay grenade must load directly from its scene entry");
+        if (choice == 24 && gameplayGrenade)
+            throw std::runtime_error("Gameplay grenade leaked into VDB scene");
     }
+    if (CurrentDemoCase() == JangaFxDemo)
+    {
+        if (smokeFrames.size() != 166 || !SmokePlayback().playing || !SmokePlayback().loop || selectedActor < 0 ||
+            !actors[selectedActor].vdb)
+            throw std::runtime_error("JangaFX preset must create a playing VDB actor");
+        auto &playback = SmokePlayback();
+        playback.frame = 40.f;
+        Animate(1.f / 60.f);
+        if (playback.frame <= 40.f)
+            throw std::runtime_error("VDB actor animation did not advance");
+        playback.playing = false;
+        const float pausedFrame = playback.frame;
+        Animate(1.f / 60.f);
+        if (playback.frame != pausedFrame)
+            throw std::runtime_error("Paused VDB actor advanced");
+        chooseTab(0);
+        pump();
+    }
+    smokeSequencePath = savedSequencePath;
+    initialSmokePlayback = savedPlayback;
+    smokeMask = savedSmokeMask;
+    volumeStepSize = savedStepSize;
+    gameplayGrenade = savedGrenade;
+    bakedSmoke = savedBaked;
+    initialVolumeExtinction = savedExtinction;
     stressPreset = savedStress;
     glassSphere = savedSphere;
     rgbGlass = savedRgb;
@@ -628,7 +693,7 @@ void NativeViewer::TestTemporalAA(nvrhi::IFramebuffer *framebuffer, bool capture
         // Deterministic A/B sequences at the requested render resolution. These
         // exercise coherent jitter and its fixed-neighbor fallback.
         const bool savedUpscale = ditheredVolumeUpsample;
-        const float savedSmokeFrame = smokeFrame;
+        const float savedSmokeFrame = SmokePlayback().frame;
         auto *color = framebuffer->getDesc().colorAttachments[0].texture;
         auto staging = GetDevice()->createStagingTexture(color->getDesc(), nvrhi::CpuAccessMode::Read);
         auto *preTaa = transparency.DistortionApply().Output();
@@ -650,7 +715,7 @@ void NativeViewer::TestTemporalAA(nvrhi::IFramebuffer *framebuffer, bool capture
                 // sequences identically so baked smoke exercises moving density,
                 // frame uploads and TAA history instead of a frozen VDB frame.
                 if (bakedSmoke && !smokeFrames.empty())
-                    smokeFrame =
+                    SmokePlayback().frame =
                         std::min(savedSmokeFrame + float(frame) * smokeFps / 60.f, float(smokeFrames.size() - 1));
                 if (frame >= 40)
                     navigation.SetPose({startEye[0] + float(frame - 39) * .02f, startEye[1], startEye[2]}, heading,
@@ -715,7 +780,7 @@ void NativeViewer::TestTemporalAA(nvrhi::IFramebuffer *framebuffer, bool capture
             }
         }
         ditheredVolumeUpsample = savedUpscale;
-        smokeFrame = savedSmokeFrame;
+        SmokePlayback().frame = savedSmokeFrame;
         ApplyCameraPreset(savedPreset);
         temporalAA->Invalidate();
         Render(framebuffer);

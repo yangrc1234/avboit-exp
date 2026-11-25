@@ -15,6 +15,14 @@ void OitResolve::Create(nvrhi::IDevice *device, const OitResolveInputs &inputs)
     m_lowAccumulation = {};
     m_upsample = {};
     m_lowPipelines.clear();
+    m_marchPipeline = nullptr;
+    m_marchBindings = nullptr;
+    m_marchLayout = nullptr;
+    m_marchHeatmap = inputs.marchHeatmap;
+    m_vdbRaySpacing = inputs.vdbRaySpacing;
+    m_computeMaterials.clear();
+    for (const auto &material : inputs.materialShaders)
+        m_computeMaterials.push_back(material.computeVolume);
     m_screenTileCount = ((inputs.width + 63) / 64) * ((inputs.height + 63) / 64);
     auto texture = [&](const nvrhi::TextureHandle &current, nvrhi::Format format, const char *name)
     {
@@ -24,6 +32,7 @@ void OitResolve::Create(nvrhi::IDevice *device, const OitResolveInputs &inputs)
                                 .setHeight(inputs.height)
                                 .setFormat(format)
                                 .setIsRenderTarget(true)
+                                .setIsUAV(inputs.vdbMarchCompute && !inputs.lowResolutionVolumes)
                                 .setDebugName(name)
                                 .setClearValue(nvrhi::Color(0))
                                 .setUseClearValue(true)
@@ -31,7 +40,7 @@ void OitResolve::Create(nvrhi::IDevice *device, const OitResolveInputs &inputs)
                                 .setKeepInitialState(true));
     };
     const auto accumFormat = inputs.halfAccumulation ? nvrhi::Format::RGBA16_FLOAT : nvrhi::Format::R11G11B10_FLOAT;
-    m_numerator = texture(m_numerator, accumFormat, "Numerator");
+    m_numerator = texture(m_numerator, inputs.marchHeatmap ? nvrhi::Format::RGBA32_FLOAT : accumFormat, "Numerator");
     m_denominator = texture(m_denominator, accumFormat, "Denominator");
     m_totalTau = texture(m_totalTau, accumFormat, "Total optical depth");
     m_backNumerator = texture(m_backNumerator, accumFormat, "Back numerator");
@@ -54,6 +63,11 @@ void OitResolve::Create(nvrhi::IDevice *device, const OitResolveInputs &inputs)
             .addColorAttachment(m_backNumerator)
             .setDepthAttachment(
                 nvrhi::FramebufferAttachment().setTexture(inputs.opaqueHardwareDepth).setReadOnly(true)));
+    // Shared by full/half-resolution volume accumulation. Bound with the PSO.
+    auto shadowComparison = device->createSampler(nvrhi::SamplerDesc()
+                                                      .setAllFilters(true)
+                                                      .setAllAddressModes(nvrhi::SamplerAddressMode::Clamp)
+                                                      .setReductionType(nvrhi::SamplerReductionType::Comparison));
     auto create = [&](Pass &pass, nvrhi::BindingSetDesc desc, nvrhi::IShader *vs, nvrhi::IShader *ps, bool additive)
     {
         desc.addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(15, inputs.camera));
@@ -61,13 +75,20 @@ void OitResolve::Create(nvrhi::IDevice *device, const OitResolveInputs &inputs)
         desc.addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(23, inputs.materials));
         if (additive && inputs.volumeDensity)
             desc.addItem(nvrhi::BindingSetItem::Texture_SRV(26, inputs.volumeDensity));
+        if (additive && inputs.smokeTrails)
+            desc.addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(35, inputs.smokeTrails))
+                .addItem(nvrhi::BindingSetItem::Texture_SRV(36, inputs.smokeTrailCandidates));
         if (additive && inputs.smokeBricks)
             desc.addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(33, inputs.smokeBricks))
                 .addItem(nvrhi::BindingSetItem::Texture_SRV(34, inputs.gameplaySmokeMask));
+        if (additive && inputs.smokeSampling)
+            desc.addItem(nvrhi::BindingSetItem::ConstantBuffer(3, inputs.smokeSampling));
         if (additive && inputs.volumeLights)
         {
             desc.addItem(nvrhi::BindingSetItem::TypedBuffer_SRV(27, inputs.volumeLights));
+            desc.addItem(nvrhi::BindingSetItem::ConstantBuffer(2, inputs.volumeLights));
             desc.addItem(nvrhi::BindingSetItem::Texture_SRV(28, inputs.regularLightDepth));
+            desc.addItem(nvrhi::BindingSetItem::Sampler(2, shadowComparison));
             desc.addItem(nvrhi::BindingSetItem::Texture_SRV(29, inputs.lightMoments));
             desc.addItem(nvrhi::BindingSetItem::Texture_SRV(31, inputs.lightOpticalDepth));
         }
@@ -124,7 +145,8 @@ void OitResolve::Create(nvrhi::IDevice *device, const OitResolveInputs &inputs)
                                            nvrhi::TextureDesc()
                                                .setWidth(inputs.width / 2)
                                                .setHeight(inputs.height / 2)
-                                               .setFormat(accumFormat)
+                                               .setFormat(j == 0 && inputs.marchHeatmap ? nvrhi::Format::RGBA32_FLOAT : accumFormat)
+                                               .setIsUAV(bool(inputs.vdbMarchCompute))
                                                .setIsRenderTarget(true)
                                                .setClearValue(nvrhi::Color(0))
                                                .setUseClearValue(true)
@@ -169,6 +191,22 @@ void OitResolve::Create(nvrhi::IDevice *device, const OitResolveInputs &inputs)
     }
     else
         m_lowTargets = {};
+    if (inputs.vdbMarchCompute)
+    {
+        auto desc = *m_accumulation.bindings->getDesc();
+        const std::array<nvrhi::TextureHandle, 4> full = {m_numerator, m_denominator, m_totalTau, m_backNumerator};
+        const auto &targets = inputs.lowResolutionVolumes ? m_lowTargets : full;
+        for (unsigned j = 0; j < targets.size(); ++j)
+            desc.addItem(B::Texture_UAV(j, targets[j]));
+        desc.addItem(B::PushConstants(4, 8));
+        if (!nvrhi::utils::CreateBindingSetAndLayout(device, nvrhi::ShaderType::Compute, 0, desc, m_marchLayout,
+                                                     m_marchBindings))
+            throw std::runtime_error("VDB compute bindings");
+        m_marchPipeline = device->createComputePipeline(
+            nvrhi::ComputePipelineDesc().setComputeShader(inputs.vdbMarchCompute).addBindingLayout(m_marchLayout));
+        if (!m_marchPipeline)
+            throw std::runtime_error("VDB compute pipeline");
+    }
     auto resolveBindings = D().addItem(B::TypedBuffer_SRV(1, inputs.warp))
                                .addItem(B::Texture_SRV(2, inputs.lut))
                                .addItem(B::Sampler(0, inputs.linear))
@@ -211,8 +249,35 @@ void OitResolve::RecordAccumulation(nvrhi::ICommandList *commands, const std::ve
         state.bindings = {pass.bindings};
         state.viewport.addViewportAndScissorRect(pass.framebuffer->getFramebufferInfo().getViewport());
         state.indexBuffer = nvrhi::IndexBufferBinding().setBuffer(m_indices).setFormat(nvrhi::Format::R32_UINT);
+        // Seed the cleared targets with one VDB. Additional actors use additive OM
+        // blending, including overlapping volumes. No packed UAV loads are needed.
+        const GeometryDraw *computed = nullptr;
+        if (m_marchPipeline && low == bool(m_lowAccumulation.framebuffer))
+        {
+            for (const auto &draw : draws)
+                if (m_computeMaterials.at(draw.material))
+                {
+                    computed = &draw;
+                    break;
+                }
+            if (computed)
+            {
+                AVBOIT_GPU_SCOPE(commands, "VDB wave raymarch");
+                nvrhi::ComputeState cs;
+                cs.pipeline = m_marchPipeline;
+                cs.bindings = {m_marchBindings};
+                commands->setComputeState(cs);
+                const unsigned args[] = {computed->firstVertex, low ? 2u : 1u};
+                commands->setPushConstants(args, sizeof(args));
+                const auto &fb = pass.framebuffer->getFramebufferInfo();
+                unsigned groupWidth = 8 * m_vdbRaySpacing, groupHeight = 4 * m_vdbRaySpacing;
+                commands->dispatch((fb.width + groupWidth - 1) / groupWidth, (fb.height + groupHeight - 1) / groupHeight);
+            }
+        }
         for (const auto &draw : draws)
         {
+            if (&draw == computed)
+                continue;
             bool eligible = !m_lowPipelines.empty() && m_lowPipelines.at(draw.material);
             if (eligible != low)
                 continue;
@@ -232,7 +297,7 @@ void OitResolve::RecordAccumulation(nvrhi::ICommandList *commands, const std::ve
     // initialized and no stale samples survive a live resolution switch.
     {
         AVBOIT_GPU_SCOPE(commands, "Half-resolution volume accumulation", timing.lowResolution);
-        if (hasLow)
+        if (hasLow || (m_marchHeatmap && m_lowAccumulation.framebuffer))
         {
             for (const auto &target : m_lowTargets)
                 commands->clearTextureFloat(target, nvrhi::AllSubresources, nvrhi::Color(0));

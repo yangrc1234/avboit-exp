@@ -8,11 +8,14 @@ import numpy as np
 
 def pack(source, output, size, blender_z_up=False, precision="4bit"):
     a = np.fromfile(source, dtype="<f4").reshape(size, size, size)
-    if size % 4 or not np.isfinite(a).all() or a.min() < 0:
-        raise ValueError("Expected finite positive density, size divisible by four")
+    if size < 1 or not np.isfinite(a).all() or a.min() < 0:
+        raise ValueError("Expected finite nonnegative density and a positive size")
     if blender_z_up:
         a = a.swapaxes(0, 1)
-    padded = np.pad(a, ((0, 1),) * 3, mode="edge")
+    # Logical dimensions need not fill the last brick. Replicate the boundary,
+    # including its interpolation halo; the header retains the logical size.
+    padding = ((size + 3) // 4) * 4 + 1 - size
+    padded = np.pad(a, ((0, padding),) * 3, mode="edge")
     blocks = np.lib.stride_tricks.sliding_window_view(padded, (5, 5, 5))[::4, ::4, ::4]
     blocks = blocks.reshape(-1, 125)
     occupied = blocks.max(axis=1) > 0

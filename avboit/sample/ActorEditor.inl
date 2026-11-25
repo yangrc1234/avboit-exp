@@ -8,6 +8,14 @@ avboit::TransformGizmo actorGizmo;
 bool showActorGizmo = true, rotateActorGizmo = false, actorGeometryDirty = false;
 ImGuiTextFilter actorFilter;
 
+avboit::VdbPlayback &SmokePlayback()
+{
+    for (auto &actor : actors)
+        if (actor.vdb)
+            return *actor.vdb;
+    return initialSmokePlayback;
+}
+
 void BuildSceneActors(unsigned emissiveFirst, unsigned emissiveEnd)
 {
     using Type = avboit::ActorType;
@@ -33,6 +41,14 @@ void BuildSceneActors(unsigned emissiveFirst, unsigned emissiveEnd)
                  : kind == 1              ? "Smoke card"
                  : kind == 4              ? "Glass sphere"
                                           : "Glass";
+        if (kind == 6 && bakedSmoke && !gameplayGrenade)
+        {
+            a.vdb = initialSmokePlayback;
+            a.vdb->asset = (smokeSequencePath.empty() ? app::GetDirectoryWithExecutable() / "textures/smoke-sequence"
+                                                      : smokeSequencePath)
+                               .string();
+            a.name = CurrentDemoCase() == JangaFxDemo ? "JangaFX animated VDB" : "Animated VDB";
+        }
         if (emissive)
             for (unsigned c = 0; c < 3; ++c)
                 material.color[c] *= emissiveGain;
@@ -400,6 +416,33 @@ void DrawActorEditor()
     if (ImGui::Button("Reset all transforms"))
         for (unsigned i = 0; i < actors.size(); ++i)
             ResetActor(i);
+    if (a.vdb)
+    {
+        ImGui::SeparatorText("VDB animation");
+        ImGui::TextWrapped("Asset: %s", a.vdb->asset.c_str());
+        ImGui::Checkbox("Play", &a.vdb->playing);
+        ImGui::SameLine();
+        ImGui::Checkbox("Loop", &a.vdb->loop);
+        bool seek = ImGui::Button("Restart");
+        if (seek)
+        {
+            a.vdb->frame = 0.f;
+            a.vdb->playing = true;
+        }
+        float lastFrame = float(smokeFrames.empty() ? 0 : smokeFrames.size() - 1);
+        if (ImGui::SliderFloat("Frame", &a.vdb->frame, 0.f, lastFrame, "%.2f"))
+        {
+            a.vdb->playing = false;
+            seek = true;
+        }
+        if (seek && temporalAA)
+            temporalAA->Invalidate();
+        bool changed = ImGui::Checkbox("Gameplay coverage mask", &smokeMask);
+        if (smokeMask)
+            changed |= ImGui::Checkbox("Doorway open", &smokeDoorOpen);
+        if (changed)
+            rebuildRequested = preserveMaterialsOnRebuild = true;
+    }
     ImGui::Separator();
     using Type = avboit::ActorType;
     bool lightingChanged = false;
@@ -437,6 +480,12 @@ void DrawActorEditor()
                     ordering.flatLayer = unsigned(layer);
                 ImGui::TextWrapped("Share an anchor between both actors. Replaces camera offset and slope push; "
                                    "external intersections are approximate.");
+                ImGui::SliderFloat("Flat depth weight", &ordering.flatWeightStrength, 0.f, 8.f, "%.2f stops",
+                                   ImGuiSliderFlags_AlwaysClamp);
+                ImGui::SliderFloat("Flat depth range", &ordering.flatDepthRange, .05f, 10.f, "%.2f m",
+                                   ImGuiSliderFlags_AlwaysClamp);
+                ImGui::TextWrapped("For one WBOIT group, use the same anchor, layer, strength and range on all "
+                                   "members. 0 stops gives uniform weights; real depth biases nearer fragments.");
             }
         }
     }

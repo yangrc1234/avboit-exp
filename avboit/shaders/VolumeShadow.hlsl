@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 SamplerState LinearClamp : register(s0);
 #include "VolumeLighting.hlsli"
+#define SMOKE_FLOW_TIME VolumeLights[38].y
 #include "BakedSmoke.hlsli"
 Buffer<float4> Casters : register(t32);
 RWTexture2DArray<float4> MomentsOut : register(u0);
@@ -64,7 +65,7 @@ RWTexture2DArray<float> TauOut : register(u1);
                 step += min(skip, steps - 1 - step);
                 continue;
             }
-            float density = center.w > 0 ? SampleSmokeDensity(local / (2. * extent) + .5).r : 1.;
+            float density = center.w > 0 ? SampleSmokeDensity(local / (2. * extent) + .5, world).r : 1.;
             float tau = sigma * density * ds;
             float4 projected = LightTransform(float4(world, 1), 13 + id.z * 4);
             float z = MomentDepth(projected.z / projected.w, id.z);

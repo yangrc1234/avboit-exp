@@ -18,13 +18,15 @@ struct TransparencyMaterial
     float ior = 1.3f, gain = 1, displacement = 0;
     unsigned kind = 0; // Fixture shading model, not an instance ID.
     bool normalSphere = false, inheritOptics = true;
-    unsigned vfxPattern = 0;     // 0 oscillating ring, 1 heat wave, 2 expanding shock.
-    float vfxPhase = 0;          // Phase offset in cycles for expanding shock.
-    unsigned surfacePattern = 0; // Normal-mesh fixture: 0 glass, 1 noise shell, 2 striped inner layer.
-    float cameraOffsetBins = 0;  // Physical Z bins; positive pulls OIT ordering toward the camera.
-    int flatAnchorActor = -1;    // Shared actor pivot; -1 keeps geometric OIT depth.
-    unsigned flatLayer = 0;      // 0 inner, 1 outer (one bin toward camera).
-    float patternScale = 6;      // Material-local noise frequency.
+    unsigned vfxPattern = 0;      // 0 oscillating ring, 1 heat wave, 2 expanding shock.
+    float vfxPhase = 0;           // Phase offset in cycles for expanding shock.
+    unsigned surfacePattern = 0;  // Normal-mesh fixture: 0 glass, 1 noise shell, 2 striped inner layer.
+    float cameraOffsetBins = 0;   // Physical Z bins; positive pulls OIT ordering toward the camera.
+    int flatAnchorActor = -1;     // Shared actor pivot; -1 keeps geometric OIT depth.
+    unsigned flatLayer = 0;       // 0 inner, 1 outer (one bin toward camera).
+    float flatWeightStrength = 0; // 0: uniform; positive: front-to-back falloff in stops across flatDepthRange.
+    float flatDepthRange = 2.f;   // World-space depth span centred on the shared anchor.
+    float patternScale = 6;       // Material-local noise frequency.
     bool ScalarExtinction() const;
 };
 struct EffectiveMaterial
@@ -38,7 +40,7 @@ struct EffectiveMaterial
 class MaterialTable
 {
   public:
-    static constexpr unsigned GpuRecordCount = 5;
+    static constexpr unsigned GpuRecordCount = 6;
     // Import fixture vertex attributes, deduplicate identical materials, and put
     // a table index in vertex record 1.w. Geometry and local coordinates stay intact.
     void Build(std::vector<MaterialRecord> &vertices, const MaterialDefaults &defaults);

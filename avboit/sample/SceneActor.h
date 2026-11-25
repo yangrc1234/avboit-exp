@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <optional>
 
 namespace avboit
 {
@@ -54,6 +55,12 @@ enum class ActorType
     Sun,
     Spotlight
 };
+struct VdbPlayback
+{
+    std::string asset;
+    float frame = 15.f;
+    bool playing = true, loop = false;
+};
 struct SceneActor
 {
     ActorType type = ActorType::Transparent;
@@ -62,5 +69,6 @@ struct SceneActor
     ActorVector position{}, rotation{}, homePosition{}, homeRotation{}, lower{}, upper{};
     bool enabled = true, animate = false;
     float lightIntensity = 0;
+    std::optional<VdbPlayback> vdb;
 };
 } // namespace avboit

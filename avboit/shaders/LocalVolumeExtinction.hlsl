@@ -18,8 +18,9 @@ void InjectVolume(VolumeVaryings i, bool textured)
     uint2 range = VolumeVirtualRange(interval, count);
     // Quantize cumulative tau and difference adjacent endpoints. Rounding every
     // tiny segment independently would erase low-density media at high Z budgets.
-    float3 cumulative = 0;
-    uint3 previous = 0;
+    LocalOpticalDepth sigma = LocalExtinction(i.sigma);
+    LocalOpticalDepth cumulative = 0;
+    LocalExtinctionCode previous = 0;
     float emptyUntil = -1.;
     for (uint cell = range.x; cell < range.y; ++cell)
     {
@@ -30,10 +31,10 @@ void InjectVolume(VolumeVaryings i, bool textured)
         if (textured && sampleZ < emptyUntil)
             continue;
         float density = textured ? SampleVolumeData(i, uv, (segment.x + segment.y) * .5, rayZ).r : 1.;
-        cumulative += i.sigma * density * max(segment.y - segment.x, 0.) / rayZ;
-        uint3 code = uint3(floor(cumulative * (255. / ExtinctionTauMax) + .5));
-        uint slice = DepthWarp[2 + cell * 2];
-        if ((DepthWarp[3 + cell * 2] & 1u) && slice < SLICE_COUNT)
+        cumulative += sigma * density * max(segment.y - segment.x, 0.) / rayZ;
+        LocalExtinctionCode code = (LocalExtinctionCode)(floor(cumulative * (255. / ExtinctionTauMax) + .5));
+        uint entry = DepthWarp[2 + cell], slice = entry >> 3;
+        if ((entry & 1u) && slice < SLICE_COUNT)
             AddRgb(ray, slice, min(code - previous, 255u));
         previous = code;
     }

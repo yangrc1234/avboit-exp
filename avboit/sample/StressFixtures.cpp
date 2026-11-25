@@ -40,7 +40,8 @@ const char *StressPresetName(unsigned preset)
                                   "Eight RGB panes / front frost and refraction",
                                   "XY min / zero-transmittance spread",
                                   "Nested cubes / flattened OIT ordering",
-                                  "Third-layer halo / front glass and middle silhouettes"};
+                                  "Third-layer halo / front glass and middle silhouettes",
+                                  "Folded transparent magazine / self-overlap"};
     return names[preset < StressPresetCount ? preset : 0];
 }
 StressFixture BuildStressFixture(unsigned preset)
@@ -339,7 +340,7 @@ StressFixture BuildStressFixture(unsigned preset)
                 front.color = {.08f, .18f, .3f, 1};
             }
     }
-    if (preset == 26 || preset == 32)
+    if (preset == 26 || preset == 32 || preset == 34)
         result.opaque.push_back({{0, 0, 7}, {10, 0, 0}, {0, 10, 0}, {.035f, .045f, .055f, 1}, {0, 0, 0}, 0});
     return result;
 }

@@ -72,7 +72,13 @@ std::vector<unsigned> Reference(const std::vector<ObjectBounds> &objects, bool s
         ymin = std::floor(ymin - roundingTolerance);
         xmax = std::ceil(xmax + roundingTolerance);
         ymax = std::ceil(ymax + roundingTolerance);
-        const unsigned first = DepthSlice(lo[2]), last = std::min(2047u, DepthSlice(hi[2]) + (slopeSplat ? 64u : 0u));
+        unsigned first = DepthSlice(lo[2]), last = std::min(2047u, DepthSlice(hi[2]) + (slopeSplat ? 64u : 0u));
+        if (hi[3] > 0.f)
+        {
+            const unsigned anchor = DepthSlice(hi[3]);
+            first = anchor > 0 ? anchor - 1 : 0;
+            last = std::min(2047u, anchor + 1);
+        }
         for (unsigned y = 0; y < TilesY; ++y)
             for (unsigned x = 0; x < TilesX; ++x)
             {
@@ -157,7 +163,7 @@ bool RunBoundsTest(nvrhi::IDevice *device)
     auto pipeline =
         device->createComputePipeline(nvrhi::ComputePipelineDesc().setComputeShader(shader).addBindingLayout(layout));
     auto warpShader = factory.CreateShader("shaders/AdaptiveDepth.hlsl", "main", nullptr, nvrhi::ShaderType::Compute);
-    const unsigned warpWords = 2 + 2 * (avboit::VirtualSlices + 1);
+    const unsigned warpWords = 2 + (avboit::VirtualSlices + 1);
     auto warp = device->createBuffer(nvrhi::BufferDesc()
                                          .setByteSize(warpWords * 4)
                                          .setCanHaveTypedViews(true)
@@ -217,9 +223,9 @@ bool RunBoundsTest(nvrhi::IDevice *device)
         const bool slopeSplat = run >= 38;
         std::vector<ObjectBounds> objects;
         if (test == 0)
-            objects.push_back({{-.8f, -.6f, 2, 3}, {.8f, .6f, 3, 96}}); // RGB frost
+            objects.push_back({{-.8f, -.6f, 2, 3}, {.8f, .6f, 3, 0}}); // RGB frost
         if (test == 1)
-            objects.push_back({{-.8f, -.6f, 2, 1}, {.8f, .6f, 3, 96}}); // Same bounds, no frost
+            objects.push_back({{-.8f, -.6f, 2, 1}, {.8f, .6f, 3, 2.5f}}); // Flattened ordering anchor, no frost
         if (test == 2)
             objects.push_back({{-1, -1, -1, 2}, {1, 1, 2, 48}}); // Near-plane crossing
         if (test == 3)
@@ -233,8 +239,8 @@ bool RunBoundsTest(nvrhi::IDevice *device)
             {
                 const float x = float(int(random() % 200) - 100) * .03125f,
                             y = float(int(random() % 160) - 80) * .03125f, z = .5f + float(random() % 100) * .125f;
-                objects.push_back(
-                    {{x, y, z, float(random() % 8)}, {x + .375f, y + .625f, z + .5f, float(random() % 4) * 32}});
+                objects.push_back({{x, y, z, float(random() % 8)},
+                                   {x + .375f, y + .625f, z + .5f, (random() % 4 == 0 ? z + .25f : 0.f)}});
             }
         if (test == 32)
             objects.push_back({{-.8f, -5.f, -1.f, 7}, {.8f, -4.f, 1.f, 8192}}); // Below sky view, crossing near
@@ -329,7 +335,7 @@ bool RunBoundsTest(nvrhi::IDevice *device)
                     if ((actual[source] & (1u << (z % 32))) == 0)
                         continue;
                     unsigned accepted = z / (2048 / warpExpected[0]);
-                    unsigned first = std::min(126u, warpExpected[2 + accepted * 2]);
+                    unsigned first = std::min(126u, (warpExpected[2 + accepted] >> 3));
                     for (unsigned tap = first > 0 ? first - 1 : 0; tap <= std::min(127u, first + 2); ++tap)
                         physicalExpected[tile * 8 + kind * 4 + tap / 32] |= 1u << (tap % 32);
                 }

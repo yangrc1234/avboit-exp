@@ -51,7 +51,7 @@ bool RunBudgetTest(nvrhi::IDevice *device, unsigned budget, bool fixed = false)
         shaders.CreateShader("shaders/DepthOccupancy.hlsl", "main", nullptr, nvrhi::ShaderType::Compute);
     if (!shader || !occupancyShader)
         return false;
-    const uint32_t outputWords = 2 + 2 * (avboit::VirtualSlices + 1);
+    const uint32_t outputWords = 2 + (avboit::VirtualSlices + 1);
     auto input = device->createBuffer(nvrhi::BufferDesc()
                                           .setByteSize(avboit::VirtualSlices * 4)
                                           .setCanHaveTypedViews(true)
@@ -139,9 +139,9 @@ bool RunBudgetTest(nvrhi::IDevice *device, unsigned budget, bool fixed = false)
             expected[1] = budget - 1;
             for (unsigned i = 0; i <= avboit::VirtualSlices; ++i)
             {
-                expected[2 + 2 * i] = std::min(i, budget - 1 - toward - away) + toward;
+                expected[2 + i] = (std::min(i, budget - 1 - toward - away) + toward) << 3;
                 if (i < budget - 1 - toward - away)
-                    expected[3 + 2 * i] = 1 | (i == 0 ? 2 : 0) | (i == budget - 2 - toward - away ? 4 : 0);
+                    expected[2 + i] |= 1 | (i == 0 ? 2 : 0) | (i == budget - 2 - toward - away ? 4 : 0);
             }
         }
         commands->open();

@@ -8,21 +8,70 @@ struct Accumulation
     float3 totalTau : SV_Target2;
     float3 backNumerator : SV_Target3;
 };
+// Surface-only experiment: decorrelate the coarse XY grid without changing Z.
+// Every layer of a screen pixel shares the same offset. No texture fetches.
+float2 SurfaceLutUV(float2 uv, float2 pixel)
+{
+    float width = Camera[13].x;
+    [branch] if (width <= 0.) return uv;
+    // The host freezes this phase when TAA is disabled.
+    float frame = Camera[13].y;
+    float2 p = floor(pixel) + frame * 5.588238;
+    float2 n = frac(52.9829189 * frac(float2(dot(p, float2(.06711056, .00583715)),
+                                             dot(p.yx + float2(19., 47.), float2(.06711056, .00583715)))));
+    return uv + (n - .5) * width / Camera[6].zw;
+}
+// A projected triangle is affine in device depth. Evaluate that plane at the
+// actual four LUT column centres, rather than cutting all columns at one Z.
+// SampleSurfaceTransmittance retains the existing virtual-slice self bias and
+// authored camera offset. Splat's slope push is unchanged, not applied twice.
+float3 SampleReceiverPlaneTransmittance(float2 uv, float deviceDepth, float2 depthGradient, float offsetBins)
+{
+    float2 grid = uv * Camera[6].zw - .5;
+    int2 base = int2(floor(grid));
+    float2 fraction = frac(grid);
+    float3 result = 0.;
+    [unroll] for (int y = 0; y < 2; ++y)
+    {
+        [unroll] for (int x = 0; x < 2; ++x)
+        {
+            int2 column = clamp(base + int2(x, y), int2(0, 0), int2(Camera[6].zw) - 1);
+            float2 tapUV = (float2(column) + .5) / Camera[6].zw;
+            float2 deltaPixels = (tapUV - uv) * Camera[6].xy;
+            float tapDeviceDepth = saturate(deviceDepth + dot(depthGradient, deltaPixels));
+            float tapDepth = ViewDepthFromDevice(tapDeviceDepth);
+            float weight = (x == 0 ? 1. - fraction.x : fraction.x) * (y == 0 ? 1. - fraction.y : fraction.y);
+            result += weight * SampleSurfaceTransmittance(tapUV, tapDepth, offsetBins);
+        }
+    }
+    return result;
+}
 [earlydepthstencil] Accumulation accumulationPixel(Varyings i)
 {
+    // Evaluate before material clipping or per-pixel opaque rejection.
+    float2 depthGradient = 0.;
+    [branch] if (Camera[13].z != 0.) depthGradient = float2(ddx_fine(i.position.z), ddy_fine(i.position.z));
     float2 uv = i.position.xy / float2(WIDTH, HEIGHT);
     if (i.depth >= LoadOpaqueViewDepth(uint2(i.position.xy)))
         discard;
     float3 alpha = Opacity(i);
     float3 t;
+    float2 lutUV = SurfaceLutUV(uv, i.position.xy);
     float flatBin = 0.;
     if (i.flatOrdering.x > 0.)
     {
         flatBin = FlattenedOitBin(DepthWarp, i.flatOrdering, SLICE_COUNT - 2);
-        t = flatBin < 1. ? float3(1, 1, 1) : SampleTransmittanceAtZ(uv, (flatBin - .5) / float(SLICE_COUNT));
+        t = flatBin < 1. ? float3(1, 1, 1) : SampleTransmittanceAtZ(lutUV, (flatBin - .5) / float(SLICE_COUNT));
+        // The whole group deposits in one bin and shares its exclusive prefix.
+        // Only accumulation uses real fragment depth for ordering within the group.
+        // Bounded [2^-strength, 1] weights affect N and D equally, never totalTau.
+        float relativeDepth = saturate(.5 + (i.depth - i.flatOrdering.x) / max(i.flatWeight.y, .01));
+        t *= exp2(-i.flatWeight.x * relativeDepth);
     }
+    else if (Camera[13].z != 0.)
+        t = SampleReceiverPlaneTransmittance(uv, i.position.z, depthGradient, i.cameraOffsetBins);
     else
-        t = SampleSurfaceTransmittance(uv, i.depth, i.cameraOffsetBins);
+        t = SampleSurfaceTransmittance(lutUV, i.depth, i.cameraOffsetBins);
     Accumulation o = (Accumulation)0;
     // Only surviving fragments accumulate tau. The optional shading-only
     // shortcut below preserves tau; hardware zero-T depth rejection does not.
@@ -48,8 +97,9 @@ struct Accumulation
     }
     o.backNumerator = behind ? o.numerator : float3(0, 0, 0);
     // Diagnostic volume counters use numerator; exclude ordinary surfaces.
-    if (Camera[12].w > 0.)
-        o.numerator = 0;
+#if MARCH_COUNTERS
+    o.numerator = 0;
+#endif
     return o;
 } Texture2D<uint> ScreenTiles : register(t30);
 Texture2D<float2> InterfaceOffset : register(t14);

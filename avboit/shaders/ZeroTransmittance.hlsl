@@ -37,7 +37,7 @@ float4 quadVertex(uint vertex : SV_VertexID, uint instance : SV_InstanceID) : SV
     while (l < r)
     {
         uint m = (l + r) / 2;
-        if (DepthWarp[2 + 2 * m] >= firstZero)
+        if ((DepthWarp[2 + m] >> 3) >= firstZero)
             r = m;
         else
             l = m + 1;

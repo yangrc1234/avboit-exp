@@ -41,7 +41,7 @@ void ExtinctionVolume::Create(nvrhi::IDevice *device, const ExtinctionInputs &in
                                      .setDebugName("2D transparency / frost tile requests")
                                      .setInitialState(nvrhi::ResourceStates::UnorderedAccess)
                                      .setKeepInitialState(true));
-    m_warp = buffer(m_warp, 2 + 2 * 2049, "Adaptive depth warp");
+    m_warp = buffer(m_warp, 2 + 2049, "Adaptive depth warp");
     m_physicalMasks = buffer(m_physicalMasks, m_tiles * 8, "Physical scalar/RGB occupancy");
     m_extinction = buffer(m_extinction, rays * (m_depthBudget / 4 + m_depthBudget), "Packed extinction");
     m_overflow = buffer(m_overflow, rays * 4, "First overflow depth");
@@ -142,8 +142,13 @@ void ExtinctionVolume::Create(nvrhi::IDevice *device, const ExtinctionInputs &in
                      .addItem(B::TypedBuffer_SRV(23, inputs.materials));
     if (inputs.volumeDensity)
         splat.addItem(B::Texture_SRV(26, inputs.volumeDensity)).addItem(B::Sampler(0, inputs.linear));
+    if (inputs.smokeTrails)
+        splat.addItem(B::TypedBuffer_SRV(35, inputs.smokeTrails))
+            .addItem(B::Texture_SRV(36, inputs.smokeTrailCandidates));
     if (inputs.smokeBricks)
         splat.addItem(B::TypedBuffer_SRV(33, inputs.smokeBricks)).addItem(B::Texture_SRV(34, inputs.gameplaySmokeMask));
+    if (inputs.smokeSampling)
+        splat.addItem(B::ConstantBuffer(3, inputs.smokeSampling));
     m_splatLayout = nullptr;
     m_splatBindings = nullptr;
     if (!nvrhi::utils::CreateBindingSetAndLayout(device, nvrhi::ShaderType::AllGraphics, 0, splat, m_splatLayout,

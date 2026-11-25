@@ -21,6 +21,24 @@ int main()
     try
     {
         auto defaults = Parse({});
+        Require(!defaults.gameplayGrenade && Parse({"--gameplay-grenade"}).gameplayGrenade);
+        Require(defaults.grenadeStorage == 0 && !defaults.grenadeSkip);
+        Require(defaults.smokeShots == 0 && Parse({"--smoke-shots", "15"}).smokeShots == 15);
+        Require(!defaults.smokeTrailReference && !defaults.smokeTrailRebuild);
+        Require(Parse({"--smoke-trail-reference"}).smokeTrailReference);
+        Require(Parse({"--smoke-trail-rebuild"}).smokeTrailRebuild);
+        Require(Parse({"--smoke-shot-radius", "0.01"}).smokeShotRadius == .01f);
+        Require(Parse({"--grenade-storage", "2", "--grenade-skip"}).grenadeStorage == 2);
+        Require(Parse({"--grenade-skip"}).grenadeSkip);
+        Require(Parse({"--accumulation-audit", "128", "--spot-intensity", "0"}).accumulationAudit == 128);
+        Require(defaults.accumulationAudit == 0 && Parse({"--accumulation-audit", "1"}).headless);
+        Require(Parse({"--accumulation-audit", "65", "--volume-step-scale", "1"}).accumulationAudit == 65);
+        Require(!defaults.stochasticSmokeFilter && Parse({"--smoke-stochastic-filter"}).stochasticSmokeFilter);
+        Require(defaults.quadVolumeT && !defaults.eightVolumeT && defaults.volumeStepScale == 1.f);
+        Require(!Parse({"--no-volume-quad-t"}).quadVolumeT);
+        const auto eightT = Parse({"--volume-eight-t"});
+        Require(eightT.quadVolumeT && eightT.eightVolumeT);
+        Require(!Parse({"--volume-quad-t"}).eightVolumeT);
         Require(defaults.cubic && defaults.frost && defaults.showSmoke && !defaults.headless);
         Require(defaults.frostMipCount == 3 && defaults.sparseBlur);
         Require(!defaults.cubicTrilinear && Parse({"--cubic-trilinear"}).cubicTrilinear);
@@ -30,6 +48,11 @@ int main()
         Require(defaults.lutMinRetain == .5f && Parse({"--lut-min-retain", "0"}).lutMinRetain == 0.f &&
                 Parse({"--lut-min-retain", "1"}).lutMinRetain == 1.f);
         Require(defaults.lutMinFilter && !Parse({"--no-lut-min-filter"}).lutMinFilter);
+        Require(!defaults.lutIgn && Parse({"--lut-ign"}).lutIgn);
+        Require(!defaults.lutPlane && Parse({"--lut-plane"}).lutPlane);
+        Require(defaults.magazineOrdering == 2 && Parse({"--magazine-order", "0"}).magazineOrdering == 0);
+        Require(Parse({"--group-weight", "6", "--group-depth-range", "1"}).groupWeightStrength == 6.f);
+        Require(defaults.lutJitterStrength == 1.f && Parse({"--lut-jitter-strength", "2"}).lutJitterStrength == 2.f);
         Require(!Parse({"--no-taa"}).taa && !Parse({"--volume-full-res"}).lowResolutionVolumes);
         Require(!defaults.volumeLutSkip && !defaults.volumeMarchStats);
         Require(!defaults.volumeReferenceSampling && Parse({"--volume-reference-sampling"}).volumeReferenceSampling);
@@ -50,7 +73,6 @@ int main()
         Require(defaults.taa && Parse({"--taa"}).taa);
         auto sequence = Parse({"--smoke-sequence", "smoke path", "--smoke-frame", "100.5"});
         Require(sequence.bakedSmoke && sequence.smokeSequencePath == "smoke path" && sequence.smokeFrame == 100.5f);
-        Require(sequence.smokeInterpolation && !Parse({"--smoke-single-frame"}).smokeInterpolation);
         Require(Parse({"--volume-temporal-dither"}).temporalVolumeDithering);
         Require(Parse({"--volume-extinction", "64"}).initialVolumeExtinction == 64.f);
         Require(Parse({"--occupancy-overlay", "7", "--occupancy-slice", "127"}).occupancySlice == 127);
@@ -95,55 +117,65 @@ int main()
         Require(controls.stressPreset == 10 && controls.cameraPreset == 5 && controls.fixtureTime == -2 &&
                 controls.benchmarkFrames == 600);
         Require(controls.headless && !controls.detailedProfiling && controls.benchmarkPath == "timings.csv");
-        for (auto args : std::vector<std::vector<const char *>>{{"--resolve-mode", "0"},
-                                                                {"--resolve-mode", "1"},
-                                                                {"--resolve-mode", "2"},
-                                                                {"--resolve-half"},
-                                                                {"--q-half"},
-                                                                {"--q-log8"},
-                                                                {"--frost-mips", "2"},
-                                                                {"--frost-mips", "6"},
-                                                                {"--resolve-mode", "3"},
-                                                                {"--legacy-scene", "--donut-scene"},
-                                                                {"--emissive-gain", "65"},
-                                                                {"--background-threshold", "-1"},
-                                                                {"--background-threshold", "2"},
-                                                                {"--depth-budget", "48"},
-                                                                {"--render-height", "64"},
-                                                                {"--render-width", "8192"},
-                                                                {"--wat"},
-                                                                {"--time"},
-                                                                {"--time", "--headless"},
-                                                                {"--time", "nan"},
-                                                                {"--time", "inf"},
-                                                                {"--sphere-ior", "1.5garbage"},
-                                                                {"--sphere-ior", "0.9"},
-                                                                {"--refraction-gain", "5"},
-                                                                {"--stress", "-1"},
-                                                                {"--stress", "34"},
-                                                                {"--lut-min-retain", "-0.1"},
-                                                                {"--lut-min-retain", "1.1"},
-                                                                {"--frost-detail-radius", "65"},
-                                                                {"--frost-detail-radius", "-1"},
-                                                                {"--stress", "1.5"},
-                                                                {"--camera-preset", "12"},
-                                                                {"--volume-scale", "4"},
-                                                                {"--occupancy-overlay", "8"},
-                                                                {"--occupancy-slice", "128"},
-                                                                {"--inspect"},
-                                                                {"--separable-blur"},
-                                                                {"--fused-blur"},
-                                                                {"--serial-schedule"},
-                                                                {"--max-frost-radius", "129"},
-                                                                {"--max-glass-offset", "-1"},
-                                                                {"--lut-cubic"},
-                                                                {"--conservative-splat"},
-                                                                {"--volume-upsample-kernel", "1"},
-                                                                {"--volume-upsample-bilateral"},
-                                                                {"--benchmark", "0"},
-                                                                {"--benchmark", "601"},
-                                                                {"--benchmark", "99999999999999999"},
-                                                                {"--csv", ""}})
+        for (auto args : std::vector<std::vector<const char *>>{
+                 {"--accumulation-audit", "3"},
+                 {"--accumulation-audit", "65", "--volume-step-scale", "4"},
+                 {"--accumulation-audit", "65", "--volume-step-scale", "1", "--volume-lut-skip"},
+                 {"--accumulation-audit", "1", "--smoke-stochastic-filter"},
+                 {"--resolve-mode", "0"},
+                 {"--resolve-mode", "1"},
+                 {"--resolve-mode", "2"},
+                 {"--resolve-half"},
+                 {"--q-half"},
+                 {"--q-log8"},
+                 {"--frost-mips", "2"},
+                 {"--frost-mips", "6"},
+                 {"--resolve-mode", "3"},
+                 {"--legacy-scene", "--donut-scene"},
+                 {"--emissive-gain", "65"},
+                 {"--background-threshold", "-1"},
+                 {"--background-threshold", "2"},
+                 {"--depth-budget", "48"},
+                 {"--render-height", "64"},
+                 {"--render-width", "8192"},
+                 {"--wat"},
+                 {"--time"},
+                 {"--time", "--headless"},
+                 {"--time", "nan"},
+                 {"--time", "inf"},
+                 {"--sphere-ior", "1.5garbage"},
+                 {"--sphere-ior", "0.9"},
+                 {"--refraction-gain", "5"},
+                 {"--stress", "-1"},
+                 {"--stress", "35"},
+                 {"--lut-min-retain", "-0.1"},
+                 {"--lut-min-retain", "1.1"},
+                 {"--magazine-order", "3"},
+                 {"--group-weight", "-1"},
+                 {"--group-depth-range", "0"},
+                 {"--lut-jitter-strength", "-0.1"},
+                 {"--lut-jitter-strength", "2.1"},
+                 {"--frost-detail-radius", "65"},
+                 {"--frost-detail-radius", "-1"},
+                 {"--stress", "1.5"},
+                 {"--camera-preset", "12"},
+                 {"--volume-scale", "4"},
+                 {"--occupancy-overlay", "8"},
+                 {"--occupancy-slice", "128"},
+                 {"--inspect"},
+                 {"--separable-blur"},
+                 {"--fused-blur"},
+                 {"--serial-schedule"},
+                 {"--max-frost-radius", "129"},
+                 {"--max-glass-offset", "-1"},
+                 {"--lut-cubic"},
+                 {"--conservative-splat"},
+                 {"--volume-upsample-kernel", "1"},
+                 {"--volume-upsample-bilateral"},
+                 {"--benchmark", "0"},
+                 {"--benchmark", "601"},
+                 {"--benchmark", "99999999999999999"},
+                 {"--csv", ""}})
         {
             args.insert(args.begin(), "viewer");
             bool rejected = false;
@@ -194,7 +226,7 @@ int main()
             badScale = true;
         }
         Require(badScale);
-        printf("Viewer options: defaults, implications, numeric values, help and 16 invalid cases PASS\n");
+        printf("Viewer options: defaults, implications, numeric values, help and invalid cases PASS\n");
         return 0;
     }
     catch (const std::exception &e)

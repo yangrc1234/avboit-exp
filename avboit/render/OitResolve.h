@@ -12,13 +12,17 @@ namespace avboit
 struct OitResolveInputs
 {
     unsigned width = 0, height = 0;
+    bool marchHeatmap = false;
+    nvrhi::ShaderHandle vdbMarchCompute;
+    unsigned vdbRaySpacing = 1;
     bool halfAccumulation = false;
     bool lowResolutionVolumes = true;
     nvrhi::BufferHandle vertices, indices, camera, materials, warp;
     nvrhi::BufferRange vertexRange;
     nvrhi::TextureHandle lut, opaque, interfaceDepth, interfaceSurface, interfaceOffset, screenTiles;
     nvrhi::TextureHandle opaqueHardwareDepth, volumeDensity, gameplaySmokeMask;
-    nvrhi::BufferHandle smokeBricks;
+    nvrhi::BufferHandle smokeBricks, smokeTrails, smokeSampling;
+    nvrhi::TextureHandle smokeTrailCandidates;
     nvrhi::BufferHandle volumeLights;
     nvrhi::TextureHandle regularLightDepth, lightMoments, lightOpticalDepth;
     nvrhi::SamplerHandle linear;
@@ -40,6 +44,7 @@ class OitResolve
     void RecordAccumulation(nvrhi::ICommandList *commands, const std::vector<GeometryDraw> &draws,
                             const AccumulationTiming &timing = {}) const;
     void RecordResolve(nvrhi::ICommandList *commands, bool poison = false) const;
+    nvrhi::ITexture *MarchCounters() const { return m_lowTargets[0] ? m_lowTargets[0].Get() : m_numerator.Get(); }
     nvrhi::ITexture *Numerator() const { return m_numerator; }
     nvrhi::ITexture *Denominator() const { return m_denominator; }
     nvrhi::ITexture *TotalTau() const { return m_totalTau; }
@@ -62,6 +67,12 @@ class OitResolve
     std::vector<nvrhi::GraphicsPipelineHandle> m_lowPipelines;
     nvrhi::BufferHandle m_indices;
     std::vector<nvrhi::GraphicsPipelineHandle> m_accumulationPipelines;
+    nvrhi::ComputePipelineHandle m_marchPipeline;
+    nvrhi::BindingLayoutHandle m_marchLayout;
+    nvrhi::BindingSetHandle m_marchBindings;
+    std::vector<bool> m_computeMaterials;
+    bool m_marchHeatmap = false;
     unsigned m_screenTileCount = 0;
+    unsigned m_vdbRaySpacing = 1;
 };
 } // namespace avboit

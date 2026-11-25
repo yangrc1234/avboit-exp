@@ -16,6 +16,9 @@ struct ViewerOptions
     bool cubicTrilinear = false;
     bool lutMinFilter = true;
     float lutMinRetain = .5f;
+    bool lutIgn = false;
+    bool lutPlane = false;
+    float lutJitterStrength = 1.f;
     bool sponza = false, emissiveBalls = false, emissiveFront = false, showSmoke = true, glassSphere = false,
          rgbGlass = false;
     bool vfx = false, behind = false, normalSphere = false;
@@ -26,15 +29,28 @@ struct ViewerOptions
     float sphereRoughness = 0, planarIor = 1.3f, sphereIor = 1.5f, refractionStrength = 1;
     float sunIntensity = 2.f, spotIntensity = 80.f;
     bool volumeShadows = true;
+    bool gameplayGrenade = false, grenadeSkip = false;
+    int grenadeStorage = 0;
+    unsigned smokeShots = 0; // Deterministic capsule preview, 0..15.
+    float smokeShotRadius = .45f;
+    bool smokeTrailReference = false, smokeTrailRebuild = false; // Offline comparison only.
     bool bakedSmoke = false, smokeMask = true, smokeDoorOpen = true;
-    bool smokeBrickSkip = true, playSmoke = true, smokeInterpolation = true;
+    bool smokeBrickSkip = true, playSmoke = true;
     float smokeFrame = 15.f;
     bool lowResolutionVolumes = true, temporalVolumeDithering = false;
     bool volumeUpsampleTest = false;
+    int volumeScatteringOctaves = 2;
     float initialVolumeExtinction = -1.f, shellOffsetBins = 0;
     bool flattenShell = true;
+    unsigned magazineOrdering = 2; // Scene 34: geometric, uniform flat group, depth-weighted flat group.
+    bool magazineNeighbours = false;
+    float groupWeightStrength = 4.f, groupDepthRange = 2.f;
+    bool stochasticSmokeFilter = false, quadVolumeT = true, eightVolumeT = false;
+    unsigned accumulationAudit = 0; // Offline shader ablation, not a quality option.
+    bool vdbCompute = false, vdbNearRayLod = false, vdbQuarterReference = false, vdbSharedLighting = false, marchHeatmap = false;
+    bool showSkippedSteps = false, volumeEarlyOut = true;
     bool volumeLutSkip = false, volumeMarchStats = false, volumeReferenceSampling = false;
-    float volumeStepSize = .5f, volumeLowT = .1f, volumeStepScale = 4.f;
+    float volumeStepSize = .5f, volumeLowT = .1f, volumeStepScale = 1.f;
     int volumeMaxSteps = 256;
     float fixtureTime = 0, sigmaLimit = 24;
     float frostDetailRadius = 24;

@@ -50,6 +50,13 @@ void MaterialTable::Build(std::vector<MaterialRecord> &vertices, const MaterialD
         }
         material.color = vertices[v + 1];
         material.transmission = vertices[v + 2];
+        if (material.kind == 6)
+        {
+            // Convert legacy RGB smoke coefficients once for both camera and shadow rays.
+            auto &t = material.transmission;
+            if (t[0] != t[1] || t[1] != t[2])
+                t[0] = t[1] = t[2] = .2126f * t[0] + .7152f * t[1] + .0722f * t[2];
+        }
         // Imported normal meshes store normal.z here, not a refraction offset.
         material.displacement =
             material.kind == 4 ? 18.f : (material.kind == 2 && vertices[v + 3][3] >= -1.5f ? vertices[v + 3][2] : 0.f);
@@ -97,6 +104,7 @@ std::vector<MaterialRecord> MaterialTable::GpuRecords(const MaterialDefaults &de
                            m.kind == 2 ? m.patternScale : m.vfxPhase});
         records.push_back(
             {Resolve(i, defaults).OitCameraOffsetBins(), 0, float(m.flatLayer), float(m.flatAnchorActor + 1)});
+        records.push_back({std::clamp(m.flatWeightStrength, 0.f, 8.f), std::max(m.flatDepthRange, .01f), 0, 0});
     }
     return records;
 }

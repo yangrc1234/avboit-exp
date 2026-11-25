@@ -141,4 +141,52 @@ void AppendLayeredCube(std::vector<FixtureRecord> &vertices, const std::array<fl
             }
         }
 }
+// Extruded, corrugated magazine proxy. All folds belong to one shell actor/draw;
+// the inner insert is a separate actor/material. No frost, refraction or ordering bias.
+void AppendFoldedMagazine(std::vector<FixtureRecord> &vertices, const std::array<float, 3> &center, float yaw,
+                          bool outer)
+{
+    using V3 = std::array<float, 3>;
+    const std::array<float, 2> profile[] = {
+        {-.55f, -.24f}, {-.43f, -.34f}, {-.34f, -.34f}, {-.30f, -.21f}, {-.25f, -.21f}, {-.21f, -.34f}, {-.06f, -.34f},
+        {-.02f, -.21f}, {.03f, -.21f},  {.07f, -.34f},  {.22f, -.34f},  {.26f, -.21f},  {.31f, -.21f},  {.35f, -.34f},
+        {.43f, -.34f},  {.55f, -.24f},  {.55f, .24f},   {.43f, .34f},   {-.43f, .34f},  {-.55f, .24f}};
+    float angle = yaw * .01745329252f;
+    auto transform = [&](V3 p)
+    {
+        // Slant every crease in screen space so it traverses both XY texel axes.
+        float x = p[0] + .18f * p[1], z = p[2] + .12f * p[1];
+        return V3{center[0] + x * std::cos(angle) + z * std::sin(angle), center[1] + p[1],
+                  center[2] - x * std::sin(angle) + z * std::cos(angle)};
+    };
+    auto face = [&](V3 a, V3 b, V3 c, V3 d)
+    {
+        const V3 points[] = {a, b, c, a, c, d};
+        const unsigned count = d == a ? 3u : 6u;
+        for (unsigned i = 0; i < count; ++i)
+        {
+            auto p = transform(points[i]);
+            vertices.push_back({p[0], p[1], p[2], 2});
+            vertices.push_back(outer ? FixtureRecord{.025f, .04f, .055f, 1} : FixtureRecord{.8f, .38f, .09f, 1});
+            vertices.push_back(outer ? FixtureRecord{.24f, .55f, .72f, 0} : FixtureRecord{.28f, .35f, .42f, 0});
+            vertices.push_back({0, 0, 0, -1});
+        }
+    };
+    unsigned n = unsigned(std::size(profile));
+    float scale = outer ? 1.f : .78f, height = outer ? 1.22f : 1.12f;
+    for (unsigned j = 0; j < n; ++j)
+    {
+        auto a = profile[j], b = profile[(j + 1) % n];
+        face({a[0] * scale, -height, a[1] * scale}, {a[0] * scale, height, a[1] * scale},
+             {b[0] * scale, height, b[1] * scale}, {b[0] * scale, -height, b[1] * scale});
+    }
+    // Closed end caps: fan triangles are valid for this star-shaped cross-section.
+    for (int side : {-1, 1})
+        for (unsigned j = 0; j < n; ++j)
+        {
+            auto a = profile[side < 0 ? j : (j + 1) % n], b = profile[side < 0 ? (j + 1) % n : j];
+            face({0, side * height, 0}, {a[0] * scale, side * height, a[1] * scale},
+                 {b[0] * scale, side * height, b[1] * scale}, {0, side * height, 0});
+        }
+}
 } // namespace avboit

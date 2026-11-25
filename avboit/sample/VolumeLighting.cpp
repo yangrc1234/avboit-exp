@@ -10,20 +10,21 @@ namespace avboit
 {
 void VolumeLighting::Create(nvrhi::IDevice *device, nvrhi::IShader *shader, nvrhi::ITexture *density,
                             nvrhi::ISampler *sampler, unsigned capacity, bool enabled, nvrhi::IBuffer *bricks,
-                            nvrhi::ITexture *mask)
+                            nvrhi::ITexture *mask, nvrhi::IBuffer *smokeTrails, nvrhi::ITexture *smokeTrailCandidates, nvrhi::IBuffer *smokeSampling)
 {
     m_resolution = enabled && capacity ? 256 : 1;
-    auto buffer = [&](unsigned size, const char *name)
+    auto buffer = [&](unsigned size, const char *name, bool constant = false)
     {
         return device->createBuffer(nvrhi::BufferDesc()
-                                        .setByteSize(size)
+                                        .setByteSize(constant ? (size + 255u) & ~255u : size)
+                                        .setIsConstantBuffer(constant)
                                         .setFormat(nvrhi::Format::RGBA32_FLOAT)
                                         .setCanHaveTypedViews(true)
                                         .setInitialState(nvrhi::ResourceStates::ShaderResource)
                                         .setKeepInitialState(true)
                                         .setDebugName(name));
     };
-    lights = buffer(sizeof(VolumeLightData), "Volume light transforms and radiance");
+    lights = buffer(sizeof(VolumeLightData), "Volume light transforms and radiance", true);
     m_volumes = buffer(std::max(capacity, 1u) * 80, "Volume shadow caster bounds and extinction");
     auto texture = [&](nvrhi::Format format, const char *name)
     {
@@ -68,9 +69,13 @@ void VolumeLighting::Create(nvrhi::IDevice *device, nvrhi::IShader *shader, nvrh
         .addItem(B::Texture_SRV(26, density))
         .addItem(B::TypedBuffer_SRV(33, bricks))
         .addItem(B::Texture_SRV(34, mask))
+        .addItem(B::TypedBuffer_SRV(35, smokeTrails))
+        .addItem(B::Texture_SRV(36, smokeTrailCandidates))
         .addItem(B::Sampler(0, sampler))
         .addItem(B::Texture_UAV(0, moments))
         .addItem(B::Texture_UAV(1, opticalDepth));
+    if (smokeSampling)
+        bindings.addItem(B::ConstantBuffer(3, smokeSampling));
     m_layout = nullptr;
     m_bindings = nullptr;
     nvrhi::utils::CreateBindingSetAndLayout(device, nvrhi::ShaderType::Compute, 0, bindings, m_layout, m_bindings);
@@ -79,7 +84,8 @@ void VolumeLighting::Create(nvrhi::IDevice *device, nvrhi::IShader *shader, nvrh
 }
 
 void VolumeLighting::Record(nvrhi::ICommandList *commands, VolumeLightData data,
-                            const std::vector<StressVolume> &volumes)
+                            const std::vector<StressVolume> &volumes, float smokeFlowTime,
+                            VolumeScatteringSettings scattering)
 {
     using namespace donut::math;
     std::vector<std::array<float, 4>> casters;
@@ -93,6 +99,8 @@ void VolumeLighting::Record(nvrhi::ICommandList *commands, VolumeLightData data,
         casters.push_back({basis[1][0], basis[1][1], basis[1][2], 0});
     }
     data[38][0] = float(volumes.size());
+    data[38][1] = smokeFlowTime; // Same density phase as the camera extinction and accumulation passes.
+    data[39] = {float(scattering.octaves), scattering.contribution, scattering.attenuation, 0};
     // Test all world-space casters, including off-camera ones. Conservative
     // clip-plane rejection avoids missing shadows from volumes across a plane.
     for (unsigned slice = 0; slice < 3; ++slice)

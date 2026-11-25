@@ -9,7 +9,12 @@ namespace avboit
 {
 // Shared with VolumeLighting.hlsli. Matrices are row-major world-to-UVZW,
 // followed by their inverses. Shadow rays use near=1, far=0 (Reversed-Z).
-using VolumeLightData = std::array<std::array<float, 4>, 39>;
+using VolumeLightData = std::array<std::array<float, 4>, 40>;
+struct VolumeScatteringSettings
+{
+    int octaves = 2; // Additional octaves; zero reproduces single scattering.
+    float contribution = .6f, attenuation = .4f;
+};
 struct SceneLightingSettings
 {
     bool animateSpot = true, volumeShadows = true;
@@ -24,8 +29,10 @@ class VolumeLighting
 {
   public:
     void Create(nvrhi::IDevice *device, nvrhi::IShader *shader, nvrhi::ITexture *density, nvrhi::ISampler *sampler,
-                unsigned volumeCapacity, bool enabled, nvrhi::IBuffer *bricks, nvrhi::ITexture *mask);
-    void Record(nvrhi::ICommandList *commands, VolumeLightData data, const std::vector<StressVolume> &volumes);
+                unsigned volumeCapacity, bool enabled, nvrhi::IBuffer *bricks, nvrhi::ITexture *mask,
+                nvrhi::IBuffer *smokeTrails, nvrhi::ITexture *smokeTrailCandidates, nvrhi::IBuffer *smokeSampling);
+    void Record(nvrhi::ICommandList *commands, VolumeLightData data, const std::vector<StressVolume> &volumes,
+                float smokeFlowTime = 0.f, VolumeScatteringSettings scattering = {});
     nvrhi::BufferHandle lights;
     nvrhi::TextureHandle moments, opticalDepth, fallbackDepth;
 

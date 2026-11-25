@@ -39,6 +39,7 @@ class GpuProfiler
         VfxApply,
         TemporalAA,
         Display,
+        SmokeTrailIndex,
         Count
     };
     static constexpr unsigned RingSize = 6;

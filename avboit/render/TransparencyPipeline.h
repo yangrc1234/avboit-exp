@@ -20,13 +20,17 @@ struct TransparencyInputs
     unsigned objectCount = 0;
     unsigned depthBudget = 128;
     bool fixedDepth = false, hardwareDepth = false;
+    bool marchHeatmap = false;
+    nvrhi::ShaderHandle vdbMarchCompute;
+    unsigned vdbRaySpacing = 1;
     bool halfAccumulation = false, fullVfx = true;
     bool lowResolutionVolumes = true;
     nvrhi::BufferHandle vertices, bounds, camera, materials, interfaceIndices, geometryIndices;
     nvrhi::BufferRange transparentRange;
     nvrhi::TextureHandle opaqueColorDepth;
     nvrhi::TextureHandle opaqueHardwareDepth, volumeDensity, gameplaySmokeMask;
-    nvrhi::BufferHandle smokeBricks;
+    nvrhi::BufferHandle smokeBricks, smokeTrails, smokeSampling;
+    nvrhi::TextureHandle smokeTrailCandidates;
     nvrhi::BufferHandle volumeLights;
     nvrhi::TextureHandle regularLightDepth, lightMoments, lightOpticalDepth;
     nvrhi::SamplerHandle linear;

@@ -44,13 +44,19 @@ int main()
     check(table.Resolve(1, defaults).MaximumDisplacement() == 20);
     check(table.Resolve(3, defaults).value.gain == 1); // VFX does not inherit glass gain.
     auto records = table.GpuRecords(defaults);
-    check(records.size() == 20 && records[7][0] == 1.8f && records[7][1] == 2);
+    check(records.size() == 4 * MaterialTable::GpuRecordCount &&
+          records[MaterialTable::GpuRecordCount + 2][0] == 1.8f && records[MaterialTable::GpuRecordCount + 2][1] == 2);
     check(records[0][3] == .4f); // Coverage survived vertex-index replacement.
     check(table.Resolve(0, defaults).FrostTheta() == 0);
     table.entries[3].vfxPattern = 2;
     table.entries[3].vfxPhase = .35f;
     records = table.GpuRecords(defaults);
-    check(records[18][2] == 2 && records[18][3] == .35f);
+    check(records[3 * MaterialTable::GpuRecordCount + 3][2] == 2 &&
+          records[3 * MaterialTable::GpuRecordCount + 3][3] == .35f);
+    table.entries[1].flatWeightStrength = 4.f;
+    table.entries[1].flatDepthRange = 2.f;
+    records = table.GpuRecords(defaults);
+    check(records[MaterialTable::GpuRecordCount + 5][0] == 4.f && records[MaterialTable::GpuRecordCount + 5][1] == 2.f);
     // Imported glass normals must not turn normal.z into a refraction offset.
     vertices = {{{0, 0, 1, 2}}, {{.2f, .3f, .4f, 1}}, {{.9f, .95f, .97f, .26f}}, {{0, 0, -1, -2}}};
     table.Build(vertices, defaults);
@@ -61,5 +67,14 @@ int main()
     check(table.GpuRecords(defaults)[4][0] == 2.f);
     table.entries[0].transmission[3] = .2f;
     check(table.Resolve(0, defaults).OitCameraOffsetBins() == 0); // Interface stays physical.
+    // Legacy textured smoke coefficients are converted once. A colored analytic volume keeps all three.
+    const MaterialRecord rgb = {.25f, .5f, 1.f, 0.f};
+    vertices = {{{0, 0, 1, 6}}, {{.2f, .3f, .4f, 1}}, rgb, {},
+                {{0, 0, 1, 5}}, {{.2f, .3f, .4f, 1}}, rgb, {}};
+    table.Build(vertices, defaults);
+    records = table.GpuRecords(defaults);
+    const float gray = .2126f * rgb[0] + .7152f * rgb[1] + .0722f * rgb[2];
+    check(std::abs(records[1][0] - gray) < 1e-6f && records[1][0] == records[1][1] && records[1][1] == records[1][2]);
+    check(records[MaterialTable::GpuRecordCount + 1] == rgb);
     std::cout << "Material deduplication, inheritance, scalar/RGB classification and bounds contracts PASS\n";
 }

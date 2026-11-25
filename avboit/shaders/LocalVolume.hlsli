@@ -19,16 +19,22 @@ float3 VolumeLocal(VolumeVaryings i, float3 v)
 {
     return float3(dot(v, i.axisX), dot(v, i.axisY), dot(v, cross(i.axisX, i.axisY)));
 }
-VolumeVaryings volumeVertex(uint id : SV_VertexID)
+VolumeVaryings LoadVolumeActor(uint id)
 {
     VolumeVaryings o;
     o.center = Vertices[id * 4].xyz;
     o.extent = Vertices[id * 4 + 3].xyz;
     o.axisX = Vertices[id * 4 + 1].xyz;
     o.axisY = Vertices[id * 4 + 2].xyz;
-    uint material = uint(Vertices[id * 4 + 1].w) * 5;
+    uint material = uint(Vertices[id * 4 + 1].w) * MaterialRecordCount;
     o.sigma = max(Materials[material + 1].rgb, 0.);
     o.source = max(Materials[material].rgb, 0.);
+    o.position = 0;
+    return o;
+}
+VolumeVaryings volumeVertex(uint id : SV_VertexID)
+{
+    VolumeVaryings o = LoadVolumeActor(id);
     float2 low = 1e30, high = -1e30;
     bool nearCrossing = false;
     for (uint c = 0; c < 8; ++c)
@@ -84,17 +90,34 @@ float2 VolumeSegment(uint cell, uint count, float2 interval)
     return float2(max(z.x, interval.x), min(z.y, interval.y));
 }
 // Optional imported density (R) and vertical optical-depth integral in UV units (G).
+#define SMOKE_FLOW_TIME Camera[2].w
 #include "BakedSmoke.hlsli"
-float2 SampleVolumeData(VolumeVaryings i, float2 uv, float viewZ, float rayZ)
+
+// Textured smoke has a single extinction coefficient. Analytic volumes may be chromatic.
+#if SMOKE_MODE || ACCUMULATION_AUDIT
+typedef float LocalOpticalDepth;
+typedef uint LocalExtinctionCode;
+float LocalExtinction(float3 rgb) { return rgb.r; }
+#else
+typedef float3 LocalOpticalDepth;
+typedef uint3 LocalExtinctionCode;
+float3 LocalExtinction(float3 rgb) { return rgb; }
+#endif
+float2 SampleVolumeData(VolumeVaryings i, float2 uv, float viewZ, float rayZ, float3 filterRandom = 0)
 {
     float3 world = Camera[0].xyz + WorldRay(uv) * (viewZ / rayZ);
     float3 local = VolumeLocal(i, world - i.center) / (2. * i.extent) + .5;
-    return SampleSmokeDensity(local);
+    return SampleSmokeDensity(local, world, filterRandom);
 }
-float VolumeEmptyRun(VolumeVaryings i, float2 uv, float z, float rayZ)
+float VolumeEmptyRun(VolumeVaryings i, float2 uv, float z, float rayZ, out float recheckDistance)
 {
     float3 direction = WorldRay(uv) / rayZ;
     float3 local = VolumeLocal(i, Camera[0].xyz + direction * z - i.center) / (2. * i.extent) + .5;
-    return SmokeEmptyRun(local, VolumeLocal(i, direction) / (2. * i.extent));
+    return SmokeEmptyRun(local, VolumeLocal(i, direction) / (2. * i.extent), recheckDistance);
+}
+float VolumeEmptyRun(VolumeVaryings i, float2 uv, float z, float rayZ)
+{
+    float unused;
+    return VolumeEmptyRun(i, uv, z, rayZ, unused);
 }
 #endif

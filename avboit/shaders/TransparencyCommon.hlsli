@@ -18,6 +18,7 @@
 #define SCALAR_WORDS (SLICE_COUNT / 4 * RAY_COUNT)
 Buffer<float4> Vertices : register(t0);
 Buffer<float4> Materials : register(t23);
+static const uint MaterialRecordCount = 6;
 Buffer<float4> Camera : register(t15);
 #include "DeviceDepth.hlsli"
 SamplerState LinearClamp : register(s0);
@@ -27,6 +28,7 @@ struct Varyings
     float depth : DEPTH;
     nointerpolation float cameraOffsetBins : CAMERA_OFFSET;
     nointerpolation float2 flatOrdering : FLAT_ORDERING; // anchor view depth, layer; depth=0 disables.
+    nointerpolation float2 flatWeight : FLAT_WEIGHT;     // strength (stops), world-space depth span.
     float4 color : COLOR;
     float3 transmission : TRANSMISSION;
     float2 local : TEXCOORD;
@@ -51,10 +53,11 @@ Varyings meshVertex(uint id : SV_VertexID)
     } // Negative position.w marks geometry already in view space.
     o.position = float4(p.x / (float(WIDTH) / HEIGHT * .57735027), p.y / .57735027, ClipDepthFromView(p.z), p.z);
     o.position.xy += Camera[11].xy * float2(2., -2.) / Camera[6].xy * o.position.w;
-    uint material = uint(Vertices[id * 4 + 1].w) * 5;
+    uint material = uint(Vertices[id * 4 + 1].w) * MaterialRecordCount;
     o.depth = p.z;
     o.cameraOffsetBins = Materials[material + 4].x;
     o.flatOrdering = Materials[material + 4].yz;
+    o.flatWeight = Materials[material + 5].xy;
     o.color = Materials[material];
     o.transmission = Materials[material + 1].rgb;
     o.roughness = Materials[material + 1].w;

@@ -29,6 +29,9 @@ void TransparencyPipeline::Create(nvrhi::IDevice *device, const TransparencyInpu
     volumeInputs.materials = inputs.materials;
     volumeInputs.volumeDensity = inputs.volumeDensity;
     volumeInputs.smokeBricks = inputs.smokeBricks;
+    volumeInputs.smokeSampling = inputs.smokeSampling;
+    volumeInputs.smokeTrails = inputs.smokeTrails;
+    volumeInputs.smokeTrailCandidates = inputs.smokeTrailCandidates;
     volumeInputs.gameplaySmokeMask = inputs.gameplaySmokeMask;
     volumeInputs.linear = inputs.linear;
     volumeInputs.vertexRange = inputs.transparentRange;
@@ -76,6 +79,9 @@ void TransparencyPipeline::Create(nvrhi::IDevice *device, const TransparencyInpu
     oitInputs.width = inputs.width;
     oitInputs.height = inputs.height;
     oitInputs.indices = inputs.geometryIndices;
+    oitInputs.marchHeatmap = inputs.marchHeatmap;
+    oitInputs.vdbMarchCompute = inputs.vdbMarchCompute;
+    oitInputs.vdbRaySpacing = inputs.vdbRaySpacing;
     oitInputs.halfAccumulation = inputs.halfAccumulation;
     oitInputs.lowResolutionVolumes = inputs.lowResolutionVolumes;
     oitInputs.upsamplePixel = load("upsamplePixel", nvrhi::ShaderType::Pixel, "shaders/VolumeUpsample.hlsl");
@@ -86,6 +92,9 @@ void TransparencyPipeline::Create(nvrhi::IDevice *device, const TransparencyInpu
     oitInputs.materials = inputs.materials;
     oitInputs.volumeDensity = inputs.volumeDensity;
     oitInputs.smokeBricks = inputs.smokeBricks;
+    oitInputs.smokeSampling = inputs.smokeSampling;
+    oitInputs.smokeTrails = inputs.smokeTrails;
+    oitInputs.smokeTrailCandidates = inputs.smokeTrailCandidates;
     oitInputs.gameplaySmokeMask = inputs.gameplaySmokeMask;
     oitInputs.volumeLights = inputs.volumeLights;
     oitInputs.regularLightDepth = inputs.regularLightDepth;

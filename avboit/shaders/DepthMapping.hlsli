@@ -21,8 +21,9 @@ float MapAdaptiveLogDepth(Buffer<uint> warp, float logDepth, float biasInVirtual
         return -1.; // In front of first slice: transmission = 1.
     virtualDepth = min(virtualDepth, float(count) - 0.0001);
     uint slice = uint(virtualDepth);
-    uint prefix = warp[2 + slice * 2];
-    bool occupied = (warp[3 + slice * 2] & 1u) != 0;
+    uint entry = warp[2 + slice];
+    uint prefix = entry >> 3;
+    bool occupied = (entry & 1u) != 0;
     return float(prefix) + (occupied ? frac(virtualDepth) : 0.);
 }
 float MapAdaptiveDepth(Buffer<uint> warp, float viewDepth, float farDepth, float linearizationDistance,

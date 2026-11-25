@@ -68,7 +68,7 @@ def sample_lut(folder, depths, width, height, bias):
     virtual = np.log1p(np.clip(depths, 0, 80)) / np.log(81) * count - bias
     v = np.clip(virtual, 0, count - 0.0001)
     vi = v.astype(int)
-    mapped = warp[2 + 2 * vi] + (v - vi) * ((warp[3 + 2 * vi] & 1) != 0)
+    mapped = (warp[2 + vi] >> 3) + (v - vi) * ((warp[2 + vi] & 1) != 0)
     mapped = np.clip(mapped, 0, vd - 1)
     z0 = mapped.astype(int)
     xs = (np.arange(width) + 0.5) * vw / width - 0.5

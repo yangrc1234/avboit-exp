@@ -32,7 +32,8 @@ static const char *Names[GpuProfiler::Count] = {"frame",
                                                 "vfx",
                                                 "vfx_apply",
                                                 "taa",
-                                                "display"};
+                                                "display",
+                                                "smoke_trail_index"};
 
 const char *GpuProfiler::StageName(unsigned stage)
 {

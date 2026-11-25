@@ -15,8 +15,8 @@ void BuildFixedDepth(uint thread, uint budget)
     }
     for (uint i = thread; i <= 2048; i += 256)
     {
-        DepthWarp[2 + 2 * i] = min(i, intervals) + padding.x;
-        DepthWarp[3 + 2 * i] = i < intervals ? (1u | (i == 0 ? 2u : 0u) | (i + 1 == intervals ? 4u : 0u)) : 0u;
+        uint flags = i < intervals ? (1u | (i == 0 ? 2u : 0u) | (i + 1 == intervals ? 4u : 0u)) : 0u;
+        DepthWarp[2 + i] = ((min(i, intervals) + padding.x) << 3) | flags;
     }
 }
 [numthreads(256, 1, 1)] void main(uint t : SV_GroupIndex)

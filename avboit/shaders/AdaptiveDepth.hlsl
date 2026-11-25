@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Independent implementation of the public AVBOIT depth-compaction idea.
 // Input: occupancy in 2048 virtual log-depth slices (one uint per slice).
-// Output: [virtualCount, reservedEnd], then 2049 {prefix, flags} entries.
+// Output: [virtualCount, reservedEnd], then 2049 packed entries: prefix << 3 | flags.
 // Prefix includes leading offset padding; reservedEnd also includes trailing padding.
 // Flags: bit 0 occupied, bit 1 region start, bit 2 region end.
 // Guard slices cover linear splat and the sampling depth bias. They are
@@ -79,8 +79,8 @@ void BuildAdaptiveDepth(uint thread, uint physicalBudget)
         uint active = i < sliceCount ? scanA[i] - prefix : 0;
         uint previous = i > 0 && i < sliceCount ? scanA[i - 1] - (i > 1 ? scanA[i - 2] : 0) : 0;
         uint next = i + 1 < sliceCount ? scanA[i + 1] - scanA[i] : 0;
-        DepthWarp[2 + 2 * i] = prefix + padding.x;
-        DepthWarp[3 + 2 * i] = active | ((active && !previous) ? 2 : 0) | ((active && !next) ? 4 : 0);
+        DepthWarp[2 + i] =
+            ((prefix + padding.x) << 3) | active | ((active && !previous) ? 2 : 0) | ((active && !next) ? 4 : 0);
     }
 }
 

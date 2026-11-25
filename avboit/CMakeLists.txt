@@ -20,7 +20,7 @@ add_library(avboit_render STATIC
 )
 target_link_libraries(avboit_render PUBLIC nvrhi)
 
-add_executable(avboit_viewer sample/NativeViewer.cpp sample/TemporalAA.cpp sample/TransformGizmo.cpp sample/DonutSceneHost.cpp sample/VolumeLighting.cpp sample/ViewerOptions.cpp sample/MaterialTable.cpp sample/SubmissionOrder.cpp sample/SceneLoader.cpp debug/GpuProfiler.cpp sample/FixtureGeometry.cpp sample/StressFixtures.cpp sample/ViewerUi.cpp)
+add_executable(avboit_viewer sample/NativeViewer.cpp sample/TemporalAA.cpp sample/TransformGizmo.cpp sample/DonutSceneHost.cpp sample/VolumeLighting.cpp sample/SmokeTrailLut.cpp sample/ViewerOptions.cpp sample/MaterialTable.cpp sample/SubmissionOrder.cpp sample/SceneLoader.cpp debug/GpuProfiler.cpp sample/FixtureGeometry.cpp sample/StressFixtures.cpp sample/ViewerUi.cpp)
 target_link_libraries(avboit_viewer avboit_render donut_app donut_engine donut_render cgltf)
 target_sources(avboit_viewer PRIVATE debug/StablePowerState.cpp)
 target_link_libraries(avboit_viewer advapi32)
@@ -35,6 +35,9 @@ add_custom_target(avboit_textures
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/assets/textures/smoke-volume.dds"
         "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/textures/smoke-volume.dds"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/textures/smoke-noise.dds"
+        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/textures/smoke-noise.dds"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/assets/textures/smoke-sequence"
         "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/textures/smoke-sequence")
@@ -44,6 +47,9 @@ add_dependencies(avboit_viewer avboit_textures)
 target_include_directories(avboit_viewer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 if(BUILD_TESTING)
+    add_executable(avboit_smoke_coverage_test tests/SmokeCoverageTest.cpp)
+    target_include_directories(avboit_smoke_coverage_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME smoke_coverage_replication COMMAND avboit_smoke_coverage_test)
     donut_compile_shaders_all_platforms(TARGET avboit_test_shaders PROJECT_NAME AVBOIT_TESTS
         CONFIG ${CMAKE_CURRENT_SOURCE_DIR}/test_shaders.cfg FOLDER AVBOIT
         SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/shaders/AdaptiveDepth.hlsl
@@ -132,7 +138,7 @@ if(BUILD_TESTING)
     add_test(NAME native_zero_depth_rgb COMMAND avboit_viewer --headless --stress 13)
     add_test(NAME native_zero_depth_smoke COMMAND avboit_viewer --headless --stress 14 --time 0.7)
 
-    foreach(target avboit_gpu_test avboit_mrt_test avboit_options_test avboit_material_test avboit_order_test avboit_interface_test avboit_camera_test)
+    foreach(target avboit_smoke_coverage_test avboit_gpu_test avboit_mrt_test avboit_options_test avboit_material_test avboit_order_test avboit_interface_test avboit_camera_test)
         set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests/bin")
         foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
             set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_BINARY_DIR}/tests/bin")
@@ -146,7 +152,7 @@ if(BUILD_TESTING)
         set_tests_properties(${test} PROPERTIES LABELS "gpu" RUN_SERIAL TRUE
             WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/captures/${test}")
     endforeach()
-    set_tests_properties(viewer_options material_table submission_order interface_selection sample_camera viewer_help
+    set_tests_properties(smoke_coverage_replication viewer_options material_table submission_order interface_selection sample_camera viewer_help
         PROPERTIES LABELS "cpu")
     find_package(Python3 COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)

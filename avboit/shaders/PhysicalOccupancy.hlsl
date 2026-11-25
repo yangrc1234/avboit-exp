@@ -27,7 +27,7 @@ groupshared uint occupied[8];
             uint bit = firstbitlow(bits);
             bits &= bits - 1;
             uint virtualSlice = (lane * 32 + bit) * virtualCount / 2048;
-            uint physicalSlice = min(126u, DepthWarp[2 + virtualSlice * 2]);
+            uint physicalSlice = min(126u, (DepthWarp[2 + virtualSlice] >> 3));
             // Two linear-Z taps, plus one physical slot on each side for
             // CPU bounds / GPU vertex-transform floating-point disagreement.
             // Conservative global offset envelope, applied only to occupied Z cells.

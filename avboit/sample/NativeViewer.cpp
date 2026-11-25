@@ -8,6 +8,7 @@
 #include <nvrhi/utils.h>
 #include <array>
 #include <fstream>
+#include <limits>
 #include <cstring>
 #include <vector>
 #include <stdexcept>
@@ -18,12 +19,16 @@
 #include "sample/SceneLoader.h"
 #include "sample/DonutSceneHost.h"
 #include "sample/SampleCamera.h"
+#include "sample/SmokeTrails.h"
+#include "sample/SmokeTrailLut.h"
 #include "debug/GpuProfiler.h"
 #include "debug/StablePowerState.h"
 #include "sample/FixtureGeometry.h"
 #include "sample/StressFixtures.h"
 #include "sample/ViewerUi.h"
 #include "sample/ViewerOptions.h"
+#include "sample/SmokeCoverage.h"
+#include "sample/SmokeGpuBricks.h"
 #include "sample/TemporalAA.h"
 #include "sample/TransformGizmo.h"
 #include "sample/SceneActor.h"
@@ -68,7 +73,23 @@ class NativeViewer : public app::IRenderPass
     bool occupancyGrid = true;
     nvrhi::BufferHandle occupancySettings;
     std::array<ImVec2, 3> uiBackgroundChoices;
-    std::array<ImVec2, avboit::StressPresetCount + 3> uiDemoChoices;
+    static constexpr unsigned GrenadeDemo = avboit::StressPresetCount + 3;
+    static constexpr unsigned JangaFxDemo = GrenadeDemo + 1;
+    std::string demoAssetError;
+    // Public demos are deliberately separate from the CLI regression fixture IDs.
+    static constexpr std::array<unsigned, 12> DemoChoices = {0,
+                                                             1,
+                                                             18,
+                                                             avboit::StressPresetCount,
+                                                             avboit::StressPresetCount + 1,
+                                                             avboit::StressPresetCount + 2,
+                                                             22,
+                                                             24,
+                                                             JangaFxDemo,
+                                                             GrenadeDemo,
+                                                             32,
+                                                             34};
+    std::array<ImVec2, JangaFxDemo + 1> uiDemoChoices;
     float uiScrollRequest = 0; // UI interaction tests can request normal scrolling.
     std::unique_ptr<engine::ShaderFactory> shaders;
     avboit::SceneData scene;
@@ -76,16 +97,24 @@ class NativeViewer : public app::IRenderPass
     std::unique_ptr<avboit::DonutSceneHost> donutScene;
     avboit::VolumeLighting volumeLighting;
     avboit::SceneLightingSettings sceneLighting;
+    avboit::VolumeScatteringSettings volumeScattering;
     bool lowResolutionVolumes = true, temporalVolumeDithering = false;
     bool ditheredVolumeUpsample = true; // Disabled only by the fixed-kernel regression capture.
+    bool stochasticSmokeFilter = false, quadVolumeT = true, eightVolumeT = false;
+    unsigned accumulationAudit = 0;
+    bool vdbCompute = false, vdbNearRayLod = false, vdbQuarterReference = false, vdbSharedLighting = false, marchHeatmap = false;
+    bool showSkippedSteps = false, volumeEarlyOut = true;
     bool volumeLutSkip = false, volumeMarchStats = false, volumeReferenceSampling = false;
     unsigned volumeSampleFrame = 0;
     bool taaEnabled = true;
     std::unique_ptr<avboit::TemporalAA> temporalAA;
     float initialVolumeExtinction = -1.f, initialShellOffset = 0;
     bool flattenShell = true;
+    unsigned magazineOrdering = 2;
+    bool magazineNeighbours = false;
+    float groupWeightStrength = 4.f, groupDepthRange = 2.f;
     bool hasCameraOffsets = false;
-    float volumeStepSize = .5f, volumeLowT = .1f, volumeStepScale = 4.f;
+    float volumeStepSize = .5f, volumeLowT = .1f, volumeStepScale = 1.f;
     int volumeMaxSteps = 256;
     std::vector<avboit::StressVolume> localVolumes;
     std::vector<unsigned> localVolumeRecords;
@@ -140,36 +169,65 @@ class NativeViewer : public app::IRenderPass
     nvrhi::ITexture *lut = nullptr;
     nvrhi::TextureHandle opaque, depth;
     nvrhi::TextureHandle frostNormal, volumeDensity, gameplaySmokeMask;
-    nvrhi::BufferHandle smokeBricks;
+    bool volumeDensityGameplay = false;
+    nvrhi::BufferHandle smokeBricks, smokeTrailBuffer, smokeSampling;
+    avboit::SmokeTrails smokeTrails;
+    avboit::SmokeTrailLut smokeTrailLut;
+    bool smokeTrailReference = false, smokeTrailRebuild = false;
+    bool autoSmokeShots = false;
+    float smokeShotRadius = .45f, smokeShotLifetime = 2.f, smokeShotsPerSecond = 5.f, smokeShotTimer = 0.f;
+    unsigned smokeShotSequence = 0;
     std::vector<std::vector<uint32_t>> smokeFrames;
-    std::vector<uint32_t> smokeUpload;
     std::filesystem::path smokeSequencePath;
-    float smokeFrame = 15.f, smokeFps = 24.f;
-    bool playSmoke = true, smokeBrickSkip = true, smokeInterpolation = true;
-    int uploadedSmokeA = -1, uploadedSmokeB = -1;
+    avboit::VdbPlayback initialSmokePlayback;
+    float smokeFps = 24.f;
+    bool smokeBrickSkip = true, smokeDistanceTable = false;
+    int uploadedSmokeFrame = -1;
+    bool uploadedBrickSkip = false;
     void UploadSmokeFrame()
     {
         if (smokeFrames.empty())
             return;
-        float f = std::clamp(smokeFrame, 0.f, float(smokeFrames.size() - 1));
-        unsigned a = unsigned(f);
-        unsigned b = smokeInterpolation ? std::min(a + 1, unsigned(smokeFrames.size() - 1)) : a;
-        float blend = smokeInterpolation ? f - float(a) : 0.f;
-        if (uploadedSmokeA != int(a) || uploadedSmokeB != int(b))
+        float f = std::clamp(SmokePlayback().frame, 0.f, float(smokeFrames.size() - 1));
+        const int frameIndex = int(f);
+        if (frameIndex == uploadedSmokeFrame && smokeBrickSkip == uploadedBrickSkip)
+            return;
+        const auto &frame = smokeFrames[frameIndex];
+        if (frameIndex != uploadedSmokeFrame)
+            commands->writeBuffer(smokeBricks, frame.data(), frame.size() * sizeof(uint32_t));
+        const uint32_t storageKind = frame[0] + (smokeBrickSkip ? 0u : 1u);
+        commands->writeBuffer(smokeBricks, &storageKind, sizeof(storageKind));
+        uploadedSmokeFrame = frameIndex;
+        uploadedBrickSkip = smokeBrickSkip;
+
+        // Matches VdbSamplingConstants.
+        struct SamplingConstants
         {
-            smokeUpload = smokeFrames[a];
-            smokeUpload[6] = smokeInterpolation ? unsigned(smokeUpload.size()) : 0;
-            if (smokeInterpolation)
-                smokeUpload.insert(smokeUpload.end(), smokeFrames[b].begin(), smokeFrames[b].end());
-            commands->writeBuffer(smokeBricks, smokeUpload.data(), smokeUpload.size() * 4);
-            uploadedSmokeA = int(a);
-            uploadedSmokeB = int(b);
+            uint32_t size[3], payloadOffset;
+            uint32_t grid[3], skipEnabled;
+            uint32_t footprintSize[3];
+        } constants{};
+        const auto &mask = gameplaySmokeMask->getDesc();
+        const uint32_t maskSize[] = {mask.width, mask.height, mask.depth};
+        for (unsigned axis = 0; axis < 3; ++axis)
+        {
+            constants.size[axis] = frame[axis + 1];
+            constants.grid[axis] = (constants.size[axis] + 3) / 4;
+            constants.footprintSize[axis] = std::max(constants.size[axis], maskSize[axis]);
         }
-        smokeUpload[0] = (smokeFrames[a][0] == 3 ? 2u : 0u) + (smokeBrickSkip ? 1u : 2u);
-        std::memcpy(&smokeUpload[7], &blend, sizeof(blend));
-        commands->writeBuffer(smokeBricks, smokeUpload.data(), 32);
+        constants.payloadOffset = frame[5];
+        constants.skipEnabled = smokeBrickSkip;
+        commands->writeBuffer(smokeSampling, &constants, sizeof(constants));
     }
 
+    bool gameplayGrenade = false;
+    float grenadeRadius = 40.f;
+    float smokeFlowTime = 0.f, smokeFlowSpeed = 1.f;
+    bool smokeFlowPlaying = true;
+    int grenadeStorage = 0;
+    bool grenadeSkip = false;
+    size_t grenadePacketBytes = 0;
+    avboit::SmokeCoverage grenadeAuthority, grenadeReplica;
     bool bakedSmoke = false, smokeMask = true, smokeDoorOpen = true;
     nvrhi::SamplerHandle frostSampler;
     nvrhi::ITexture *numerator = nullptr, *denominator = nullptr, *totalTau = nullptr;
@@ -211,6 +269,9 @@ class NativeViewer : public app::IRenderPass
     bool denseExtinction = false, poisonExtinction = false, slopeSplat = true;
     bool lutMinFilter = true;
     float lutMinRetain = .5f;
+    bool lutIgn = false;
+    bool lutPlane = false;
+    float lutJitterStrength = 1.f;
     Pass opaquePass;
     std::vector<nvrhi::GraphicsPipelineHandle> opaqueMaterialPipelines;
     unsigned opaqueVertices = 0, transparentVertices = 0, objectCount = 0;
@@ -219,7 +280,7 @@ class NativeViewer : public app::IRenderPass
     bool cubic = true, frost = true, vfx = false, vfxBehind = false, animate = false;
     bool cubicTrilinear = false;
     float time = 0;
-    std::array<F4, 13> camera;
+    std::array<F4, 14> camera;
     void UpdateCamera()
     {
         float theta = 0;
@@ -281,23 +342,28 @@ class NativeViewer : public app::IRenderPass
             maxBlurMip = chain.mipCount - 1;
         const auto eye = navigation.Eye(), right = navigation.Right(), up = navigation.Up(),
                    forward = navigation.Forward();
+        constexpr float opaqueGrayTau = 4.6051702f; // -ln(0.01)
+        const float marchCutoff = volumeEarlyOut && !volumeReferenceSampling && !accumulationAudit
+                                      ? opaqueGrayTau
+                                      : std::numeric_limits<float>::max();
         camera = {{{eye[0], eye[1], eye[2], cubic ? (cubicTrilinear ? 2.f : 1.f) : 0.f},
                    {right[0], right[1], right[2], float(frost)},
-                   {up[0], up[1], up[2], time},
+                   {up[0], up[1], up[2], gameplayGrenade ? smokeFlowTime : time},
                    {forward[0], forward[1], forward[2], 1.f},
                    {sigmaCeiling, float(maxBlurMip), float(sparseBlur), float(hardwareDepth)},
                    {-.05f / 79.95f, 4.f / 79.95f, .05f, 80.f},
                    {float(Width), float(Height), float(volumeWidth), float(volumeHeight)},
                    {float(qBound), float(protectBackground), backgroundThreshold,
-                    float((zeroTShortcut ? 1 : 0) | (zeroDepth && !hasCameraOffsets ? 2 : 0) | (mirrorBlur ? 4 : 0) |
+                    float((zeroTShortcut ? 1 : 0) | (EffectiveZeroDepth() ? 2 : 0) | (mirrorBlur ? 4 : 0) |
                           (fullVfx ? 8 : 0) | (lutMinFilter ? 32 : 0))},
                    {float(chain.width), float(chain.height), float(chain.mipCount), tileResolve ? 0.f : 1.f},
                    {float(slopeSplat), frostDetailRadius, frostNormalTiling,
                     (temporalVolumeDithering || taaEnabled) ? float(1 + (volumeSampleFrame++ % 4096)) : 0.f},
                    {volumeStepSize, volumeLowT, volumeStepScale, float(volumeMaxSteps)},
                    {0, 0, 0, lutMinRetain},
-                   {towardBins, awayBins, float(unsigned(volumeLutSkip) | (unsigned(volumeReferenceSampling) << 1)),
-                    float(volumeMarchStats)}}};
+                   {towardBins, awayBins, float(unsigned(volumeLutSkip) | (unsigned(volumeReferenceSampling) << 1)), 0},
+                   {lutIgn && !lutPlane ? lutJitterStrength : 0.f, 0, float(lutPlane), marchCutoff}}};
+        camera[13][1] = taaEnabled ? std::fmod(std::max(camera[9][3] - 1.f, 0.f), 64.f) : 0.f;
         if (temporalAA)
         {
             const auto jitter = temporalAA->Jitter();
@@ -347,6 +413,8 @@ class NativeViewer : public app::IRenderPass
                 commands->writeBuffer(geometryIndexBuffer, geometry.indices.data(), geometry.indices.size() * 4);
             geometryIndices = std::move(geometry.indices);
             geometryDraws = std::move(geometry.draws);
+            for (auto &draw : geometryDraws)
+                draw.firstVertex = geometryIndices.at(draw.firstIndex);
             auto selected = avboit::BuildGeometrySubmission(submittedVertices, opaqueVertices, transparentVertices,
                                                             materials, MaterialDefaults(), useFrost, !allInterface);
             if (selected.indices != interfaceIndices && !selected.indices.empty())
@@ -446,8 +514,23 @@ class NativeViewer : public app::IRenderPass
                                                                    : nvrhi::ResourceStates::RenderTarget)
                                               .setKeepInitialState(true));
     }
+    unsigned SmokeShaderMode() const
+    {
+        // Must match BakedSmoke.hlsli. The asset format is invariant for the draw;
+        // do not retain unrelated providers in its PSO.
+        if (gameplayGrenade)
+            return 6u + unsigned(grenadeStorage);
+        if (smokeFrames.empty())
+            return 1; // Static DDS.
+        return smokeFrames.front()[0] == 3 ? 2u : 4u;
+    }
     nvrhi::ShaderHandle Shader(const char *entry, nvrhi::ShaderType type, const char *file = "")
     {
+        const bool audit =
+            accumulationAudit != 0 && std::string(file) == "shaders/LocalVolumeAccumulation.hlsl" &&
+            (std::string(entry) == "texturedAccumulation" || std::string(entry) == "texturedAccumulationHalf");
+        if (audit)
+            file = "shaders/AccumulationAudit.hlsl";
         const bool transparency = !*file;
         if (transparency)
         {
@@ -470,13 +553,48 @@ class NativeViewer : public app::IRenderPass
                 file = "shaders/FrostComposition.hlsl";
             if (std::string(entry) == "vfxPixel")
                 file = "shaders/Distortion.hlsl";
-            if (std::string(entry) == "displayPixel")
+            if (std::string(entry) == "displayPixel" || std::string(entry) == "marchStepsPixel")
                 file = "shaders/Display.hlsl";
         }
         std::vector<engine::ShaderMacro> defines = {{"VOLUME_SCALE", std::to_string(volumeScale)},
                                                     {"SLICE_COUNT", std::to_string(depthBudget)}};
+        const bool computeMarch = std::string(file) == "shaders/VdbMarchCompute.hlsl";
+        const bool productionMarch = !volumeMarchStats && !marchHeatmap && !volumeReferenceSampling && !volumeLutSkip;
+        if (computeMarch)
+        {
+            defines.push_back({"QUAD_T", vdbQuarterReference ? "1" : eightVolumeT ? "2" : smokeDistanceTable ? "3" : "1"});
+            defines.push_back({"VDB_TRILINEAR_PRODUCTION", productionMarch ? "1" : "0"});
+            if (vdbQuarterReference)
+                defines.push_back({"VDB_QUARTER_REFERENCE", "1"});
+            else if (vdbNearRayLod && !eightVolumeT && !smokeDistanceTable && !vdbSharedLighting &&
+                !volumeReferenceSampling && !volumeLutSkip)
+                defines.push_back({"VDB_NEAR_RAY_LOD", "1"});
+            defines.push_back({"VDB_SHARED_LIGHTING", vdbSharedLighting && !vdbQuarterReference ? "1" : "0"});
+        }
+        if (!audit && std::string(file) == "shaders/LocalVolumeAccumulation.hlsl" &&
+            std::string(entry).rfind("texturedAccumulation", 0) == 0)
+        {
+            defines.push_back({"SMOKE_MODE", std::to_string(SmokeShaderMode())});
+            const char *quadMode = eightVolumeT ? "2" : smokeDistanceTable ? "3" : "1";
+            defines.push_back({"QUAD_T", quadVolumeT ? quadMode : "0"});
+            defines.push_back({"SMOKE_STOCHASTIC", stochasticSmokeFilter ? "1" : "0"});
+            if (SmokeShaderMode() == 4 && !stochasticSmokeFilter && productionMarch)
+                defines.push_back({"VDB_TRILINEAR_PRODUCTION", "1"});
+        }
+        const bool volumeShadow = std::string(file) == "shaders/VolumeShadow.hlsl";
+        if (volumeShadow)
+            defines.clear(); // Light-space integration has no camera volume dimensions.
+        if (volumeShadow || std::string(entry) == "texturedExtinction")
+            defines.push_back({"SMOKE_MODE", std::to_string(SmokeShaderMode())});
+        const bool countsVolumeSteps = computeMarch || audit || std::string(entry) == "accumulationPixel" ||
+                                       (std::string(file) == "shaders/LocalVolumeAccumulation.hlsl" &&
+                                        type == nvrhi::ShaderType::Pixel);
+        if ((marchHeatmap || volumeMarchStats) && countsVolumeSteps)
+            defines.push_back({"MARCH_COUNTERS", "1"});
+        if (audit)
+            defines.push_back({"ACCUMULATION_AUDIT", std::to_string(accumulationAudit)});
         auto *permutations =
-            (transparency || std::string(file) == "shaders/ZeroTransmittance.hlsl" ||
+            (audit || computeMarch || volumeShadow || transparency || std::string(file) == "shaders/ZeroTransmittance.hlsl" ||
              std::string(file) == "shaders/OitResolve.hlsl" || std::string(file) == "shaders/FrostComposition.hlsl" ||
              std::string(file) == "shaders/ResolveTiles.hlsl" ||
              std::string(file) == "shaders/LocalVolumeExtinction.hlsl" ||
@@ -565,6 +683,23 @@ class NativeViewer : public app::IRenderPass
 
   public:
     using IRenderPass::IRenderPass;
+    bool EffectiveZeroDepth() const
+    {
+        return zeroDepth && !hasCameraOffsets && !lutPlane && !(lutIgn && lutJitterStrength > 0.f);
+    }
+    void SetLutPlane(bool enabled)
+    {
+        lutPlane = enabled;
+        if (temporalAA)
+            temporalAA->Invalidate();
+    }
+    void SetLutIgn(bool enabled, float strength)
+    {
+        lutIgn = enabled;
+        lutJitterStrength = std::clamp(strength, 0.f, 2.f);
+        if (temporalAA)
+            temporalAA->Invalidate();
+    }
     void SetFrostChain(unsigned levels) { frostMipCount = levels; }
     void SetFrostDetailRadius(float radius) { frostDetailRadius = std::clamp(radius, 0.f, 64.f); }
     void SetFrostNormalTiling(float tiling) { frostNormalTiling = std::clamp(tiling, .25f, 64.f); }
@@ -679,13 +814,19 @@ class NativeViewer : public app::IRenderPass
         emissiveGain = gain;
     }
     void SetEmissiveFront(bool front) { emissiveFront = front; }
-    void SetSmokeAnimation(float frame, bool skip, const std::string &path, bool play, bool interpolate)
+    void SetSmokeAnimation(float frame, bool skip, const std::string &path, bool play)
     {
-        smokeFrame = frame;
+        initialSmokePlayback.frame = frame;
         smokeBrickSkip = skip;
-        smokeInterpolation = interpolate;
         smokeSequencePath = path;
-        playSmoke = play;
+        initialSmokePlayback.playing = play;
+    }
+    void SetGameplayGrenade(bool value, int storage, bool skip)
+    {
+        gameplayGrenade = value;
+        smokeFlowTime = time;
+        grenadeStorage = storage;
+        grenadeSkip = skip;
     }
     void SetBakedSmoke(bool enabled, bool mask, bool door)
     {
@@ -697,9 +838,10 @@ class NativeViewer : public app::IRenderPass
     {
         auto device = GetDevice();
         smokeFrames.clear();
-        uploadedSmokeA = uploadedSmokeB = -1;
+        smokeDistanceTable = false;
+        uploadedSmokeFrame = -1;
         std::vector<uint32_t> data(8, 0);
-        if (bakedSmoke && (stressPreset == 24 || stressPreset == 25))
+        if (!gameplayGrenade && bakedSmoke && (stressPreset == 24 || stressPreset == 25))
         {
             auto directory = smokeSequencePath.empty() ? app::GetDirectoryWithExecutable() / "textures/smoke-sequence"
                                                        : smokeSequencePath;
@@ -724,11 +866,13 @@ class NativeViewer : public app::IRenderPass
                 uint64_t cells = 1;
                 for (unsigned k = 1; k <= 3; ++k)
                 {
-                    if (!data[k] || data[k] > 2048 || data[k] % 4)
+                    if (!data[k] || data[k] > 2048)
                         throw std::runtime_error("Invalid smoke dimensions");
-                    cells *= data[k] / 4;
+                    cells *= (data[k] + 3) / 4;
                 }
-                if ((data[0] != 1 && data[0] != 3) || data[4] != 8 || data[5] != 8 + (cells + 1) / 2 ||
+                const uint64_t tableEnd = 8 + (cells + 1) / 2;
+                const bool hasDistances = data[5] == tableEnd + (cells + 3) / 4;
+                if ((data[0] != 1 && data[0] != 3) || data[4] != 8 || (!hasDistances && data[5] != tableEnd) ||
                     data[5] > data.size())
                     throw std::runtime_error("Invalid smoke table");
                 for (uint64_t j = 0; j < cells; ++j)
@@ -737,22 +881,23 @@ class NativeViewer : public app::IRenderPass
                     if (uint64_t(data[5]) + uint64_t(index) * (data[0] == 3 ? 64 : 17) > data.size())
                         throw std::runtime_error("Invalid smoke brick index");
                 }
-                if (!smokeFrames.empty() &&
-                    !std::equal(data.begin() + 1, data.begin() + 4, smokeFrames.front().begin() + 1))
-                    throw std::runtime_error("Smoke sequence frames must share fixed dimensions");
+                if (!smokeFrames.empty() && !std::equal(data.begin(), data.begin() + 4, smokeFrames.front().begin()))
+                    throw std::runtime_error("Smoke sequence frames must share format and fixed dimensions");
+                if (!smokeFrames.empty() && hasDistances != smokeDistanceTable)
+                    throw std::runtime_error("Smoke sequence frames must share distance-table layout");
+                smokeDistanceTable = hasDistances;
                 smokeFrames.push_back(data);
             }
-            smokeFrame = std::clamp(smokeFrame, 0.f, float(smokeFrames.size() - 1));
+            initialSmokePlayback.frame = std::clamp(initialSmokePlayback.frame, 0.f, float(smokeFrames.size() - 1));
         }
         size_t maxWords = 8;
         for (const auto &frame : smokeFrames)
-            maxWords = std::max(maxWords, frame.size() * (smokeInterpolation ? 2u : 1u));
-        smokeBricks = Buffer(unsigned(maxWords * 4), nvrhi::Format::R32_UINT, false, "Baked smoke bricks");
-        constexpr unsigned size = 32;
+            maxWords = std::max(maxWords, frame.size());
+        unsigned size = gameplayGrenade ? 80 : 32;
         std::vector<uint8_t> mask(size * size * size, 255);
         // CPU stand-in for gameplay coverage: a dividing wall with a doorway.
         // UVs match this single smoke actor; production supplies its own coverage transform.
-        if (smokeMask)
+        if (smokeMask && !gameplayGrenade)
             for (unsigned z = 0; z < size; ++z)
                 for (unsigned y = 0; y < size; ++y)
                     for (unsigned x = 0; x < size; ++x)
@@ -762,6 +907,39 @@ class NativeViewer : public app::IRenderPass
                         if ((wall && !(smokeDoorOpen && doorway)) || (!smokeDoorOpen && x > 17))
                             mask[x + size * (y + size * z)] = 0;
                     }
+        if (gameplayGrenade)
+        {
+            // No invisible test wall in the visual demo; production provides scene collision coverage.
+            auto next = avboit::MakeGrenadeCoverage(true, grenadeRadius, grenadeAuthority.revision + 1, 80, false);
+            next.cellMm = 100;
+            next.originMm = {-4000, useSponza ? -2000 : -4000, 7000};
+            auto packet =
+                next.Encode(grenadeAuthority.revision && next.SameGrid(grenadeAuthority) ? &grenadeAuthority : nullptr);
+            if (!grenadeReplica.Apply(packet))
+                throw std::runtime_error("Smoke replica rejected authority update");
+            grenadePacketBytes = packet.size();
+            grenadeAuthority = std::move(next);
+            mask = grenadeReplica.Expand();
+            avboit::FeatherSmokeCoverage(mask, size, 2);
+            avboit::SmokeGpuBricks gpu(mask, size, unsigned(grenadeStorage), grenadeSkip, grenadeRadius);
+            data = std::move(gpu.words);
+            mask = std::move(gpu.texture);
+            size = gpu.textureSize;
+            printf("Gameplay GPU mode %d skip %d: %u mixed, %zu buffer B, %zu texture B\n", grenadeStorage, grenadeSkip,
+                   gpu.mixed, data.size() * 4, mask.size());
+            printf("Gameplay smoke revision %u: %zu bricks, %zu packet bytes\n", grenadeReplica.revision,
+                   grenadeReplica.bricks.size(), grenadePacketBytes);
+        }
+        smokeSampling = nullptr;
+        if (!smokeFrames.empty())
+            smokeSampling = device->createBuffer(nvrhi::BufferDesc()
+                                                   .setByteSize(256)
+                                                   .setIsConstantBuffer(true)
+                                                   .setDebugName("VDB sampling constants")
+                                                   .setInitialState(nvrhi::ResourceStates::ConstantBuffer)
+                                                   .setKeepInitialState(true));
+        maxWords = std::max(maxWords, data.size());
+        smokeBricks = Buffer(unsigned(maxWords * 4), nvrhi::Format::R32_UINT, false, "Smoke hierarchy");
         gameplaySmokeMask = device->createTexture(nvrhi::TextureDesc()
                                                       .setWidth(size)
                                                       .setHeight(size)
@@ -778,9 +956,10 @@ class NativeViewer : public app::IRenderPass
         device->executeCommandList(commands);
         device->waitForIdle();
     }
-    void SetVolumeMarch(float step, float threshold, float scale, int budget)
+    void SetVolumeMarch(float step, float threshold, float scale, int budget, bool earlyOut)
     {
         volumeStepSize = step;
+        volumeEarlyOut = earlyOut;
         volumeLowT = threshold;
         volumeStepScale = scale;
         volumeMaxSteps = budget;
@@ -852,6 +1031,22 @@ class NativeViewer : public app::IRenderPass
         rebuildRequested = true;
         preserveMaterialsOnRebuild = true;
     }
+    void SetVolumeViews(bool compute, bool nearRayLod, bool quarterReference, bool sharedLighting, bool heatmap, bool skipped)
+    {
+        vdbCompute = compute;
+        vdbNearRayLod = nearRayLod;
+        vdbQuarterReference = quarterReference;
+        vdbSharedLighting = sharedLighting;
+        marchHeatmap = heatmap || skipped;
+        showSkippedSteps = skipped;
+    }
+    void SetAccumulationAudit(unsigned mode) { accumulationAudit = mode; }
+    void SetQuadVolumeT(bool enabled, bool eightAnchors)
+    {
+        quadVolumeT = enabled;
+        eightVolumeT = eightAnchors;
+    }
+    void SetStochasticSmokeFilter(bool enabled) { stochasticSmokeFilter = enabled; }
     void SetVolumeLutSkip(bool enabled, bool stats, bool reference)
     {
         volumeLutSkip = enabled;
@@ -860,6 +1055,70 @@ class NativeViewer : public app::IRenderPass
     }
     void SetInitialShellOffset(float value) { initialShellOffset = value; }
     void SetFlattenShell(bool value) { flattenShell = value; }
+    void SetMagazineOrdering(unsigned mode, float strength, float range)
+    {
+        magazineOrdering = std::min(mode, 2u);
+        groupWeightStrength = std::clamp(strength, 0.f, 8.f);
+        groupDepthRange = std::clamp(range, .05f, 10.f);
+    }
+    void SetMagazineNeighbours(bool enabled) { magazineNeighbours = enabled; }
+    void ApplyMagazineOrdering()
+    {
+        if (stressPreset != 34 || actors.size() < 6)
+            return;
+        for (unsigned index = 0; index < 6; ++index)
+        {
+            auto &m = materials.entries[actors[index].material];
+            m.flatAnchorActor = magazineOrdering > 0 ? int(index & ~1u) : -1;
+            m.flatLayer = 0;
+            m.cameraOffsetBins = 0;
+            m.flatWeightStrength = magazineOrdering == 2 ? groupWeightStrength : 0.f;
+            m.flatDepthRange = groupDepthRange;
+        }
+    }
+    void SetVolumeScattering(int octaves) { volumeScattering.octaves = octaves; }
+    void FireSmokeShot(bool aimAtSmoke = false)
+    {
+        if (!gameplayGrenade)
+            return;
+        auto start = navigation.Eye(), direction = navigation.Forward();
+        F3 end;
+        for (unsigned c = 0; c < 3; ++c)
+            end[c] = start[c] + direction[c] * 30.f;
+        if (aimAtSmoke)
+        {
+            auto volume =
+                std::find_if(localVolumes.begin(), localVolumes.end(), [](const auto &v) { return v.textured; });
+            if (volume == localVolumes.end())
+                return;
+            // Deterministic spread across the cloud; the first bullet crosses its centre.
+            float angle = float(smokeShotSequence) * 2.39996323f;
+            float spread = smokeShotSequence % 15 == 0 ? 0.f : 1.5f;
+            auto right = navigation.Right(), up = navigation.Up();
+            F3 target = volume->center;
+            for (unsigned c = 0; c < 3; ++c)
+                target[c] += spread * (std::cos(angle) * right[c] + std::sin(angle) * up[c]);
+            // Extend through the cloud. This demo has no bullet collision query.
+            for (unsigned c = 0; c < 3; ++c)
+                end[c] = start[c] + 2.f * (target[c] - start[c]);
+        }
+        smokeTrails.Add(start, end, smokeShotRadius, smokeShotLifetime);
+        ++smokeShotSequence;
+    }
+    void SetSmokeTrailComparison(bool reference, bool rebuild)
+    {
+        smokeTrailReference = reference;
+        smokeTrailRebuild = rebuild;
+    }
+    void SetSmokeShotPreview(unsigned count, float radius = -1.f)
+    {
+        if (radius > 0.f)
+            smokeShotRadius = radius;
+        smokeTrails.Clear();
+        smokeShotSequence = 0;
+        for (unsigned i = 0; i < std::min(count, avboit::SmokeTrails::Capacity); ++i)
+            FireSmokeShot(true);
+    }
     void SetInitialVolumeExtinction(float value) { initialVolumeExtinction = value; }
     void SetTaa(bool enabled) { taaEnabled = enabled; }
     void SetHardwareDepth(bool enabled) { hardwareDepth = enabled; }
@@ -884,6 +1143,11 @@ class NativeViewer : public app::IRenderPass
     }
     unsigned CurrentDemoCase() const
     {
+        if (bakedSmoke && stressPreset == 24 && smokeSequencePath.filename().string().rfind("sequence", 0) == 0 &&
+            smokeSequencePath.parent_path().filename() == "jangafx-smoke")
+            return JangaFxDemo;
+        if (gameplayGrenade && (stressPreset == 24 || stressPreset == 25))
+            return GrenadeDemo;
         if (stressPreset == 0 && glassSphere)
             return avboit::StressPresetCount + (sphereRoughness > 0 ? 1u : 0u);
         if (stressPreset == 10 && vfx && vfxMode == 2)
@@ -892,15 +1156,68 @@ class NativeViewer : public app::IRenderPass
     }
     const char *DemoCaseName(unsigned index) const
     {
+        switch (index)
+        {
+        case JangaFxDemo:
+            return "JangaFX / animated VDB smoke";
+        case GrenadeDemo:
+            return "Gameplay smoke grenade";
+        case 0:
+            return "Glass and smoke";
+        case 1:
+            return "Colored glass layers";
+        case 18:
+            return "Frosted glass / surface detail";
+        case 22:
+            return "Volume and frosted glass";
+        case 24:
+            return "VDB smoke";
+        case 32:
+            return "Nested shells / OIT ordering";
+        default:
+            break;
+        }
         if (index < avboit::StressPresetCount)
             return avboit::StressPresetName(index);
         static const char *names[] = {"Solid RGB glass sphere (inversion)", "Frosted RGB glass sphere",
                                       "Shock wave + frost / refraction"};
         return names[index - avboit::StressPresetCount];
     }
+    std::filesystem::path JangaFxSequence() const
+    {
+        const auto root = app::GetDirectoryWithExecutable().parent_path() / "build/jangafx-smoke";
+        const auto quantized = root / "sequence128-4bit";
+        if (std::filesystem::exists(quantized / "sequence.txt") || !std::filesystem::exists(root / "sequence128/sequence.txt"))
+            return quantized;
+        return root / "sequence128";
+    }
     void SelectDemoCase(unsigned index)
     {
-        stressPreset = index < avboit::StressPresetCount ? index : 0;
+        demoAssetError.clear();
+        if (index == JangaFxDemo && !std::filesystem::exists(JangaFxSequence() / "sequence.txt"))
+        {
+            demoAssetError = "JangaFX asset not installed: " + JangaFxSequence().string();
+            return;
+        }
+        smokeTrails.Clear();
+        autoSmokeShots = false;
+        smokeShotSequence = 0;
+        gameplayGrenade = index == GrenadeDemo;
+        smokeFlowTime = 0.f;
+        stressPreset = gameplayGrenade || index == JangaFxDemo ? 24 : (index < avboit::StressPresetCount ? index : 0);
+        // Scene content must not leak from the previous demo.
+        bakedSmoke = index == 24 || index == JangaFxDemo;
+        smokeSequencePath = index == JangaFxDemo ? JangaFxSequence() : std::filesystem::path{};
+        initialSmokePlayback = {};
+        initialSmokePlayback.frame = index == JangaFxDemo ? 40.f : 0.f;
+        initialSmokePlayback.loop = true;
+        if (index == JangaFxDemo)
+        {
+            smokeMask = false;
+            volumeStepSize = .025f;
+            sceneGlassPanes = false;
+        }
+        initialVolumeExtinction = gameplayGrenade || index == JangaFxDemo ? 6.f : -1.f;
         const unsigned sphereCase = avboit::StressPresetCount, shockCase = sphereCase + 2;
         glassSphere = index == sphereCase || index == sphereCase + 1;
         rgbGlass = glassSphere;
@@ -910,7 +1227,7 @@ class NativeViewer : public app::IRenderPass
             sceneGlassPanes = false; // Sphere presets remain isolated; UI toggles are independent.
         sphereRoughness = index == sphereCase + 1 ? .55f : 0.f;
         calibrationBoard = glassSphere;
-        emissiveBalls = index != 17;
+        emissiveBalls = index != 17 && index != 34 && index != JangaFxDemo && !gameplayGrenade;
         emissiveFront = false;
         showSmoke = true;
         vfx = index == shockCase;
@@ -967,13 +1284,15 @@ class NativeViewer : public app::IRenderPass
             ImGui::EndCombo();
         }
         const unsigned demo = CurrentDemoCase();
+        if (!demoAssetError.empty())
+            ImGui::TextWrapped("%s", demoAssetError.c_str());
         ImGui::TextUnformatted("Scene preset");
         ImGui::SetNextItemWidth(-1);
         bool demoOpen = ImGui::BeginCombo("##TestCase", DemoCaseName(demo), ImGuiComboFlags_HeightLargest);
         uiDemoCase = itemCenter();
         if (demoOpen)
         {
-            for (unsigned choice = 0; choice < uiDemoChoices.size(); ++choice)
+            for (unsigned choice : DemoChoices)
             {
                 if (ImGui::Selectable(DemoCaseName(choice), demo == choice))
                     SelectDemoCase(choice);
@@ -993,6 +1312,28 @@ class NativeViewer : public app::IRenderPass
             ImGui::TextWrapped(
                 "Three depth layers: broad dark front glass, small middle silhouettes, bright rear glass. Inspect the "
                 "dark outline just outside the middle layer. Toggle T-LUT XY min-filter under Quality / OIT sampling.");
+        if (stressPreset == 34)
+        {
+            ImGui::TextWrapped(
+                "Corrugated magazine shells at 15 / 45 / 75 degrees, with separate inner models and back-face culling. "
+                "Each inner/shell pair can share one OIT bin. Geometry remains unchanged; no frost or refraction.");
+            int mode = int(magazineOrdering);
+            bool changed = ImGui::Combo("Magazine OIT", &mode,
+                                        "Geometric AVBOIT\0Flat group / uniform\0Flat group / depth weighted\0");
+            magazineOrdering = unsigned(mode);
+            ImGui::BeginDisabled(magazineOrdering != 2);
+            changed |= ImGui::SliderFloat("Group depth weight", &groupWeightStrength, 0.f, 8.f, "%.2f stops",
+                                          ImGuiSliderFlags_AlwaysClamp);
+            changed |= ImGui::SliderFloat("Group depth span", &groupDepthRange, .05f, 10.f, "%.2f m",
+                                          ImGuiSliderFlags_AlwaysClamp);
+            ImGui::EndDisabled();
+            if (changed)
+                ApplyMagazineOrdering();
+            if (ImGui::Checkbox("External RGB panes", &magazineNeighbours))
+                rebuildRequested = true;
+            ImGui::TextWrapped("Depth weight uses real depth relative to the group anchor; shared foreground T "
+                               "comes from the LUT before that bin. External intersections remain approximate.");
+        }
         if (stressPreset == 32)
         {
             if (ImGui::Checkbox("Flatten nested cube OIT ordering", &flattenShell))
@@ -1051,6 +1392,46 @@ class NativeViewer : public app::IRenderPass
             uiTabs[1] = itemCenter();
             if (tab1)
             {
+                if (gameplayGrenade && ImGui::CollapsingHeader("Smoke grenade", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    bool changed = false;
+                    if (gameplayGrenade)
+                    {
+                        ImGui::Checkbox("Flow animation", &smokeFlowPlaying);
+                        ImGui::SliderFloat("Flow speed", &smokeFlowSpeed, 0.f, 3.f, "%.2fx");
+                        if (ImGui::Button("Reset flow"))
+                        {
+                            smokeFlowTime = 0.f;
+                            if (temporalAA)
+                                temporalAA->Invalidate();
+                        }
+                        float radiusMetres = grenadeRadius * .1f;
+                        if (ImGui::SliderFloat("Spread radius", &radiusMetres, .4f, 4.f, "%.1f m"))
+                        {
+                            grenadeRadius = radiusMetres * 10.f;
+                            changed = true;
+                        }
+                        ImGui::TextWrapped("Unobstructed gameplay coverage. Scene collision is not simulated.");
+                        ImGui::Separator();
+                        ImGui::TextUnformatted("Bullet smoke interaction");
+                        ImGui::Checkbox("Auto fire through smoke", &autoSmokeShots);
+                        ImGui::SliderFloat("Shots per second", &smokeShotsPerSecond, 1.f, 15.f, "%.1f");
+                        ImGui::SliderFloat("Capsule radius (m)", &smokeShotRadius, .05f, 1.f, "%.2f");
+                        ImGui::SliderFloat("Recovery time (s)", &smokeShotLifetime, .2f, 5.f, "%.1f");
+                        if (ImGui::Button("Shoot through centre"))
+                            FireSmokeShot(false);
+                        ImGui::SameLine();
+                        if (ImGui::Button("15 shot burst"))
+                            SetSmokeShotPreview(15);
+                        if (ImGui::Button("Clear bullet trails"))
+                            smokeTrails.Clear();
+                        ImGui::Text("Active capsules: %u / 15. F: shoot along camera forward.", smokeTrails.Count());
+                        ImGui::TextWrapped("World-space visual clearing; demo bullets are not collision-clipped.");
+                    }
+                    if (changed)
+                        rebuildRequested = preserveMaterialsOnRebuild = true;
+                    ImGui::TextWrapped("Select the volume in Actors to edit extinction and scattering color.");
+                }
                 if (ImGui::CollapsingHeader("Scene objects", ImGuiTreeNodeFlags_DefaultOpen))
                 {
                     bool changed = false;
@@ -1081,6 +1462,18 @@ class NativeViewer : public app::IRenderPass
                         rebuildRequested = true;
                         preserveMaterialsOnRebuild = false;
                     }
+                }
+                if (!localVolumes.empty() && ImGui::CollapsingHeader("Volume lighting", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    bool changed = ImGui::SliderInt("Additional scattering octaves", &volumeScattering.octaves, 0, 3);
+                    changed |=
+                        ImGui::SliderFloat("Octave contribution", &volumeScattering.contribution, 0.f, .9f, "%.2f");
+                    changed |=
+                        ImGui::SliderFloat("Octave extinction scale", &volumeScattering.attenuation, .1f, 1.f, "%.2f");
+                    ImGui::TextWrapped(
+                        "0 octaves: single scattering. Lower extinction scale lets indirect light penetrate deeper.");
+                    if (changed && temporalAA)
+                        temporalAA->Invalidate();
                 }
                 if (donutScene)
                     ImGui::Checkbox("Volumetric moment shadows", &sceneLighting.volumeShadows);
@@ -1182,37 +1575,65 @@ class NativeViewer : public app::IRenderPass
                 }
                 if (ImGui::CollapsingHeader("Volumes", ImGuiTreeNodeFlags_DefaultOpen))
                 {
-                    bool smokeChanged = ImGui::Checkbox("Baked smoke (scenes 24 / 25)", &bakedSmoke);
-                    if (bakedSmoke)
+                    if (gameplayGrenade)
                     {
-                        ImGui::Checkbox("Play baked smoke", &playSmoke);
-                        if (ImGui::Button("Restart smoke"))
-                        {
-                            smokeFrame = 0.f;
-                            playSmoke = true;
-                            if (temporalAA)
-                                temporalAA->Invalidate();
-                        }
-                        float lastFrame = float(smokeFrames.empty() ? 0 : smokeFrames.size() - 1);
-                        if (ImGui::SliderFloat("Smoke frame", &smokeFrame, 0.f, lastFrame, "%.2f"))
-                        {
-                            playSmoke = false;
-                            if (temporalAA)
-                                temporalAA->Invalidate();
-                        }
-                        ImGui::Checkbox("Brick empty-space skipping", &smokeBrickSkip);
-                        smokeChanged |= ImGui::Checkbox("Gameplay smoke mask", &smokeMask);
-                        smokeChanged |= ImGui::Checkbox("Smoke doorway open", &smokeDoorOpen);
+                        bool changed = ImGui::Combo("GPU coverage storage", &grenadeStorage,
+                                                    "Dense R8\0Brick R8 buffer\0Brick R8 atlas\0");
+                        changed |= ImGui::Checkbox("Gameplay brick skipping", &grenadeSkip);
+                        if (changed)
+                            rebuildRequested = preserveMaterialsOnRebuild = true;
                     }
-                    if (smokeChanged)
-                        rebuildRequested = preserveMaterialsOnRebuild = true;
+                    else if (bakedSmoke)
+                        ImGui::Checkbox("Brick empty-space skipping", &smokeBrickSkip);
                     if (ImGui::Checkbox("Half-resolution local volumes", &lowResolutionVolumes))
                     {
                         rebuildRequested = true;
                         preserveMaterialsOnRebuild = true;
                     }
-                    if (ImGui::Checkbox("T-LUT empty interval skip (experimental)", &volumeLutSkip) && temporalAA)
+                    ImGui::BeginDisabled(quadVolumeT);
+                    if (ImGui::Checkbox("T-LUT empty interval skip (experimental)", &volumeLutSkip))
+                        rebuildRequested = preserveMaterialsOnRebuild = true;
+                    ImGui::EndDisabled();
+                    if (ImGui::Checkbox("Early out below 1% local gray transmission", &volumeEarlyOut) && temporalAA)
                         temporalAA->Invalidate();
+                    if (ImGui::Checkbox("Raymarch step heatmap", &marchHeatmap))
+                        rebuildRequested = preserveMaterialsOnRebuild = true;
+                    if (marchHeatmap)
+                    {
+                        ImGui::Checkbox("Show skipped steps", &showSkippedSteps);
+                        ImGui::TextWrapped("Hover: executed (white), skipped (cyan). Counts per source ray. "
+                                           "Black: 0, blue: 8, cyan: 16, green: 32, orange: 64, red: 128+.");
+                    }
+                    ImGui::BeginDisabled(SmokeShaderMode() != 4 || stochasticSmokeFilter || !quadVolumeT || accumulationAudit);
+                    if (ImGui::Checkbox("VDB compute wave march", &vdbCompute))
+                        rebuildRequested = preserveMaterialsOnRebuild = true;
+                    ImGui::BeginDisabled(!vdbCompute || eightVolumeT || smokeDistanceTable || vdbSharedLighting ||
+                                         volumeReferenceSampling || volumeLutSkip);
+                    if (ImGui::Checkbox("Wave ray LOD: quad / diagonals / pixel", &vdbNearRayLod))
+                        rebuildRequested = preserveMaterialsOnRebuild = true;
+                    ImGui::EndDisabled();
+                    if (vdbCompute && ImGui::Checkbox("Share lighting in dense smoke", &vdbSharedLighting))
+                        rebuildRequested = preserveMaterialsOnRebuild = true;
+                    ImGui::EndDisabled();
+                    if (ImGui::Checkbox("Stochastic smoke filtering (experimental)", &stochasticSmokeFilter))
+                        rebuildRequested = preserveMaterialsOnRebuild = true;
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("One voxel per density query in accumulation. Extinction and shadows keep "
+                                          "trilinear filtering.");
+                    if (ImGui::Checkbox("Quad-shared T-LUT", &quadVolumeT))
+                        rebuildRequested = preserveMaterialsOnRebuild = true;
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip(
+                            "Share T at quad center, interpolate over four steps. Density and lighting "
+                            "remain per pixel. Fixed-step VDB also skips quad-wide empty brick intervals. "
+                            "Best suited to fine steps; LUT equality skipping is not used.");
+                    ImGui::BeginDisabled(!quadVolumeT);
+                    if (ImGui::Checkbox("Eight uniform T-LUT anchors (experimental)", &eightVolumeT))
+                        rebuildRequested = preserveMaterialsOnRebuild = true;
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Eight T queries across the quad ray interval, interpolated in view Z. "
+                                          "Density and lighting steps are unchanged. Boundary clipping is separate.");
+                    ImGui::EndDisabled();
                     ImGui::SliderFloat("Ray step", &volumeStepSize, .005f, 2.f, "%.3f", ImGuiSliderFlags_Logarithmic);
                     if (ImGui::TreeNode("Marching limits"))
                     {
@@ -1225,6 +1646,28 @@ class NativeViewer : public app::IRenderPass
                 }
                 if (ImGui::CollapsingHeader("OIT sampling"))
                 {
+                    if (ImGui::Checkbox("T-LUT receiver-plane sampling", &lutPlane))
+                        SetLutPlane(lutPlane);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Four LUT columns, each queried at the current triangle plane depth. "
+                                          "No guide RT. Keeps the existing self-exclusion bias; flattened actors "
+                                          "keep their authored bins. Compare with XY min-filter off.");
+                    if (lutPlane)
+                        ImGui::TextWrapped("Receiver-plane test: IGN and hardware Zero-T depth culling suspended.");
+                    ImGui::BeginDisabled(lutPlane);
+                    if (ImGui::Checkbox("T-LUT XY IGN jitter", &lutIgn))
+                        SetLutIgn(lutIgn, lutJitterStrength);
+                    ImGui::BeginDisabled(!lutIgn);
+                    if (ImGui::SliderFloat("LUT jitter width", &lutJitterStrength, 0.f, 2.f, "%.2f texels",
+                                           ImGuiSliderFlags_AlwaysClamp))
+                        SetLutIgn(lutIgn, lutJitterStrength);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("1 = +/- half a LUT texel. Pixel-scale IGN, animated with TAA. Surface "
+                                          "accumulation only; Z and splatting unchanged. No noise texture.");
+                    ImGui::EndDisabled();
+                    ImGui::EndDisabled();
+                    if (!lutPlane && lutIgn && lutJitterStrength > 0.f)
+                        ImGui::TextWrapped("Hardware Zero-T depth culling suspended: jittered LUT footprint.");
                     if (hasCameraOffsets)
                         ImGui::TextWrapped("Hardware Zero-T depth culling suspended: virtual OIT ordering.");
                     if (ImGui::Checkbox("T-LUT XY min-filter", &lutMinFilter))
@@ -1482,15 +1925,19 @@ class NativeViewer : public app::IRenderPass
             frostSampler = device->createSampler(
                 nvrhi::SamplerDesc().setAllFilters(true).setAllAddressModes(nvrhi::SamplerAddressMode::Wrap));
         }
+        if (volumeDensityGameplay != gameplayGrenade)
+            volumeDensity = nullptr;
         if ((stressPreset == 24 || stressPreset == 25) && !volumeDensity)
         {
             engine::TextureCache cache(device, fs, nullptr);
-            auto path = app::GetDirectoryWithExecutable() / "textures/smoke-volume.dds";
+            auto path = app::GetDirectoryWithExecutable() /
+                        (gameplayGrenade ? "textures/smoke-noise.dds" : "textures/smoke-volume.dds");
             commands->open();
             auto loaded = cache.LoadTextureFromFile(path, false, nullptr, commands);
             if (!loaded || !loaded->texture)
                 throw std::runtime_error("Cannot load volume density: " + path.string());
             volumeDensity = loaded->texture;
+            volumeDensityGameplay = gameplayGrenade;
             commands->close();
             device->executeCommandList(commands);
             device->waitForIdle();
@@ -1500,6 +1947,8 @@ class NativeViewer : public app::IRenderPass
         CreateBakedSmokeResources();
         profiler.Initialize(device, detailedProfiling, profilingEnabled);
         cameraBuffer = Buffer(sizeof(camera), nvrhi::Format::RGBA32_FLOAT, false, "Camera and material controls");
+        smokeTrailLut.Create(device, Shader("main", nvrhi::ShaderType::Compute, "shaders/SmokeTrailLut.hlsl"));
+        smokeTrailBuffer = smokeTrailLut.capsules;
         bounds = {{{float(Width), float(Height), float(volumeScale * 8), 64}},
                   {{1.f / (float(Width) / Height * .57735027f), 1.f / .57735027f, .05f, 80}},
                   {{1, 0, 0, 0}}};
@@ -1551,10 +2000,10 @@ class NativeViewer : public app::IRenderPass
         for (const auto &q : fixture.opaque)
             Quad(q.center, q.x, q.y, q.color, q.transmission, q.kind, false);
         opaqueVertices = unsigned(vertices.size() / 4);
-        if (stressPreset == 26 || stressPreset == 32)
+        if (stressPreset == 26 || stressPreset == 32 || stressPreset == 34)
         {
-            // Three copies of exactly the same model, each with its own inner
-            // and outer actor/material/draw. Only geometric shell thickness differs.
+            // Each pair has separate inner and outer actors/materials/draws.
+            // The magazine and cube cases vary yaw; the noise shell varies its gap.
             const float gaps[] = {0.f, .01f, .05f};
             for (unsigned pair = 0; pair < 3; ++pair)
                 for (unsigned layer = 0; layer < 2; ++layer)
@@ -1562,7 +2011,9 @@ class NativeViewer : public app::IRenderPass
                     F3 center = {(float(pair) - 1.f) * 1.9f, useSponza ? 1.75f : 0.f, 4.5f};
                     unsigned first = unsigned(vertices.size());
                     objectFirstRecords.push_back(first);
-                    if (stressPreset == 32)
+                    if (stressPreset == 34)
+                        avboit::AppendFoldedMagazine(vertices, center, 15.f + float(pair) * 30.f, layer == 1);
+                    else if (stressPreset == 32)
                         avboit::AppendLayeredCube(vertices, center, float(pair) * 30.f, layer == 1);
                     else
                         avboit::AppendLayeredModel(vertices, center, gaps[pair], layer == 1);
@@ -1577,6 +2028,12 @@ class NativeViewer : public app::IRenderPass
                     bounds.push_back({upper[0], upper[1], upper[2], 0});
                     ++objectCount;
                 }
+        }
+        if (stressPreset == 34 && magazineNeighbours)
+        {
+            const float y = useSponza ? 1.75f : 0.f;
+            Quad({-.4f, y, 3.f}, {-.22f, 0, 0}, {0, 1.1f, 0}, {.05f, .12f, .3f, 1}, {.1f, .65f, .9f}, 2, true);
+            Quad({.5f, y, 6.f}, {-.5f, 0, 0}, {0, 1.8f, 0}, {.75f, .06f, .025f, 1}, {.9f, .15f, .08f}, 2, true);
         }
         if ((stressPreset == 0 && glassSphere) || fixture.sphere)
         {
@@ -1618,7 +2075,12 @@ class NativeViewer : public app::IRenderPass
         localVolumeRecords.clear();
         for (auto volume : fixture.volumes)
         {
-            if (bakedSmoke && volume.textured)
+            if (gameplayGrenade && volume.textured)
+            {
+                volume.extent = {4.f, 4.f, 4.f};
+                volume.center = {0.f, useSponza ? .25f : 0.f, 11.f};
+            }
+            if (!gameplayGrenade && bakedSmoke && volume.textured)
             {
                 // The baked sequence has a fixed cubic simulation domain. The
                 // legacy smoke DDS is a tall plume; do not reuse its 1:2:1 scale.
@@ -1704,6 +2166,18 @@ class NativeViewer : public app::IRenderPass
                                    "Middle glass / cutout edge", "Third glass / bright background"};
             for (unsigned i = 0; i < 4; ++i)
                 actors[i].name = names[i];
+        }
+        if (stressPreset == 34)
+        {
+            for (unsigned index = 0; index < 6; ++index)
+                actors[index].name = std::string(index & 1u ? "Folded shell / " : "Magazine inner / ") +
+                                     std::to_string(15 + index / 2 * 30) + " deg";
+            ApplyMagazineOrdering();
+            if (magazineNeighbours)
+            {
+                actors[6].name = "External foreground / blue RGB glass";
+                actors[7].name = "External background / red RGB glass";
+            }
         }
         if (stressPreset == 26 || stressPreset == 32)
         {
@@ -1836,7 +2310,7 @@ class NativeViewer : public app::IRenderPass
         using D = nvrhi::BindingSetDesc;
         volumeLighting.Create(device, Shader("main", nvrhi::ShaderType::Compute, "shaders/VolumeShadow.hlsl"),
                               volumeDensity, linear, unsigned(localVolumes.size()), donutScene != nullptr, smokeBricks,
-                              gameplaySmokeMask);
+                              gameplaySmokeMask, smokeTrailBuffer, smokeTrailLut.candidates, smokeSampling);
         if (donutScene)
             donutScene->SetVolumeLighting(volumeLighting);
         avboit::TransparencyInputs inputs;
@@ -1849,6 +2323,12 @@ class NativeViewer : public app::IRenderPass
         inputs.volumeWidth = volumeWidth;
         inputs.volumeHeight = volumeHeight;
         inputs.objectCount = objectCount;
+        inputs.marchHeatmap = marchHeatmap;
+        if (vdbCompute && SmokeShaderMode() == 4 && !stochasticSmokeFilter && quadVolumeT && !accumulationAudit)
+        {
+            inputs.vdbMarchCompute = Shader("main", nvrhi::ShaderType::Compute, "shaders/VdbMarchCompute.hlsl");
+            inputs.vdbRaySpacing = vdbQuarterReference ? 2u : 1u;
+        }
         inputs.halfAccumulation = halfAccumulation;
         inputs.lowResolutionVolumes = lowResolutionVolumes;
         inputs.frostMipCount = frostMipCount;
@@ -1866,6 +2346,9 @@ class NativeViewer : public app::IRenderPass
         inputs.frostNormal = frostNormal;
         inputs.volumeDensity = volumeDensity;
         inputs.smokeBricks = smokeBricks;
+        inputs.smokeSampling = smokeSampling;
+        inputs.smokeTrails = smokeTrailBuffer;
+        inputs.smokeTrailCandidates = smokeTrailLut.candidates;
         inputs.gameplaySmokeMask = gameplaySmokeMask;
         inputs.volumeLights = volumeLighting.lights;
         inputs.regularLightDepth = donutScene ? donutScene->ShadowTexture() : volumeLighting.fallbackDepth.Get();
@@ -1885,20 +2368,24 @@ class NativeViewer : public app::IRenderPass
         for (const auto &material : materials.entries)
         {
             auto shaders = commonShaders;
-            shaders.cullMode = material.kind == 4 || material.surfacePattern != 0 ? nvrhi::RasterCullMode::Back
-                                                                                  : nvrhi::RasterCullMode::None;
+            shaders.cullMode =
+                material.kind == 4 || material.surfacePattern != 0 || (stressPreset == 34 && material.kind == 2)
+                    ? nvrhi::RasterCullMode::Back
+                    : nvrhi::RasterCullMode::None;
             if (material.kind == 5 || material.kind == 6)
             {
                 shaders.extinctionVertex =
                     Shader("volumeVertex", nvrhi::ShaderType::Vertex, "shaders/LocalVolumeExtinction.hlsl");
                 shaders.accumulationVertex = shaders.extinctionVertex;
+                shaders.computeVolume = material.kind == 6;
                 shaders.halfResolutionPixel =
                     Shader(material.kind == 6 ? "texturedAccumulationHalf" : "volumeAccumulationHalf",
                            nvrhi::ShaderType::Pixel, "shaders/LocalVolumeAccumulation.hlsl");
                 shaders.extinctionPixel = Shader(material.kind == 6 ? "texturedExtinction" : "volumeExtinction",
                                                  nvrhi::ShaderType::Pixel, "shaders/LocalVolumeExtinction.hlsl");
-                shaders.accumulationPixel = Shader(material.kind == 6 ? "texturedAccumulation" : "volumeAccumulation",
-                                                   nvrhi::ShaderType::Pixel, "shaders/LocalVolumeAccumulation.hlsl");
+                shaders.accumulationPixel =
+                    Shader(material.kind == 6 ? "texturedAccumulation" : "volumeAccumulation",
+                           nvrhi::ShaderType::Pixel, "shaders/LocalVolumeAccumulation.hlsl");
             }
             inputs.materialShaders.push_back(std::move(shaders));
         }
@@ -1937,12 +2424,13 @@ class NativeViewer : public app::IRenderPass
             opaqueMaterialPipelines.push_back(device->createGraphicsPipeline(desc, opaqueFb->getFramebufferInfo()));
         }
         if (!occupancySettings)
-            occupancySettings = Buffer(16, nvrhi::Format::RGBA32_FLOAT, false, "Occupancy overlay settings");
+            occupancySettings = Buffer(32, nvrhi::Format::RGBA32_FLOAT, false, "Occupancy overlay settings");
         temporalAA.reset();
         if (taaEnabled)
             temporalAA = std::make_unique<avboit::TemporalAA>(device, transparency.DistortionApply().Output(), depth);
         displayPass = Bind(
-            D().addItem(B::Texture_SRV(21, temporalAA ? temporalAA->Output() : transparency.DistortionApply().Output()))
+            D().addItem(B::Texture_SRV(21, marchHeatmap ? transparency.Resolve().MarchCounters() :
+                                           temporalAA ? temporalAA->Output() : transparency.DistortionApply().Output()))
                 .addItem(B::TypedBuffer_SRV(22, physicalMasks))
                 .addItem(B::Texture_SRV(30, transparency.Volume().ScreenTiles()))
                 .addItem(B::TypedBuffer_SRV(32, occupancySettings))
@@ -2032,6 +2520,8 @@ class NativeViewer : public app::IRenderPass
         navigation.Key(key, scancode, action, mods);
         if (action == GLFW_PRESS)
         {
+            if (key == GLFW_KEY_F && (!ImGui::GetCurrentContext() || !ImGui::GetIO().WantCaptureKeyboard))
+                FireSmokeShot();
             if (key == GLFW_KEY_B)
                 cubic = !cubic;
             if (key == GLFW_KEY_G)
@@ -2074,13 +2564,32 @@ class NativeViewer : public app::IRenderPass
             keyboardCaptured = ImGui::GetIO().WantCaptureKeyboard;
             mouseCaptured = ImGui::GetIO().WantCaptureMouse;
         }
-        if (bakedSmoke && playSmoke && !smokeFrames.empty())
+        if (bakedSmoke && SmokePlayback().playing && !smokeFrames.empty())
         {
             float lastFrame = float(smokeFrames.size() - 1);
-            smokeFrame = std::min(smokeFrame + std::min(elapsed, .1f) * smokeFps, lastFrame);
-            if (smokeFrame >= lastFrame)
-                playSmoke = false;
+            SmokePlayback().frame = std::min(SmokePlayback().frame + std::min(elapsed, .1f) * smokeFps, lastFrame);
+            if (SmokePlayback().frame >= lastFrame)
+            {
+                if (SmokePlayback().loop)
+                    SmokePlayback().frame = 0.f;
+                else
+                    SmokePlayback().playing = false;
+            }
         }
+        if (gameplayGrenade && smokeFlowPlaying)
+            smokeFlowTime += std::min(elapsed, .1f) * smokeFlowSpeed;
+        smokeTrails.Tick(elapsed);
+        if (gameplayGrenade && autoSmokeShots)
+        {
+            smokeShotTimer += std::min(elapsed, .1f);
+            while (smokeShotTimer >= 1.f / smokeShotsPerSecond)
+            {
+                smokeShotTimer -= 1.f / smokeShotsPerSecond;
+                FireSmokeShot(true);
+            }
+        }
+        else
+            smokeShotTimer = 0;
         if (animate)
             time += std::min(elapsed, .1f);
         navigation.Tick(elapsed, keyboardCaptured || actorGizmo.Active(), mouseCaptured || actorGizmo.Active());
@@ -2130,7 +2639,7 @@ class NativeViewer : public app::IRenderPass
             animateOrder = oldOrder;
         }
         if (!displayPass.graphics)
-            Graphics(displayPass, "fullscreenVertex", "displayPixel", framebuffer);
+            Graphics(displayPass, "fullscreenVertex", marchHeatmap ? "marchStepsPixel" : "displayPixel", framebuffer);
         commands->open();
         {
             using Stage = avboit::GpuProfiler;
@@ -2138,6 +2647,34 @@ class NativeViewer : public app::IRenderPass
             {
                 AVBOIT_GPU_SCOPE(commands, "Frame uploads");
                 UpdateCamera();
+            }
+            {
+                AVBOIT_GPU_SCOPE(commands, "Smoke capsule candidate LUT",
+                                 profiler.Route(commands, Stage::SmokeTrailIndex));
+                F3 low = {1e30f, 1e30f, 1e30f}, high = {-1e30f, -1e30f, -1e30f};
+                bool anyVolume = false;
+                for (const auto &volume : localVolumes)
+                {
+                    if (!volume.textured)
+                        continue;
+                    anyVolume = true;
+                    auto basis = avboit::RotationBasis(volume.rotation);
+                    for (unsigned axis = 0; axis < 3; ++axis)
+                    {
+                        float extent = 0;
+                        for (unsigned j = 0; j < 3; ++j)
+                            extent += std::abs(basis[j][axis]) * volume.extent[j];
+                        low[axis] = std::min(low[axis], volume.center[axis] - extent);
+                        high[axis] = std::max(high[axis], volume.center[axis] + extent);
+                    }
+                }
+                if (!anyVolume)
+                {
+                    low = {0, 0, 0};
+                    high = {1, 1, 1};
+                }
+                auto trails = gameplayGrenade ? smokeTrails.Pack() : avboit::SmokeTrails::GpuData{};
+                smokeTrailLut.Record(commands, trails, low, high, smokeTrailReference, smokeTrailRebuild);
             }
             {
                 AVBOIT_GPU_SCOPE(commands, "Shadow", profiler.Route(commands, Stage::Shadow));
@@ -2162,7 +2699,7 @@ class NativeViewer : public app::IRenderPass
                         shadowVolumes.push_back(localVolumes[i]);
                 }
                 volumeLighting.Record(commands, donutScene ? donutScene->LightingData() : avboit::VolumeLightData{},
-                                      shadowVolumes);
+                                      shadowVolumes, smokeFlowTime, volumeScattering);
                 // The current shadow casters, alpha masks and directional-light matrix
                 // are static. Camera motion and transparent fixtures do not invalidate
                 // this map. Init/scene rebuilding always resets shadowDirty.
@@ -2210,7 +2747,7 @@ class NativeViewer : public app::IRenderPass
             frame.interfaceDraws = interfaceDraws;
             frame.geometryDraws = geometryDraws;
             frame.poisonResolve = poisonResolve;
-            frame.zeroDepth = zeroDepth && !hasCameraOffsets;
+            frame.zeroDepth = EffectiveZeroDepth();
             frame.lastBlurMip = maxBlurMip;
             if (HasVfxDraws())
             {
@@ -2249,10 +2786,27 @@ class NativeViewer : public app::IRenderPass
             }
             {
                 AVBOIT_GPU_SCOPE(commands, "Display / tone map", profiler.Route(commands, Stage::Display));
-                const F4 overlayData = {float(occupancyOverlay), occupancyOpacity,
+                F4 overlayData = {float(occupancyOverlay), occupancyOpacity,
                                         float(std::min(occupancySlice, int(depthBudget) - 1)),
                                         occupancyGrid ? 1.f : 0.f};
-                commands->writeBuffer(occupancySettings, overlayData.data(), sizeof(overlayData));
+                if (marchHeatmap)
+                {
+                    overlayData = {-1, -1, 1, 1};
+                    if (ImGui::GetCurrentContext())
+                    {
+                        const auto &io = ImGui::GetIO();
+                        if (io.DisplaySize.x > 0 && io.DisplaySize.y > 0)
+                            overlayData = {io.MousePos.x / io.DisplaySize.x, io.MousePos.y / io.DisplaySize.y,
+                                           io.DisplaySize.x, io.DisplaySize.y};
+                    }
+                }
+                if (marchHeatmap)
+                {
+                    const F4 settings[] = {overlayData, {float(showSkippedSteps), 0, 0, 0}};
+                    commands->writeBuffer(occupancySettings, settings, sizeof(settings));
+                }
+                else
+                    commands->writeBuffer(occupancySettings, overlayData.data(), sizeof(overlayData));
                 Draw(displayPass, framebuffer, 3);
             }
         } // End every GPU scope while the command list is still open.
@@ -2508,7 +3062,9 @@ class NativeViewer : public app::IRenderPass
             captureRaw(transparency.Interface().Offset(), "native-interface-offset.rg16f", 4);
             captureRaw(transparency.Resolve().Background(), "native-background.rgba16f", 8);
             captureRaw(transparency.Gaussian().Output(), "native-frost-base.rgba16f", 8);
-            captureRaw(transparency.Resolve().Numerator(), "native-numerator.raw", halfAccumulation ? 8 : 4);
+            captureRaw(transparency.Resolve().Numerator(), "native-numerator.raw", marchHeatmap ? 16 : halfAccumulation ? 8 : 4);
+            if (marchHeatmap)
+                captureRaw(transparency.Resolve().MarchCounters(), "native-march-counters.rgba32f", 16);
             captureRaw(transparency.Resolve().Denominator(), "native-denominator.raw", halfAccumulation ? 8 : 4);
             captureRaw(transparency.Resolve().TotalTau(), "native-total-tau.raw", halfAccumulation ? 8 : 4);
             captureRaw(transparency.Resolve().BackNumerator(), "native-back-numerator.raw", halfAccumulation ? 8 : 4);
@@ -2589,6 +3145,8 @@ int main(int argc, const char **argv)
         viewer.SetFrostNormalTiling(o.frostNormalTiling);
         viewer.SetLutMinFilter(o.lutMinFilter);
         viewer.SetLutMinRetain(o.lutMinRetain);
+        viewer.SetLutIgn(o.lutIgn, o.lutJitterStrength);
+        viewer.SetLutPlane(o.lutPlane);
         viewer.SetSparseBlur(o.sparseBlur);
         viewer.SetCubicTrilinear(o.cubicTrilinear);
         viewer.SetPoisonResolve(o.poisonResolve);
@@ -2610,14 +3168,21 @@ int main(int argc, const char **argv)
         viewer.SetSceneLighting(o.sunIntensity, o.spotIntensity, o.volumeShadows);
         viewer.SetVolumeResolution(o.lowResolutionVolumes, o.temporalVolumeDithering);
         viewer.SetTaa(o.taa);
+        viewer.SetStochasticSmokeFilter(o.stochasticSmokeFilter);
+        viewer.SetQuadVolumeT(o.quadVolumeT, o.eightVolumeT);
+        viewer.SetVolumeViews(o.vdbCompute, o.vdbNearRayLod, o.vdbQuarterReference, o.vdbSharedLighting, o.marchHeatmap, o.showSkippedSteps);
+        viewer.SetAccumulationAudit(o.accumulationAudit);
         viewer.SetVolumeLutSkip(o.volumeLutSkip, o.volumeMarchStats, o.volumeReferenceSampling);
         viewer.SetInitialVolumeExtinction(o.initialVolumeExtinction);
+        viewer.SetVolumeScattering(o.volumeScatteringOctaves);
         viewer.SetInitialShellOffset(o.shellOffsetBins);
         viewer.SetFlattenShell(o.flattenShell);
+        viewer.SetMagazineOrdering(o.magazineOrdering, o.groupWeightStrength, o.groupDepthRange);
+        viewer.SetMagazineNeighbours(o.magazineNeighbours);
+        viewer.SetGameplayGrenade(o.gameplayGrenade, o.grenadeStorage, o.grenadeSkip);
         viewer.SetBakedSmoke(o.bakedSmoke, o.smokeMask, o.smokeDoorOpen);
-        viewer.SetSmokeAnimation(o.smokeFrame, o.smokeBrickSkip, o.smokeSequencePath, o.playSmoke,
-                                 o.smokeInterpolation);
-        viewer.SetVolumeMarch(o.volumeStepSize, o.volumeLowT, o.volumeStepScale, o.volumeMaxSteps);
+        viewer.SetSmokeAnimation(o.smokeFrame, o.smokeBrickSkip, o.smokeSequencePath, o.playSmoke);
+        viewer.SetVolumeMarch(o.volumeStepSize, o.volumeLowT, o.volumeStepScale, o.volumeMaxSteps, o.volumeEarlyOut);
         viewer.SetCalibration(o.calibrationBoard, o.emissiveGain);
         viewer.SetEmissiveFront(o.emissiveFront);
         viewer.SetOccupancyOverlay(o.occupancyOverlay, o.occupancySlice);
@@ -2625,6 +3190,8 @@ int main(int argc, const char **argv)
         { viewer.Configure(o.cubic, o.frost, o.sponza, o.vfx, o.behind, o.fullBlur, preset, o.sigmaLimit); };
         configureCamera(o.cameraPreset);
         viewer.Init();
+        viewer.SetSmokeTrailComparison(o.smokeTrailReference, o.smokeTrailRebuild);
+        viewer.SetSmokeShotPreview(o.smokeShots, o.smokeShotRadius);
         printf("Renderer initialized\n");
 
         std::unique_ptr<avboit::ViewerUi> gui;

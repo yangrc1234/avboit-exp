@@ -84,7 +84,7 @@ def check(folder, original=None, enabled=True):
     ]
     assert np.array_equal(np.sort(active), expected_candidates), "Missing or stale candidate quad"
     count = int(warp[0])
-    prefix = warp[2 : 2 + count * 2 : 2]
+    prefix = (warp[2 : 2 + count] >> 3)
     quads = []
     if enabled:
         for y0 in range(0, h, 16):
@@ -125,7 +125,7 @@ def check(folder, original=None, enabled=True):
         assert x0 % 16 == 0 and y0 % 16 == 0 and x1 == min(x0 + 16, w) and y1 == min(y0 + 16, h)
         virtual = math.log1p(z) / math.log(81) * int(warp[0]) - 2
         vi = int(virtual)
-        mapped = int(warp[2 + vi * 2]) + (virtual - vi if warp[3 + vi * 2] & 1 else 0)
+        mapped = int(warp[2 + vi] >> 3) + (virtual - vi if warp[2 + vi] & 1 else 0)
         lower = math.floor(mapped)
         upper = min(lower + 1, vd - 1)
         assert 0 <= lower < vd, (quad, z, mapped)

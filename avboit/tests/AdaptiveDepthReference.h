@@ -32,7 +32,7 @@ inline std::vector<uint32_t> BuildDepthWarp(std::vector<uint32_t> raw, uint32_t 
             merged[i] = raw[2 * i] | raw[2 * i + 1];
         raw = std::move(merged);
     }
-    std::vector<uint32_t> result(2 + 2 * (VirtualSlices + 1));
+    std::vector<uint32_t> result(2 + (VirtualSlices + 1));
     result[0] = uint32_t(raw.size());
     result[1] = prefix.back() + towardBins + awayBins;
     for (size_t i = 0; i <= VirtualSlices; ++i)
@@ -40,8 +40,8 @@ inline std::vector<uint32_t> BuildDepthWarp(std::vector<uint32_t> raw, uint32_t 
         const bool active = i < raw.size() && prefix[i + 1] != prefix[i];
         const bool previous = i > 0 && i < raw.size() && prefix[i] != prefix[i - 1];
         const bool next = i + 1 < raw.size() && prefix[i + 2] != prefix[i + 1];
-        result[2 + 2 * i] = prefix[std::min(i, raw.size())] + towardBins;
-        result[3 + 2 * i] = uint32_t(active) | (active && !previous ? 2u : 0u) | (active && !next ? 4u : 0u);
+        result[2 + i] = ((prefix[std::min(i, raw.size())] + towardBins) << 3) | uint32_t(active) |
+                        (active && !previous ? 2u : 0u) | (active && !next ? 4u : 0u);
     }
     return result;
 }

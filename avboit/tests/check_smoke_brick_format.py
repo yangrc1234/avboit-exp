@@ -11,6 +11,20 @@ spec = importlib.util.spec_from_file_location(
 packer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(packer)
 
+spec = importlib.util.spec_from_file_location(
+    "distance_baker", Path(__file__).resolve().parents[2] / "tools/add_smoke_distance_table.py"
+)
+distance_baker = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(distance_baker)
+
+# An overestimate could let all four rays skip a visible brick.
+occupied = np.zeros((4, 6, 7), dtype=bool)
+occupied[1, 1, 2] = occupied[0, 5, 6] = True
+coords = np.moveaxis(np.indices(occupied.shape), 0, -1)
+nearest = np.minimum.reduce([np.abs(coords - cell).max(axis=-1) for cell in np.argwhere(occupied)])
+np.testing.assert_array_equal(distance_baker.distance_table(occupied), nearest)
+assert np.all(distance_baker.distance_table(np.zeros_like(occupied)) == 255)
+
 with tempfile.TemporaryDirectory() as tmp:
     src, dst = Path(tmp) / "density.raw", Path(tmp) / "bricks.bin"
     z, y, x = np.indices((8, 8, 8))
@@ -46,4 +60,23 @@ with tempfile.TemporaryDirectory() as tmp:
                         )
                         decoded = lo + codes * (hi - lo) / 15
                         assert np.max(np.abs(decoded - reference)) <= (hi - lo) / 30 + 1e-6
-print("Brick round-trip checks passed (formats, empty bricks, borders, axes).")
+    # Partial final bricks must keep the logical grid and clamp the filtering halo.
+    for n in (14, 34):
+        field = np.random.default_rng(n).random((n, n, n), dtype=np.float32)
+        field.tofile(src)
+        packer.pack(src, dst, n, precision="half")
+        data = dst.read_bytes()
+        h = np.frombuffer(data, "<u4", 8)
+        baked = distance_baker.bake_frame(data)
+        bh = np.frombuffer(baked, "<u4", 8)
+        assert data[32:int(h[5])*4] == baked[32:int(h[5])*4]
+        assert data[int(h[5])*4:] == baked[int(bh[5])*4:]
+        g = (n + 3) // 4
+        assert np.all(h[1:4] == n)
+        table = np.frombuffer(data, "<u2", g**3, 32).reshape(g, g, g)
+        expected = np.pad(field, ((0, g*4+1-n),)*3, mode="edge").astype("f2")
+        for z, y, x in np.ndindex(g, g, g):
+            offset = int(h[5])*4 + (int(table[z,y,x])-1)*256
+            actual = np.frombuffer(data, "<f2", 125, offset).reshape(5,5,5)
+            np.testing.assert_array_equal(actual, expected[z*4:z*4+5,y*4:y*4+5,x*4:x*4+5])
+print("Brick round-trip checks passed (formats, empty bricks, borders, axes, partial bricks).")

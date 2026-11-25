@@ -8,5 +8,6 @@ namespace avboit
 struct GeometryDraw
 {
     unsigned actor = 0, material = 0, firstIndex = 0, indexCount = 0;
+    unsigned firstVertex = 0; // Volume proxy record for compute dispatch.
 };
 } // namespace avboit

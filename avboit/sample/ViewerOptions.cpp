@@ -19,14 +19,31 @@ constexpr Flag Flags[] = {
     {"--no-taa", &ViewerOptions::taa, false},
     {"--volume-full-res", &ViewerOptions::lowResolutionVolumes, false},
     {"--no-lut-min-filter", &ViewerOptions::lutMinFilter, false},
+    {"--lut-ign", &ViewerOptions::lutIgn, true},
+    {"--lut-plane", &ViewerOptions::lutPlane, true},
+    {"--magazine-neighbours", &ViewerOptions::magazineNeighbours, true},
     {"--no-smoke-brick-skip", &ViewerOptions::smokeBrickSkip, false},
     {"--baked-smoke", &ViewerOptions::bakedSmoke, true},
     {"--smoke-paused", &ViewerOptions::playSmoke, false},
-    {"--smoke-single-frame", &ViewerOptions::smokeInterpolation, false},
+    {"--grenade-skip", &ViewerOptions::grenadeSkip, true},
+    {"--gameplay-grenade", &ViewerOptions::gameplayGrenade, true},
+    {"--smoke-trail-reference", &ViewerOptions::smokeTrailReference, true},
+    {"--smoke-trail-rebuild", &ViewerOptions::smokeTrailRebuild, true},
     {"--no-smoke-mask", &ViewerOptions::smokeMask, false},
     {"--smoke-door-closed", &ViewerOptions::smokeDoorOpen, false},
+    {"--smoke-stochastic-filter", &ViewerOptions::stochasticSmokeFilter, true},
     {"--volume-reference-sampling", &ViewerOptions::volumeReferenceSampling, true},
+    {"--volume-quad-t", &ViewerOptions::quadVolumeT, true},
+    {"--no-volume-quad-t", &ViewerOptions::quadVolumeT, false},
+    {"--volume-eight-t", &ViewerOptions::eightVolumeT, true},
     {"--volume-lut-skip", &ViewerOptions::volumeLutSkip, true},
+    {"--vdb-shared-lighting", &ViewerOptions::vdbSharedLighting, true},
+    {"--vdb-quarter-ray-reference", &ViewerOptions::vdbQuarterReference, true},
+    {"--vdb-near-ray-lod", &ViewerOptions::vdbNearRayLod, true},
+    {"--vdb-compute", &ViewerOptions::vdbCompute, true},
+    {"--no-volume-early-out", &ViewerOptions::volumeEarlyOut, false},
+    {"--volume-skip-view", &ViewerOptions::showSkippedSteps, true},
+    {"--volume-step-view", &ViewerOptions::marchHeatmap, true},
     {"--volume-march-stats", &ViewerOptions::volumeMarchStats, true},
     {"--dense-blur", &ViewerOptions::sparseBlur, false},
     {"--no-tile-resolve", &ViewerOptions::tileResolve, false},
@@ -129,7 +146,7 @@ ViewerOptions ParseViewerOptions(int argc, const char *const *argv)
                 isFlag = true;
                 break;
             }
-        if (isFlag)
+        if (isFlag || arg == "--smoke-single-frame") // Accepted by older launch scripts.
             continue;
         auto value = [&]()
         {
@@ -174,6 +191,8 @@ ViewerOptions ParseViewerOptions(int argc, const char *const *argv)
         {
             options.volumeUpsampleTest = options.headless = options.taa = options.lowResolutionVolumes = true;
         }
+        else if (arg == "--volume-ms-octaves")
+            options.volumeScatteringOctaves = ReadInteger(arg, value(), 0, 3);
         else if (arg == "--volume-extinction")
             options.initialVolumeExtinction = ReadFloat(arg, value(), 0.f, 128.f);
         else if (arg == "--smoke-frame")
@@ -183,6 +202,21 @@ ViewerOptions ParseViewerOptions(int argc, const char *const *argv)
             options.smokeSequencePath = value();
             options.bakedSmoke = true;
         }
+        else if (arg == "--accumulation-audit")
+        {
+            options.accumulationAudit = ReadInteger(arg, value(), 0, 256);
+            const auto mode = options.accumulationAudit;
+            if (mode != 0 && mode != 1 && mode != 2 && mode != 4 && mode != 6 && mode != 8 && mode != 16 &&
+                mode != 33 && mode != 65 && mode != 128 && mode != 256)
+                throw std::invalid_argument("Unsupported accumulation audit mode");
+            options.headless = true;
+        }
+        else if (arg == "--grenade-storage")
+            options.grenadeStorage = ReadInteger(arg, value(), 0, 2);
+        else if (arg == "--smoke-shots")
+            options.smokeShots = ReadInteger(arg, value(), 0, 15);
+        else if (arg == "--smoke-shot-radius")
+            options.smokeShotRadius = ReadFloat(arg, value(), .005f, 1.f);
         else if (arg == "--volume-step")
             options.volumeStepSize = ReadFloat(arg, value(), .005f, 2.f);
         else if (arg == "--volume-low-t")
@@ -204,12 +238,20 @@ ViewerOptions ParseViewerOptions(int argc, const char *const *argv)
                 ReadFloat(arg, value(), -std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
         else if (arg == "--lut-min-retain")
             options.lutMinRetain = ReadFloat(arg, value(), 0.f, 1.f);
+        else if (arg == "--lut-jitter-strength")
+            options.lutJitterStrength = ReadFloat(arg, value(), 0.f, 2.f);
         else if (arg == "--geometric-shell")
             options.flattenShell = false;
+        else if (arg == "--magazine-order")
+            options.magazineOrdering = ReadInteger(arg, value(), 0, 2);
+        else if (arg == "--group-weight")
+            options.groupWeightStrength = ReadFloat(arg, value(), 0.f, 8.f);
+        else if (arg == "--group-depth-range")
+            options.groupDepthRange = ReadFloat(arg, value(), .05f, 10.f);
         else if (arg == "--shell-offset-bins")
             options.shellOffsetBins = ReadFloat(arg, value(), -4.f, 4.f);
         else if (arg == "--stress")
-            options.stressPreset = ReadInteger(arg, value(), 0, 33);
+            options.stressPreset = ReadInteger(arg, value(), 0, 34);
         else if (arg == "--camera-preset")
             options.cameraPreset = ReadInteger(arg, value(), 0, 11);
         else if (arg == "--benchmark")
@@ -245,6 +287,13 @@ ViewerOptions ParseViewerOptions(int argc, const char *const *argv)
     if (options.depthBudget != 16 && options.depthBudget != 32 && options.depthBudget != 64 &&
         options.depthBudget != 128)
         throw std::invalid_argument("--depth-budget: expected 16, 32, 64 or 128");
+    if (options.accumulationAudit != 0 && options.stochasticSmokeFilter)
+        throw std::invalid_argument("Accumulation audits require the deterministic density filter");
+    if (options.accumulationAudit == 65 && (options.volumeStepScale != 1.f || options.volumeLutSkip))
+        throw std::invalid_argument("T-LUT audit requires --volume-step-scale 1 and disabled LUT skipping");
+    if (options.accumulationAudit == 128 && options.spotIntensity != 0.f)
+        throw std::invalid_argument("Spotlight audit requires --spot-intensity 0");
+    options.quadVolumeT |= options.eightVolumeT;
     options.uiCapture |= options.uiSelfTest;
     options.emissiveBalls |= options.emissiveFront;
     if (options.volumeScale != 2 && options.volumeScale != 8)
@@ -288,26 +337,49 @@ Scene and materials:
   --legacy-scene             Old Sponza loader for calibration comparisons
   --sponza-path PATH          Explicit Sponza.gltf path; enables Sponza
   --geometric-shell         Scene 32: use ordinary camera offset instead of flattened ordering
-  --stress 0..33             Stress preset (26: noise shell; 27/28: silhouette; 29/30: eight layers; 31: zero spread; 32: flattened cubes; 33: third-layer halo); also in ImGui Test case
+  --magazine-order 0..2     Scene 34: geometric / uniform flat group / depth-weighted flat group (default 2)
+  --magazine-neighbours     Scene 34: add ordinary RGB panes before and behind the groups
+  --group-weight 0..8       Scene 34: depth-weight falloff in stops (default 4)
+  --group-depth-range M     Scene 34: shared depth span, .05..10 metres (default 2)
+  --stress 0..34             Stress preset (26: noise shell; 27/28: silhouette; 29/30: eight layers; 31: zero spread; 32: flattened cubes; 33: third-layer halo; 34: folded magazine); also in ImGui Test case
   --sun-intensity N          Sponza sun irradiance (0..12), default 2
   --spot-intensity N         Sponza dynamic spotlight intensity (0..500), default 80
   --volume-temporal-dither  Animate raymarch sample phases (requires final TAA)
   --volume-upsample-test   Headless static/moving A/B captures (enables half-res + TAA)
+  --volume-ms-octaves 0..3 Additional scattering octaves (default 2; 0: single)
   --volume-extinction N    Initial volume material extinction, 0..128 per world unit
+  --grenade-storage N  GPU coverage: 0 dense R8, 1 sparse byte buffer, 2 sparse hardware-filtered atlas
+  --grenade-skip       Enable conservative brick empty interval skipping
+  --gameplay-grenade  Gameplay binary coverage smoke, unobstructed sphere (scenes 24/25)
+  --smoke-shots N     Preview 0..15 world-space bullet capsules through gameplay smoke
+  --smoke-shot-radius M  Capsule radius in metres (0.005..1, default 0.45)
+  --smoke-trail-reference  Offline comparison: evaluate every capsule without the index
+  --smoke-trail-rebuild  Offline timing: rebuild the capsule index every frame
   --baked-smoke       Use compressed animated density in scenes 24/25
   --smoke-frame N     Initial zero-based frame, clamped to sequence (default 15)
   --smoke-sequence PATH  Load a local sequence directory instead of the bundled probe
-  --smoke-paused      Start paused; use Play baked smoke / Restart smoke to play
-  --smoke-single-frame Use floor(frame); upload and sample only one density frame
+  --smoke-paused      Start paused; use Actors > VDB animation > Play / Restart
   --no-smoke-brick-skip Disable brick traversal for comparison
   --no-smoke-mask     Disable gameplay coverage for baked smoke
-  --smoke-door-closed Close the example coverage doorway
+  --smoke-door-closed Close the VDB example coverage doorway
+  --vdb-compute        Q4 trilinear compute raymarch (quad T mode)
+  --vdb-quarter-ray-reference  Benchmark one independent ray per 2x2 accumulation texels (compute)
+  --vdb-near-ray-lod     Switch wave-wide from quad to diagonal-pair to pixel rays as depth increases (compute)
+  --vdb-shared-lighting  Compare low-transmission light sharing with --vdb-compute
+  --no-volume-early-out    March through low-transmission tails for comparison
+  --volume-skip-view   Show skipped march intervals per source ray
+  --volume-step-view   Show executed march intervals per source ray
+  --smoke-stochastic-filter  Experimental single-voxel filtering in smoke accumulation only
+  --accumulation-audit N  Offline shader ablation; see docs/ACCUMULATION_PROFILE.zh-CN.md
   --volume-reference-sampling  Validation: four density taps and full tail lighting
+  --volume-quad-t      Quad-shared T-LUT, four-step interpolation (default on)
+  --no-volume-quad-t   Disable quad-shared T-LUT and quad empty-brick jumps
+  --volume-eight-t     Experimental eight uniform T anchors (implies quad sharing)
   --volume-lut-skip    Experimental exact-T empty interval skipping
   --volume-march-stats       Diagnostic numerator = intervals, shading evaluations, skipped intervals
   --volume-step N           World-space accumulation step (default .5)
   --volume-low-t N          Grow steps below this max-RGB T (default .1)
-  --volume-step-scale N     Maximum low-T step multiplier, 1..8 (default 4)
+  --volume-step-scale N     Maximum low-T step multiplier, 1..8 (default 1)
   --volume-max-steps N      Per-ray step budget, 16..512 (default 256)
   --taa                     Enable HDR TAA and temporal volume dithering (default)
   --no-taa                  Disable TAA for non-temporal comparisons
@@ -362,6 +434,9 @@ Quality and references:
   --lut-min-filter          Bounded 3x3 XY min after integration (default), no new RT
   --no-lut-min-filter       Disable XY min-filter for comparison
   --lut-min-retain 0..1     Minimum fraction of centre T retained (default .5; 0: old min, 1: no XY change)
+  --lut-ign                 IGN XY jitter for surface accumulation LUT reads; suspends Zero-T depth culling
+  --lut-plane               Per-column receiver-plane depth for surface LUT reads; overrides IGN, suspends Zero-T
+  --lut-jitter-strength 0..2 Full jitter width in LUT texels (default 1); temporal with TAA, static without
   --fixed-z                 Uniform log-Z reference (adaptive is default)
   --depth-budget N          Adaptive Z budget: 16, 32, 64, 128 (default 128)
   --follow-window           Follow window size (longest side capped at 2048)
