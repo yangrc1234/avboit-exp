@@ -21,6 +21,7 @@ int main()
     try
     {
         auto defaults = Parse({});
+        Require(!defaults.gpuValidation && Parse({"--gpu-validation"}).gpuValidation);
         Require(!defaults.gameplayGrenade && Parse({"--gameplay-grenade"}).gameplayGrenade);
         Require(defaults.grenadeStorage == 0 && !defaults.grenadeSkip);
         Require(defaults.smokeShots == 0 && Parse({"--smoke-shots", "15"}).smokeShots == 15);

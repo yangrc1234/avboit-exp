@@ -60,14 +60,15 @@ void OitResolve::Create(nvrhi::IDevice *device, const OitResolveInputs &inputs)
                                     .setDebugName("Refracted background B prime cache")
                                     .setInitialState(nvrhi::ResourceStates::ShaderResource)
                                     .setKeepInitialState(true));
-    m_accumulation.framebuffer = device->createFramebuffer(
-        nvrhi::FramebufferDesc()
-            .addColorAttachment(m_numerator)
-            .addColorAttachment(m_denominator)
-            .addColorAttachment(m_totalTau)
-            .addColorAttachment(m_backNumerator)
-            .setDepthAttachment(
-                nvrhi::FramebufferAttachment().setTexture(inputs.opaqueHardwareDepth).setReadOnly(true)));
+    auto accumColors = nvrhi::FramebufferDesc()
+                           .addColorAttachment(m_numerator)
+                           .addColorAttachment(m_denominator)
+                           .addColorAttachment(m_totalTau)
+                           .addColorAttachment(m_backNumerator);
+    if (inputs.lowResolutionVolumes)
+        m_upsample.framebuffer = device->createFramebuffer(accumColors);
+    m_accumulation.framebuffer = device->createFramebuffer(accumColors.setDepthAttachment(
+        nvrhi::FramebufferAttachment().setTexture(inputs.opaqueHardwareDepth).setReadOnly(true)));
     // Shared by full/half-resolution volume accumulation. Bound with the PSO.
     auto shadowComparison = device->createSampler(nvrhi::SamplerDesc()
                                                       .setAllFilters(true)
@@ -314,7 +315,6 @@ void OitResolve::Create(nvrhi::IDevice *device, const OitResolveInputs &inputs)
             }
             m_lowPipelines.push_back(low);
         }
-        m_upsample.framebuffer = m_accumulation.framebuffer;
         create(m_upsample,
                D().addItem(B::Texture_SRV(3, inputs.opaque))
                    .addItem(B::Texture_SRV(4, m_lowTargets[0]))
@@ -388,6 +388,48 @@ void OitResolve::RecordAccumulation(nvrhi::ICommandList *commands, const std::ve
         state.bindings = {pass.bindings};
         state.viewport.addViewportAndScissorRect(pass.framebuffer->getFramebufferInfo().getViewport());
         state.indexBuffer = nvrhi::IndexBufferBinding().setBuffer(m_indices).setFormat(nvrhi::Format::R32_UINT);
+        // Full-resolution draws sample scene depth while hardware depth testing reads the same DSV.
+        // NVRHI tracks each binding separately; request the combined read state once per graphics batch.
+        bool prepareFullDraw = true;
+        auto bindDraw = [&]()
+        {
+            if (low)
+            {
+                commands->setGraphicsState(state);
+                return;
+            }
+            if (prepareFullDraw)
+            {
+                const auto &fb = pass.framebuffer->getDesc();
+                for (const auto &color : fb.colorAttachments)
+                    commands->setTextureState(color.texture, color.subresources, nvrhi::ResourceStates::RenderTarget);
+                for (const auto &item : pass.bindings->getDesc()->bindings)
+                {
+                    using namespace nvrhi;
+                    if (item.type == ResourceType::Texture_SRV)
+                    {
+                        auto *texture = static_cast<ITexture *>(item.resourceHandle);
+                        auto read = ResourceStates::ShaderResource;
+                        if (texture == fb.depthAttachment.texture)
+                            read = read | ResourceStates::DepthRead;
+                        commands->setTextureState(texture, item.subresources, read);
+                    }
+                    else if (item.type == ResourceType::TypedBuffer_SRV || item.type == ResourceType::ConstantBuffer)
+                        commands->setBufferState(static_cast<IBuffer *>(item.resourceHandle),
+                            item.type == ResourceType::ConstantBuffer ? ResourceStates::ConstantBuffer : ResourceStates::ShaderResource);
+                    else if (item.type != ResourceType::Sampler && item.type != ResourceType::PushConstants)
+                        throw std::logic_error("Unhandled OIT graphics resource state");
+                }
+                commands->setBufferState(m_indices, nvrhi::ResourceStates::IndexBuffer);
+                if (state.indirectParams)
+                    commands->setBufferState(state.indirectParams, nvrhi::ResourceStates::IndirectArgument);
+                commands->commitBarriers();
+                prepareFullDraw = false;
+            }
+            commands->setEnableAutomaticBarriers(false);
+            commands->setGraphicsState(state);
+            commands->setEnableAutomaticBarriers(true);
+        };
         // Seed the cleared targets with one VDB. Additional actors use additive OM
         // blending, including overlapping volumes. No packed UAV loads are needed.
         const GeometryDraw *computed = nullptr;
@@ -435,6 +477,7 @@ void OitResolve::RecordAccumulation(nvrhi::ICommandList *commands, const std::ve
                 commands->setPushConstants(&draw.firstVertex, sizeof(draw.firstVertex));
                 const auto &grid = m_cornerLight->getDesc();
                 commands->dispatch((grid.width + 3) / 4, (grid.height + 3) / 4, (grid.depth + 3) / 4);
+                prepareFullDraw = true;
             }
             if (m_classifyPipeline && m_computeMaterials.at(draw.material))
             {
@@ -451,20 +494,21 @@ void OitResolve::RecordAccumulation(nvrhi::ICommandList *commands, const std::ve
                     commands->setComputeState(cs);
                     commands->setPushConstants(&draw.firstVertex, sizeof(draw.firstVertex));
                     commands->dispatch((m_proxyCells + 63) / 64);
+                    prepareFullDraw = true;
                 }
                 AVBOIT_GPU_SCOPE(commands, "VDB classified brick draws");
                 state.indirectParams = m_brickArgs;
                 {
                     AVBOIT_GPU_SCOPE(commands, "VDB classified high draw");
                     state.pipeline = low ? m_lowPipelines.at(draw.material) : m_accumulationPipelines.at(draw.material);
-                    commands->setGraphicsState(state);
+                    bindDraw();
                     commands->setPushConstants(&draw.firstVertex, sizeof(draw.firstVertex));
                     commands->drawIndexedIndirect(0);
                 }
                 {
                     AVBOIT_GPU_SCOPE(commands, "VDB classified low draw");
                     state.pipeline = m_brickLowPipeline;
-                    commands->setGraphicsState(state);
+                    bindDraw();
                     const unsigned lowActor = draw.firstVertex | 0x80000000u;
                     commands->setPushConstants(&lowActor, sizeof(lowActor));
                     commands->drawIndexedIndirect(5 * sizeof(unsigned));
@@ -487,7 +531,7 @@ void OitResolve::RecordAccumulation(nvrhi::ICommandList *commands, const std::ve
                 commands->draw(nvrhi::DrawArguments().setVertexCount(6).setInstanceCount(m_proxyCells));
             }
             state.pipeline = low ? m_lowPipelines.at(draw.material) : m_accumulationPipelines.at(draw.material);
-            commands->setGraphicsState(state);
+            bindDraw();
             if (m_proxyMark || m_groupMarch)
                 commands->setPushConstants(&draw.firstVertex, sizeof(draw.firstVertex));
             if (m_groupMarch && m_computeMaterials.at(draw.material))

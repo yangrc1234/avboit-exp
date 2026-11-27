@@ -7,6 +7,7 @@
 #include <donut/engine/ShaderFactory.h>
 #include <nvrhi/utils.h>
 #include <nvrhi/d3d12.h>
+#include <d3d12sdklayers.h>
 #include <array>
 #include <fstream>
 #include <limits>
@@ -3317,6 +3318,16 @@ class NativeViewer : public app::IRenderPass
 // Test-only driver compiled in this translation unit to access the sample host.
 #include "tests/ViewerSelfTests.inl"
 
+static void CALLBACK ReportD3D12Message(D3D12_MESSAGE_CATEGORY, D3D12_MESSAGE_SEVERITY severity,
+                                        D3D12_MESSAGE_ID id, LPCSTR text, void *context)
+{
+    if (severity <= D3D12_MESSAGE_SEVERITY_WARNING)
+        fprintf(stderr, "D3D12 %s #%u: %s\n", severity <= D3D12_MESSAGE_SEVERITY_ERROR ? "error" : "warning",
+                static_cast<unsigned>(id), text);
+    if (severity <= D3D12_MESSAGE_SEVERITY_ERROR)
+        ++*static_cast<std::atomic<unsigned> *>(context);
+}
+
 int main(int argc, const char **argv)
 {
     avboit::ViewerOptions options;
@@ -3335,6 +3346,8 @@ int main(int argc, const char **argv)
         return 0;
     }
     const auto &o = options;
+    if (o.gpuValidation)
+        std::setvbuf(stdout, nullptr, _IONBF, 0);
 
     log::ConsoleApplicationMode();
     std::atomic<unsigned> validationErrors{0};
@@ -3355,6 +3368,8 @@ int main(int argc, const char **argv)
     // displayPixel already applies the transfer curve; avoid a second sRGB encode.
     params.swapChainFormat = nvrhi::Format::RGBA8_UNORM;
     params.enableNvrhiValidationLayer = true;
+    params.enableDebugRuntime = o.gpuValidation;
+    params.enableGPUValidation = o.gpuValidation;
     bool created = o.headless ? manager->CreateHeadlessDevice(params)
                               : manager->CreateWindowDeviceAndSwapChain(params, "AVBOIT experiment - DX12");
     if (!created)
@@ -3364,8 +3379,21 @@ int main(int argc, const char **argv)
     }
 
     int result = 0;
+    nvrhi::RefCountPtr<ID3D12InfoQueue1> infoQueue;
+    DWORD callbackCookie = 0;
+    bool callbackRegistered = false;
+    auto *native = static_cast<ID3D12Device *>(manager->GetDevice()->getNativeObject(nvrhi::ObjectTypes::D3D12_Device));
     try
     {
+        if (o.gpuValidation)
+        {
+            if (FAILED(native->QueryInterface(IID_PPV_ARGS(&infoQueue))) ||
+                FAILED(infoQueue->RegisterMessageCallback(ReportD3D12Message, D3D12_MESSAGE_CALLBACK_FLAG_NONE,
+                                                          &validationErrors, &callbackCookie)))
+                throw std::runtime_error("D3D12 validation diagnostics unavailable. Install Windows Graphics Tools.");
+            callbackRegistered = true;
+            fprintf(stderr, "D3D12 GPU validation on %s\n", manager->GetRendererString());
+        }
         printf("Device ready, headless=%d\n", o.headless);
         NativeViewer viewer(manager.get());
         viewer.SetFpsLimit(o.fpsLimit);
@@ -3488,6 +3516,13 @@ int main(int argc, const char **argv)
         {
             manager->AddRenderPassToBack(&viewer);
             manager->AddRenderPassToBack(gui.get());
+            if (o.gpuValidation)
+                manager->m_callbacks.afterPresent = [reported = false](app::DeviceManager &, uint32_t) mutable
+                {
+                    if (!reported)
+                        fprintf(stderr, "D3D12 validation: first Present returned\n");
+                    reported = true;
+                };
             manager->RunMessageLoop();
             manager->RemoveRenderPass(gui.get());
             manager->RemoveRenderPass(&viewer);
@@ -3499,6 +3534,16 @@ int main(int argc, const char **argv)
         fprintf(stderr, "%s\n", error.what());
         result = 1;
     }
+    const HRESULT removed = native->GetDeviceRemovedReason();
+    if (FAILED(removed))
+    {
+        fprintf(stderr, "D3D12 device removed on %s: 0x%08lX\n", manager->GetRendererString(),
+                static_cast<unsigned long>(removed));
+        result = 1;
+    }
+    if (callbackRegistered)
+        infoQueue->UnregisterMessageCallback(callbackCookie);
+    infoQueue = nullptr;
     manager->Shutdown();
     if (validationErrors)
         result = 1;

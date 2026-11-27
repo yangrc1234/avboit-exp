@@ -13,6 +13,7 @@ enum class BrickLod { Balanced, Performance, Low };
 
 struct ViewerOptions
 {
+    bool gpuValidation = false;
     bool help = false, headless = false, uiCapture = false, uiSelfTest = false, actorEditorTest = false;
     bool cubic = true, frost = true, sparseBlur = true, fullBlur = false;
     bool cubicTrilinear = false;

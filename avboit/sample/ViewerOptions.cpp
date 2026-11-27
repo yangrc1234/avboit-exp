@@ -16,6 +16,7 @@ struct Flag
     bool value;
 };
 constexpr Flag Flags[] = {
+    {"--gpu-validation", &ViewerOptions::gpuValidation, true},
     {"--no-taa", &ViewerOptions::taa, false},
     {"--volume-full-res", &ViewerOptions::lowResolutionVolumes, false},
     {"--no-lut-min-filter", &ViewerOptions::lutMinFilter, false},
@@ -342,6 +343,7 @@ Run and debug (benchmarks require Windows Developer Mode for StablePowerState):
   --order-seed UINT          Deterministic shuffled order (default 1)
   --help, -h                 Print help without creating a GPU device
   --headless                 Render native-raster.ppm and native-lut.rgba8
+  --gpu-validation           Enable D3D12 debug layer and GPU-based validation; log diagnostics to stderr
   --ui-capture               Headless capture including ImGui
   --ui-self-test             Exercise live ImGui controls and resource rebuilding
   --occupancy-overlay 0..7  Off / requests RGB / transparent / frost / sharp B / B work / volume XY / volume Z
