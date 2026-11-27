@@ -105,7 +105,7 @@ b = capture("motion-stochastic", 10, True, True)
 for phase, indices in (("static-camera", range(8)), ("moving-camera", range(8, 16))):
     pairs = []
     for frame in indices:
-        name = f"volume-upscale-dithered-{frame:02}.ppm"
+        name = f"volume-upscale-bilateral-{frame:02}.ppm"
         ref = np.asarray(Image.open(a / name), dtype=float)
         test = np.asarray(Image.open(b / name), dtype=float)
         pairs.append(test - ref)
@@ -116,7 +116,7 @@ for phase, indices in (("static-camera", range(8)), ("moving-camera", range(8, 1
         "mean_signed_255": float(delta.mean()),
     }
 for folder in (a, b):
-    for path in folder.glob("volume-upscale-dithered-*-*.rgba16f"):
+    for path in folder.glob("volume-upscale-bilateral-*-*.rgba16f"):
         assert np.isfinite(texture(path, "<f2", 4)).all(), path
 (out / "summary.json").write_text(json.dumps(summary, indent=2))
 print(json.dumps(summary, indent=2))

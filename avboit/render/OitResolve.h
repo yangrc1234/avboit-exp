@@ -13,14 +13,19 @@ struct OitResolveInputs
 {
     unsigned width = 0, height = 0;
     bool marchHeatmap = false;
-    nvrhi::ShaderHandle vdbMarchCompute;
+    nvrhi::ShaderHandle vdbMarchCompute, vdbProxyVertex, vdbGroupVertex;
+    nvrhi::ShaderHandle vdbCornerCache, brickClassify, brickLowPixel;
+    bool brickCube = false;
+    std::array<unsigned, 3> cornerGrid{};
+    unsigned vdbProxyCells = 0;
+    unsigned brickQuadFirstIndex = ~0u;
     unsigned vdbRaySpacing = 1;
     bool halfAccumulation = false;
     bool lowResolutionVolumes = true;
     nvrhi::BufferHandle vertices, indices, camera, materials, warp;
     nvrhi::BufferRange vertexRange;
     nvrhi::TextureHandle lut, opaque, interfaceDepth, interfaceSurface, interfaceOffset, screenTiles;
-    nvrhi::TextureHandle opaqueHardwareDepth, volumeDensity, gameplaySmokeMask;
+    nvrhi::TextureHandle opaqueHardwareDepth, volumeDensity, gameplaySmokeMask, smokeVisibility;
     nvrhi::BufferHandle smokeBricks, smokeTrails, smokeSampling;
     nvrhi::TextureHandle smokeTrailCandidates;
     nvrhi::BufferHandle volumeLights;
@@ -32,7 +37,7 @@ struct OitResolveInputs
 
 struct AccumulationTiming
 {
-    GpuTimingRoute clear, lowResolution, upsample, fullResolution;
+    GpuTimingRoute clear, lowResolution, upsample, fullResolution, classify;
 };
 
 // Four-RT accumulation followed by a refracted background cache on transparency tiles.
@@ -67,6 +72,20 @@ class OitResolve
     std::vector<nvrhi::GraphicsPipelineHandle> m_lowPipelines;
     nvrhi::BufferHandle m_indices;
     std::vector<nvrhi::GraphicsPipelineHandle> m_accumulationPipelines;
+    nvrhi::TextureHandle m_proxyStencil;
+    nvrhi::GraphicsPipelineHandle m_proxyMark;
+    nvrhi::TextureHandle m_cornerLight;
+    nvrhi::ComputePipelineHandle m_cornerPipeline;
+    nvrhi::BindingLayoutHandle m_cornerLayout;
+    nvrhi::BindingSetHandle m_cornerBindings;
+    nvrhi::BufferHandle m_brickArgs, m_brickList;
+    nvrhi::ComputePipelineHandle m_classifyPipeline;
+    nvrhi::BindingSetHandle m_classifyBindings;
+    nvrhi::GraphicsPipelineHandle m_brickLowPipeline;
+    bool m_brickCube = false;
+    unsigned m_proxyCells = 0;
+    unsigned m_brickQuadFirstIndex = ~0u;
+    bool m_groupMarch = false;
     nvrhi::ComputePipelineHandle m_marchPipeline;
     nvrhi::BindingLayoutHandle m_marchLayout;
     nvrhi::BindingSetHandle m_marchBindings;

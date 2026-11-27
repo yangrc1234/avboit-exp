@@ -5,6 +5,10 @@
 
 ## 运行原型
 
+JangaFX Q4 烟雾的低配平滑光照在 **VDB pixel march → Classified / rectangle → Brick LOD → Low / smooth lighting**，命令行参数为 `--vdb-brick-lod low`。
+该档沿用 Performance 的 T=0.70 分界。每个 actor 绘制前，CS 为非空 brick 的共享角点计算带阴影的光照。细步长 draw 和 1-step draw 都从同一张 3D 贴图做硬件三线性采样。密度和 T-LUT 仍在原射线位置取样，玻璃后景仍按原规则分开累计。
+128³ 资产使用 33³ 的 RGBA16F 光照缓存，纹素数据约 281 KiB。比一个 brick 更窄的光影变化可能变软或漏采。
+
 `bin/avboit_viewer.exe --sponza --stress 24 --baked-smoke --volume-step 0.1 --volume-extinction 8`
 
 Quality → Volumes 中开启 Baked smoke，可实时切换 Gameplay smoke mask 与 Smoke doorway open。
@@ -56,7 +60,15 @@ mask 另占 32768 B；保留的旧 smoke DDS 是参考路径资源，不计入�
 - 每块 min/max 元数据，密度量化为 4 bits/voxel；2-bit 版本阴影细节损失较明显。
 - 正方向复制一圈边界，实际数据是 5×5×5，便于在一个 brick 内完成 trilinear。
 - 每 brick 一个 occupancy bit，按 4×4×2 bricks 分组，支持跳空。
-- 另有极低分辨率的烘焙 GI occlusion 数据。
+- [第 60 页](https://www.advances.realtimerendering.com/s2026/content/AlexanderMueller_Smolder_Siggraph26.pdf#page=60) 给出 GI 遮蔽的粒度：每 8×8×8 个 brick 存 1 字节。第 84 页说明每个 volume 取一个 GI 采样位置，再用局部烘焙遮蔽调制。
+
+**烘焙环境光遮蔽**。运行 `python tools/bake_smoke_ao.py <序列目录>`，从 Q4 或 FP16 烟雾生成可选的 `ambient-visibility.bin`。128³ 密度场默认对应 4³ R8 遮蔽场，每帧 64 字节。传入 `--size 16` 可提高到 16³，每帧 4 KiB。
+
+每格在 26 个固定球面方向上求透射率，并对方向和格内位置取加权平均，得到参考可见度 `Vref`。R8 存等效密度积分 `D = -ln(Vref) / kref`，整个序列共用量化范围。默认参考值 `kref = 20.4`，对应消光系数 6/m、体积宽度 3.4 m。运行时三线性采样 D，再计算 `exp(-D × 当前消光系数 × 当前体积宽度)`。各方向光程差异越大，偏离参考消光时近似误差越明显。非等比拉伸按最长轴估计，动态 gameplay mask 的形状变化也不会触发重烘焙。
+
+可见度只调制环境光。太阳和局部灯沿用各自的阴影。当前动画帧使用一张 R8 3D 贴图。缺少侧车文件的序列按可见度 1 渲染。可在 **Quality → Volumes → Baked smoke ambient occlusion** 切换，命令行对照使用 `--no-smoke-ao`。
+
+**Brick LOD**。在 **VDB pixel march** 中选择 Classified 矩形或六面体后，Balanced 和 Performance 共用同一套透射率分档。精确零剔除。其余 brick 只有两档：低档在中心算光照，沿射线取一个中点样本；高档逐步采密度和光照。Balanced 的低档上限为 T = 0.50，Performance 为 0.70。跨近裁面的 brick 使用高档。[分档规则](SMOKE_PERFORMANCE.zh-CN.md#gpu-分类后的矩形与六面体2026-11-27)
 
 上述格式不是 ZIP/Blosc VDB，也没有依据将它描述成硬件 BC4。第 64 页说明了
 brick 内 trilinear filtering，但没有明确说明使用硬件 sampler 还是 shader 插值。
@@ -141,8 +153,7 @@ Upsample 并非只受 RT 格式影响：TAA 开启时使用随机扰动重建核
 bilateral 核。50 cm 独立对照：packed + 无 TAA 为 0.1812 ms；FP16 + TAA 为
 0.8428 ms。之前 0.18 ms 与现在 0.84 ms 不能归因于 packed 格式。
 
-`--volume-upsample-test --baked-smoke --smoke-frame 3.5` 现在会在两组重建核测试中
-以固定 60 Hz 推进同一段烟雾动画，最后八帧移动相机，结束后恢复烟雾帧和相机。
+`--volume-upsample-test --baked-smoke --smoke-frame 3.5` 以固定 60 Hz 推进烟雾动画，最后八帧移动相机，结束后恢复烟雾帧和相机。
 此前 headless 测试没有推进 VDB 动画，只测试了相机运动。2K 动态截图显示：25 cm、
 50 cm 在聚光灯边界的颗粒感逐渐增加，TAA 没有完全消除这个差异。默认 50 cm 未改动，
 但不能将步长增大描述成无损提速。采样数下降同时减少了沿光照/阴影变化的积分点。
@@ -236,6 +247,61 @@ JangaFX Q4 三线性场景可开启 **VDB compute wave march**（`--vdb-compute`
 CS 写入刚清空的四个 accumulation UAV，半分辨率沿用现有 upsample。当前首个可见提交的 Q4 烟雾 actor 可走 CS，其余 actor 继续用 OM 加法合成。参考采样、随机过滤、FP16 资产与性能诊断保留独立入口或编译变体。正式计时请关闭步数视图。
 
 在 RTX 3070 上用 StablePowerState、2560×1440、半分辨率、2.5 cm 步长、JangaFX 帧 80、消光 6 做了 30 帧中位数对照。相机位于 bounds 前时，累积 PS / CS / CS 共享光照为 3.83 / 2.79 / 2.91 ms；相机进入烟中时为 6.21 / 5.44 / 5.57 ms。共享光照默认关闭。资产准备好后可运行 `python avboit/tests/check_vdb_compute.py` 检查光学厚度、最终画面和逐射线步数。
+
+## VDB proxy stencil
+
+半分辨率像素着色器可在 **Quality → Volumes → VDB pixel march: proxy stencil** 开启轮廓剔除（`--vdb-proxy-stencil`）。每组 2×2×2 个 brick 读取当前动画帧的索引，有密度的组把保守投影矩形写入独立的半分辨率 stencil。每个 actor 随后画一次原有的 march，保留 DDA 处理投影内的空段。两个 draw 共用 accumulation framebuffer，使用不同的 stencil ref 区分相邻 actor。镜头在浓烟内部时覆盖可能接近全屏。
+
+同一面板的 **VDB pixel march: 14-DOP ray bounds**（`--vdb-ray-hull`）可以与 stencil 独立切换，默认关闭，适用于半分辨率 Q4 三线性、quad-shared T 的生产 PS。加载动画时从每帧已有的 brick 表生成七对平面，随当前帧上传到已有的采样常量中。PS 用交区间跳过开头和末尾的空段，保留 AABB 的步长起点、T-LUT 锚点和界面切分。烟团之间的空隙继续由 brick 遍历处理。
+
+JangaFX 帧 80，RTX 3070，2560×1440，半分辨率、2.5 cm 步长、消光 6，开启 StablePowerState 和 stencil。两轮各 150 帧、交换 A/B 顺序后，volume accumulation 中位数在烟外近景约为 3.58 → 3.48 ms，在烟内为 7.02 → 6.84 ms，默认机位为 1.21 → 1.18 ms。
+
+**VDB pixel march → Brick group (2x2x2)**（`--vdb-group-march`）用于对比独立分组积分。半分辨率 Q4 三线性 PS 为每个 actor 提交一次 instanced draw，非空的 2×2×2 brick 组各自投影矩形、与相机射线求交，累加到同一组 OIT MRT。开启它会替代该次绘制的 stencil 和 14-DOP。各组沿用 actor 的采样相位，每个密度 tap 由其基准体素所在的组负责，玻璃界面仍分割前后贡献。局部透射率 early-out 只在组内生效。
+
+RTX 3070、2560×1440、半分辨率、2.5 cm 步长、StablePowerState、R11G11B10、100 帧中位数。表内是半分辨率 accumulation 的总 GPU 时间，actor 列包含 stencil 标记。稀疏对照从第 80 帧保留两团沿深度分开的烟，活跃组由 665 减至 192。
+
+| 场景 | actor + stencil | 独立 brick 组 |
+| --- | ---: | ---: |
+| 烟外近景，消光 6 | 3.58 ms | 4.52 ms |
+| 烟内，消光 6 | 7.02 ms | 9.93 ms |
+| 两团稀疏烟，消光 6 | 1.67 ms | 1.76 ms |
+| 烟外近景，消光 32 | 2.62 ms | 4.07 ms |
+| 同一高消光近景，关闭 early-out | 3.06 ms | 4.08 ms |
+
+关闭 early-out 的玻璃穿烟对照，RGBA16F 累积的最终图最大差 1 个 8-bit 色阶，R11G11B10 为 4 个色阶。分组路径会多次向目标格式舍入。独立组默认关闭。准备好 JangaFX 资产后，可运行 `python avboit/tests/check_vdb_groups.py` 重跑画质回归。
+
+### 单个物理 brick
+
+在 **VDB pixel march** 下选择 **Single brick / per-step lighting**（`--vdb-brick-march`）或 **Single brick / per-brick lighting**（`--vdb-brick-coarse-light`）。每个 actor 一次 instanced draw。VS 剔除空 brick，并传入当前帧的 Q4 record 地址和解码范围。PS 裁剪当前 4³ brick 和可见深度，直接读取带 apron 的数据。整条射线共享等距采样和 jitter；间距取设置的步长与沿射线最快轴跨过一个体素的距离两者中的较小值。可勾选 **Double brick ray step**（`--vdb-brick-double-step`）把这个间距加倍，最快轴上限随之变为两个体素。默认使用原步长。这个 PS 独立于 actor 的步数预算、自适应步长和 quad T-LUT。Early-out 作用于单个 brick。
+
+Q4 单 brick 的各个光照模式均可在 ImGui 切换 **Stochastic smoke filtering (experimental)**，或传 `--smoke-stochastic-filter`。像素 shader 用体素坐标的小数部分为三个轴分别选择邻点，每步读取一个 Q4 密度，随机种子包含像素、时间采样相位和射线的全局步号。默认三线性与随机过滤独立编译。Extinction splat 和光源阴影始终按原密度过滤。
+
+逐步模式按非零密度采样点查询 T-LUT 和光照。逐 brick 模式沿用相同的密度样本，在玻璃前后分别累计光学厚度，在每侧的密度加权平均深度查询一次 T-LUT 和光照。强光影过渡处可能出现沿 brick 边界的条带。
+
+**Single brick / vertex lighting**（`--vdb-brick-vertex-light`）在 VS 对 4³ brick 的八个空间角点求光照。相邻 brick 的公共面使用同一组角点位置。PS 按射线样本的体素坐标三线性插值照明，逐步读取 T-LUT，保留玻璃前后分账。硬阴影会在约一个 brick 的尺度上变软。默认绘制 indexed quad，两个三角形共享首顶点。首顶点计算八个角点的光照，通过普通 `nointerpolation` varyings 传到 PS。可用 `--no-vdb-brick-indices` 对比非索引绘制。各像素在 `ClipBrick` 中裁剪射线和当前砖的交区间。
+
+**Single brick / cached lighting**（`--vdb-brick-cache`）在每个 VDB draw 前用 CS 更新共享角点的 RGBA16F 3D 贴图。JangaFX 第 80 帧有 4,279 个含 apron 的非空 brick，共用 5,618 个角点。CS 在 33³ 格点中检查相邻 brick，只对用到的角点求光照。缓存随 actor 顺序复用，角点光照每帧重算。PS 在采样点对共享角点贴图做硬件三线性过滤。
+
+关闭 **Half-resolution local volumes** 或传入 `--volume-full-res`，即可让三个单 brick 模式按内部渲染分辨率光栅化。PS 按实际像素读取场景深度与界面深度，直接写全分辨率 accumulation MRT。GPU 计时在全分辨率时计入 `accumulation_ms`；半分辨率时烟雾绘制和上采样分别计入 `volume_accumulation_ms`、`volume_upsample_ms`。比较两种分辨率时可逐帧相加这三项。
+
+同上测试条件，RTX 3070 的半分辨率 accumulation 中位数如下。程序默认使用 actor 路线。
+
+| 场景 | actor + stencil | 单 brick 逐步着色 | 单 brick 合并着色 |
+| --- | ---: | ---: | ---: |
+| 烟外近景，消光 6 | 3.58 ms | 2.29 ms | 1.20 ms |
+| 烟内，消光 6 | 7.02 ms | 5.82 ms | 3.16 ms |
+| 两团稀疏烟，消光 6 | 1.67 ms | 0.77 ms | 0.41 ms |
+| 烟外近景，消光 32 | 2.62 ms | 2.03 ms | 1.10 ms |
+
+同一硬件、JangaFX 第 80 帧和 2.5 cm 步长下，比较首顶点串行计算与三顶点分摊。下面是逐帧合计上述三个 accumulation / upsample 计时后的 100 帧中位数，玻璃场景包含玻璃本身的 accumulation。
+
+| 镜头 | 1280×720 串行 | 1280×720 分摊 | 2560×1440 串行 | 2560×1440 分摊 |
+| --- | ---: | ---: | ---: | ---: |
+| 烟外近景 | 1.86 ms | 1.69 ms | 5.02 ms | 4.59 ms |
+| 烟内 | 4.17 ms | 3.82 ms | 13.95 ms | 12.93 ms |
+| 玻璃穿烟 | 2.10 ms | 1.93 ms | 5.22 ms | 4.80 ms |
+
+运行 `python avboit/tests/check_vdb_brick.py` 验证常密度、部分边缘 brick、Q4 编码、空帧和玻璃前后分账。
 
 ## 近景 VDB 射线 LOD
 

@@ -20,6 +20,10 @@ cbuffer VdbSamplingConstants : register(b3)
     uint3 VdbGrid;
     uint VdbSkipEnabled;
     uint3 VdbFootprintSize;
+    float VdbAmbientColumnScale;
+#if VDB_RAY_HULL
+    float4 VdbAxisLo, VdbAxisHi, VdbDiagonalLo, VdbDiagonalHi;
+#endif
 };
 #endif
 

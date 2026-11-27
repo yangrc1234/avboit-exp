@@ -15,7 +15,7 @@ scene = root / "assets/gltf-sample-assets/Models/Sponza/glTF/Sponza.gltf"
 out = root / "build/vdb-compute-regression"
 
 
-def capture(name, flags, *, sponza=True):
+def capture(name, flags, *, sponza=True, packed=False):
     folder = out / name
     folder.mkdir(parents=True, exist_ok=True)
     args = [
@@ -23,7 +23,7 @@ def capture(name, flags, *, sponza=True):
         "--smoke-sequence", str(sequence), "--smoke-frame", "80", "--smoke-paused",
         "--render-width", "2560", "--render-height", "1440", "--volume-step", "0.025",
         "--volume-step-scale", "1", "--volume-extinction", "6", "--no-smoke-mask",
-        "--camera-preset", "10", "--accum-half", "--composition-half", "--volume-quad-t",
+        "--camera-preset", "10", *([] if packed else ["--accum-half", "--composition-half"]), "--volume-quad-t",
         "--volume-half-res", *flags,
     ]
     with (folder / "run.log").open("w") as log:
@@ -35,6 +35,16 @@ if __name__ == "__main__":
     if not (sequence / "sequence.txt").exists():
         raise SystemExit("Prepare the Q4 JangaFX sequence as described in docs/BAKED_SMOKE.zh-CN.md")
     reference = capture("ps", [])
+    masked = capture("ps-proxy-stencil", ["--vdb-proxy-stencil"])
+    for name in ("native-numerator.raw", "native-denominator.raw", "native-total-tau.raw",
+                 "native-back-numerator.raw", "native-raster.ppm"):
+        assert (masked / name).read_bytes() == (reference / name).read_bytes(), name
+    hull = capture("ps-proxy-hull", ["--vdb-proxy-stencil", "--vdb-ray-hull"])
+    for name in ("native-numerator.raw", "native-denominator.raw", "native-total-tau.raw", "native-back-numerator.raw"):
+        a, b = (texture(folder / name, "<f2", 4)[..., :3].astype(np.float32) for folder in (masked, hull))
+        assert np.allclose(a, b, rtol=.002, atol=.002), name
+    a, b = (np.asarray(Image.open(folder / "native-raster.ppm"), dtype=np.int16) for folder in (masked, hull))
+    assert np.abs(a - b).max() <= 1
     for name, flags in (("cs", []), ("cs-shared", ["--vdb-shared-lighting"])):
         result = capture(name, ["--vdb-compute", *flags])
         tau = texture(reference / "native-total-tau.raw", "<f2", 4)[..., :3]

@@ -29,6 +29,7 @@ constexpr Flag Flags[] = {
     {"--gameplay-grenade", &ViewerOptions::gameplayGrenade, true},
     {"--smoke-trail-reference", &ViewerOptions::smokeTrailReference, true},
     {"--smoke-trail-rebuild", &ViewerOptions::smokeTrailRebuild, true},
+    {"--no-smoke-ao", &ViewerOptions::smokeAo, false},
     {"--no-smoke-mask", &ViewerOptions::smokeMask, false},
     {"--smoke-door-closed", &ViewerOptions::smokeDoorOpen, false},
     {"--smoke-stochastic-filter", &ViewerOptions::stochasticSmokeFilter, true},
@@ -40,6 +41,17 @@ constexpr Flag Flags[] = {
     {"--vdb-shared-lighting", &ViewerOptions::vdbSharedLighting, true},
     {"--vdb-quarter-ray-reference", &ViewerOptions::vdbQuarterReference, true},
     {"--vdb-near-ray-lod", &ViewerOptions::vdbNearRayLod, true},
+    {"--vdb-proxy-stencil", &ViewerOptions::vdbProxyStencil, true},
+    {"--vdb-ray-hull", &ViewerOptions::vdbRayHull, true},
+    {"--vdb-group-march", &ViewerOptions::vdbGroupMarch, true},
+    {"--vdb-brick-double-step", &ViewerOptions::coarseBrickSteps, true},
+    {"--vdb-brick-march", &ViewerOptions::vdbBrickMarch, true},
+    {"--vdb-brick-vertex-light", &ViewerOptions::vdbBrickVertexLight, true},
+    {"--vdb-brick-classify", &ViewerOptions::classifyBricks, true},
+    {"--vdb-brick-classify-cube", &ViewerOptions::classifyCubes, true},
+    {"--vdb-brick-cache", &ViewerOptions::vdbBrickCache, true},
+    {"--no-vdb-brick-indices", &ViewerOptions::indexedBrickQuads, false},
+    {"--vdb-brick-coarse-light", &ViewerOptions::vdbBrickCoarseLight, true},
     {"--vdb-compute", &ViewerOptions::vdbCompute, true},
     {"--no-volume-early-out", &ViewerOptions::volumeEarlyOut, false},
     {"--volume-skip-view", &ViewerOptions::showSkippedSteps, true},
@@ -217,6 +229,14 @@ ViewerOptions ParseViewerOptions(int argc, const char *const *argv)
             options.smokeShots = ReadInteger(arg, value(), 0, 15);
         else if (arg == "--smoke-shot-radius")
             options.smokeShotRadius = ReadFloat(arg, value(), .005f, 1.f);
+        else if (arg == "--vdb-brick-lod")
+        {
+            const std::string preset = value();
+            if (preset != "balanced" && preset != "performance" && preset != "low")
+                throw std::invalid_argument("--vdb-brick-lod expects balanced, performance or low");
+            options.brickLod = preset == "low" ? BrickLod::Low : preset == "performance" ? BrickLod::Performance : BrickLod::Balanced;
+            options.classifyBricks = true;
+        }
         else if (arg == "--volume-step")
             options.volumeStepSize = ReadFloat(arg, value(), .005f, 2.f);
         else if (arg == "--volume-low-t")
@@ -345,7 +365,7 @@ Scene and materials:
   --sun-intensity N          Sponza sun irradiance (0..12), default 2
   --spot-intensity N         Sponza dynamic spotlight intensity (0..500), default 80
   --volume-temporal-dither  Animate raymarch sample phases (requires final TAA)
-  --volume-upsample-test   Headless static/moving A/B captures (enables half-res + TAA)
+  --volume-upsample-test   Headless static/moving bilateral captures (enables half-res + TAA)
   --volume-ms-octaves 0..3 Additional scattering octaves (default 2; 0: single)
   --volume-extinction N    Initial volume material extinction, 0..128 per world unit
   --grenade-storage N  GPU coverage: 0 dense R8, 1 sparse byte buffer, 2 sparse hardware-filtered atlas
@@ -360,8 +380,21 @@ Scene and materials:
   --smoke-sequence PATH  Load a local sequence directory instead of the bundled probe
   --smoke-paused      Start paused; use Actors > VDB animation > Play / Restart
   --no-smoke-brick-skip Disable brick traversal for comparison
+  --no-smoke-ao             Disable baked volume ambient occlusion
   --no-smoke-mask     Disable gameplay coverage for baked smoke
   --smoke-door-closed Close the VDB example coverage doorway
+  --vdb-proxy-stencil    Mask half-resolution VDB pixel marching with occupied brick groups
+  --vdb-ray-hull         Clip half-resolution Q4 trilinear pixel marching against the frame's 14-DOP
+  --vdb-group-march      Integrate occupied 2x2x2 brick groups independently (half-resolution Q4 PS)
+  --vdb-brick-march      Draw individual 4x4x4 Q4 bricks with a dedicated fixed-step PS at the selected volume resolution
+  --vdb-brick-lod balanced|performance|low  Use classified bricks with the selected quality preset (default: balanced)
+  --vdb-brick-vertex-light  Shade shared brick corners and interpolate lighting along the ray
+  --vdb-brick-double-step   Double the single-brick ray step and its one-voxel cap
+  --vdb-brick-classify      Classify bricks into per-step and center-lit rectangle draws
+  --vdb-brick-classify-cube  Use indexed, backface-culled cubes for both classified draws
+  --vdb-brick-cache        Precompute shared brick-corner lighting per volume draw
+  --no-vdb-brick-indices     Draw six independent vertices per brick for GPU comparisons
+  --vdb-brick-coarse-light  Draw Q4 bricks and shade each side of the glass once per intersected brick
   --vdb-compute        Q4 trilinear compute raymarch (quad T mode)
   --vdb-quarter-ray-reference  Benchmark one independent ray per 2x2 accumulation texels (compute)
   --vdb-near-ray-lod     Switch wave-wide from quad to diagonal-pair to pixel rays as depth increases (compute)

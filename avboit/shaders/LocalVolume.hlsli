@@ -14,6 +14,9 @@ struct VolumeVaryings
     nointerpolation float3 source : SOURCE;
     nointerpolation float3 axisX : AXISX;
     nointerpolation float3 axisY : AXISY;
+#if VDB_GROUP_MARCH
+    nointerpolation uint3 groupIndex : BRICKGROUP;
+#endif
 };
 float3 VolumeLocal(VolumeVaryings i, float3 v)
 {
@@ -21,7 +24,7 @@ float3 VolumeLocal(VolumeVaryings i, float3 v)
 }
 VolumeVaryings LoadVolumeActor(uint id)
 {
-    VolumeVaryings o;
+    VolumeVaryings o = (VolumeVaryings)0;
     o.center = Vertices[id * 4].xyz;
     o.extent = Vertices[id * 4 + 3].xyz;
     o.axisX = Vertices[id * 4 + 1].xyz;
@@ -107,6 +110,13 @@ float2 SampleVolumeData(VolumeVaryings i, float2 uv, float viewZ, float rayZ, fl
 {
     float3 world = Camera[0].xyz + WorldRay(uv) * (viewZ / rayZ);
     float3 local = VolumeLocal(i, world - i.center) / (2. * i.extent) + .5;
+#if VDB_GROUP_MARCH
+    // A step can straddle two groups. Assign each density tap exactly once,
+    // using the same base texel as the apron-aware trilinear lookup.
+    uint3 cell = uint3(clamp(local * VdbSize - .5, 0., float3(VdbSize - 1u)));
+    if (any(cell / 8u != i.groupIndex))
+        return 0.;
+#endif
     return SampleSmokeDensity(local, world, filterRandom);
 }
 float VolumeEmptyRun(VolumeVaryings i, float2 uv, float z, float rayZ, out float recheckDistance)

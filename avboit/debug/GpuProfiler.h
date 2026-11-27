@@ -30,6 +30,7 @@ class GpuProfiler
         AccumulationClear,
         VolumeAccumulation,
         VolumeUpsample,
+        BrickClassify,
         Accumulation,
         Resolve,
         BlurBase,

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 #include "TransparencyCommon.hlsli"
-#include "VolumeBlueNoise.hlsli"
 Texture2D<float3> LowN : register(t4);
 Texture2D<float3> LowA : register(t5);
 Texture2D<float3> LowTau : register(t6);
@@ -20,15 +19,6 @@ float GuideError(float depth, float reference)
 {
     return abs(depth - reference) / max(.02, reference * .02);
 }
-// The noise phase is shared with the accumulation march and advances with TAA.
-float2 UpscaleNoise(uint2 pixel)
-{
-    uint2 p = pixel & 31u;
-    uint2 q = (pixel.yx + uint2(11u, 23u)) & 31u;
-    float2 noise = (float2(VolumeBlueNoise[p.y * 32u + p.x], VolumeBlueNoise[q.y * 32u + q.x]) + .5) / 1024.;
-    return frac(noise + (Camera[9].w - 1.) * float2(.754877666, .569840296));
-}
-// Coherent four-neighbor reconstruction; disable jitter when TAA is off.
 Accumulation upsamplePixel(float4 position : SV_Position)
 {
     uint2 pixel = uint2(position.xy);
@@ -36,13 +26,8 @@ Accumulation upsamplePixel(float4 position : SV_Position)
     float interfaceZ = InterfaceDepth.Load(int3(pixel, 0));
     // Low rays use the bottom-right full-resolution texel of each 2x2 block.
     float2 location = (position.xy - 1.5) * .5;
-    // Coherent jitter keeps four unique neighboring texels before screen clamp.
-    // Unlike independent rounded taps, even fixed addresses get changing weights.
-    float2 center = location;
-    if (Camera[11].z > 0.)
-        center += UpscaleNoise(pixel) - .5;
-    int2 base = int2(floor(center));
-    float2 f = frac(center);
+    int2 base = int2(floor(location));
+    float2 f = frac(location);
     float weights[4];
     int2 taps[4];
     float sum = 0., bestError = 1e30, bestDistance = 1e30;

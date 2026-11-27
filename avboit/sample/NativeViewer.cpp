@@ -6,6 +6,7 @@
 #include <donut/core/vfs/VFS.h>
 #include <donut/engine/ShaderFactory.h>
 #include <nvrhi/utils.h>
+#include <nvrhi/d3d12.h>
 #include <array>
 #include <fstream>
 #include <limits>
@@ -29,6 +30,7 @@
 #include "sample/ViewerOptions.h"
 #include "sample/SmokeCoverage.h"
 #include "sample/SmokeGpuBricks.h"
+#include "sample/VdbRayHull.h"
 #include "sample/TemporalAA.h"
 #include "sample/TransformGizmo.h"
 #include "sample/SceneActor.h"
@@ -99,10 +101,9 @@ class NativeViewer : public app::IRenderPass
     avboit::SceneLightingSettings sceneLighting;
     avboit::VolumeScatteringSettings volumeScattering;
     bool lowResolutionVolumes = true, temporalVolumeDithering = false;
-    bool ditheredVolumeUpsample = true; // Disabled only by the fixed-kernel regression capture.
     bool stochasticSmokeFilter = false, quadVolumeT = true, eightVolumeT = false;
     unsigned accumulationAudit = 0;
-    bool vdbCompute = false, vdbNearRayLod = false, vdbQuarterReference = false, vdbSharedLighting = false, marchHeatmap = false;
+    bool vdbProxyStencil = false, vdbCompute = false, vdbNearRayLod = false, vdbQuarterReference = false, vdbSharedLighting = false, marchHeatmap = false;
     bool showSkippedSteps = false, volumeEarlyOut = true;
     bool volumeLutSkip = false, volumeMarchStats = false, volumeReferenceSampling = false;
     unsigned volumeSampleFrame = 0;
@@ -114,6 +115,8 @@ class NativeViewer : public app::IRenderPass
     bool magazineNeighbours = false;
     float groupWeightStrength = 4.f, groupDepthRange = 2.f;
     bool hasCameraOffsets = false;
+    avboit::BrickLod brickLod = avboit::BrickLod::Balanced;
+    bool coarseBrickSteps = false;
     float volumeStepSize = .5f, volumeLowT = .1f, volumeStepScale = 1.f;
     int volumeMaxSteps = 256;
     std::vector<avboit::StressVolume> localVolumes;
@@ -177,8 +180,18 @@ class NativeViewer : public app::IRenderPass
     bool autoSmokeShots = false;
     float smokeShotRadius = .45f, smokeShotLifetime = 2.f, smokeShotsPerSecond = 5.f, smokeShotTimer = 0.f;
     unsigned smokeShotSequence = 0;
+    bool vdbRayHull = false;
+    enum class VdbPartition { Actor, Group, Brick, BrickCoarseLight, BrickVertexLight, BrickCachedLight, ClassifiedRect, ClassifiedCube };
+    bool indexedBrickQuads = true;
+    VdbPartition vdbPartition = VdbPartition::Actor;
     std::vector<std::vector<uint32_t>> smokeFrames;
+    std::vector<avboit::VdbRayHull> smokeFrameHulls;
     std::filesystem::path smokeSequencePath;
+    std::vector<uint8_t> visibilityFrames;
+    nvrhi::TextureHandle smokeVisibility;
+    unsigned visibilitySize = 0;
+    float maxAmbientColumn = 0.f;
+    bool smokeAo = true, uploadedSmokeAo = false;
     avboit::VdbPlayback initialSmokePlayback;
     float smokeFps = 24.f;
     bool smokeBrickSkip = true, smokeDistanceTable = false;
@@ -190,13 +203,20 @@ class NativeViewer : public app::IRenderPass
             return;
         float f = std::clamp(SmokePlayback().frame, 0.f, float(smokeFrames.size() - 1));
         const int frameIndex = int(f);
-        if (frameIndex == uploadedSmokeFrame && smokeBrickSkip == uploadedBrickSkip)
+        if (frameIndex == uploadedSmokeFrame && smokeBrickSkip == uploadedBrickSkip && smokeAo == uploadedSmokeAo)
             return;
         const auto &frame = smokeFrames[frameIndex];
         if (frameIndex != uploadedSmokeFrame)
             commands->writeBuffer(smokeBricks, frame.data(), frame.size() * sizeof(uint32_t));
         const uint32_t storageKind = frame[0] + (smokeBrickSkip ? 0u : 1u);
         commands->writeBuffer(smokeBricks, &storageKind, sizeof(storageKind));
+        if (frameIndex != uploadedSmokeFrame && visibilitySize)
+        {
+            const size_t frameBytes = size_t(visibilitySize) * visibilitySize * visibilitySize;
+            commands->writeTexture(smokeVisibility, 0, 0, visibilityFrames.data() + frameIndex * frameBytes,
+                                   visibilitySize, visibilitySize * visibilitySize);
+        }
+        uploadedSmokeAo = smokeAo;
         uploadedSmokeFrame = frameIndex;
         uploadedBrickSkip = smokeBrickSkip;
 
@@ -206,6 +226,8 @@ class NativeViewer : public app::IRenderPass
             uint32_t size[3], payloadOffset;
             uint32_t grid[3], skipEnabled;
             uint32_t footprintSize[3];
+            float ambientColumnScale;
+            avboit::VdbRayHull rayHull;
         } constants{};
         const auto &mask = gameplaySmokeMask->getDesc();
         const uint32_t maskSize[] = {mask.width, mask.height, mask.depth};
@@ -215,8 +237,11 @@ class NativeViewer : public app::IRenderPass
             constants.grid[axis] = (constants.size[axis] + 3) / 4;
             constants.footprintSize[axis] = std::max(constants.size[axis], maskSize[axis]);
         }
+        constants.ambientColumnScale = smokeAo ? maxAmbientColumn : 0.f;
         constants.payloadOffset = frame[5];
         constants.skipEnabled = smokeBrickSkip;
+        constants.rayHull = smokeFrameHulls[frameIndex];
+        static_assert(offsetof(SamplingConstants, rayHull) == 48 && sizeof(SamplingConstants) == 112);
         commands->writeBuffer(smokeSampling, &constants, sizeof(constants));
     }
 
@@ -280,7 +305,7 @@ class NativeViewer : public app::IRenderPass
     bool cubic = true, frost = true, vfx = false, vfxBehind = false, animate = false;
     bool cubicTrilinear = false;
     float time = 0;
-    std::array<F4, 14> camera;
+    std::array<F4, 15> camera;
     void UpdateCamera()
     {
         float theta = 0;
@@ -361,13 +386,14 @@ class NativeViewer : public app::IRenderPass
                     (temporalVolumeDithering || taaEnabled) ? float(1 + (volumeSampleFrame++ % 4096)) : 0.f},
                    {volumeStepSize, volumeLowT, volumeStepScale, float(volumeMaxSteps)},
                    {0, 0, 0, lutMinRetain},
-                   {towardBins, awayBins, float(unsigned(volumeLutSkip) | (unsigned(volumeReferenceSampling) << 1)), 0},
-                   {lutIgn && !lutPlane ? lutJitterStrength : 0.f, 0, float(lutPlane), marchCutoff}}};
+                   {towardBins, awayBins, float(unsigned(volumeLutSkip) | (unsigned(volumeReferenceSampling) << 1)), coarseBrickSteps ? 2.f : 1.f},
+                   {lutIgn && !lutPlane ? lutJitterStrength : 0.f, 0, float(lutPlane), marchCutoff},
+                   {brickLod == avboit::BrickLod::Balanced ? .50f : .70f, float(brickLod == avboit::BrickLod::Low), 0, 0}}};
         camera[13][1] = taaEnabled ? std::fmod(std::max(camera[9][3] - 1.f, 0.f), 64.f) : 0.f;
         if (temporalAA)
         {
             const auto jitter = temporalAA->Jitter();
-            camera[11] = {jitter.x, jitter.y, float(ditheredVolumeUpsample), lutMinRetain};
+            camera[11] = {jitter.x, jitter.y, 0.f, lutMinRetain};
         }
         auto projected = bounds;
         auto animatedBounds = bounds;
@@ -524,6 +550,33 @@ class NativeViewer : public app::IRenderPass
             return 1; // Static DDS.
         return smokeFrames.front()[0] == 3 ? 2u : 4u;
     }
+    bool ClassifiedBricks() const
+    {
+        return vdbPartition == VdbPartition::ClassifiedRect || vdbPartition == VdbPartition::ClassifiedCube;
+    }
+    bool PhysicalBrickSelected() const
+    {
+        return ClassifiedBricks() || vdbPartition == VdbPartition::Brick || vdbPartition == VdbPartition::BrickCoarseLight ||
+               vdbPartition == VdbPartition::BrickVertexLight || vdbPartition == VdbPartition::BrickCachedLight;
+    }
+    bool SupportsVdbPixelBounds(bool requireQuad = true) const
+    {
+        return SmokeShaderMode() == 4 && (!requireQuad || lowResolutionVolumes) && !vdbCompute && (!requireQuad || quadVolumeT) &&
+               (!stochasticSmokeFilter || !requireQuad) && !volumeReferenceSampling && !volumeLutSkip &&
+               !accumulationAudit && !volumeMarchStats && !marchHeatmap;
+    }
+    nvrhi::ShaderHandle ClassifiedPixel(bool low)
+    {
+        std::vector<engine::ShaderMacro> defs = {{"VOLUME_SCALE", std::to_string(volumeScale)},
+            {"SLICE_COUNT", std::to_string(depthBudget)}, {"BRICK_PIXEL_STRIDE", lowResolutionVolumes ? "2" : "1"},
+            {"BRICK_CUBE", vdbPartition == VdbPartition::ClassifiedCube ? "1" : "0"},
+            {"CLASSIFIED_LOW", low ? "1" : "0"}, {"SMOKE_STOCHASTIC", stochasticSmokeFilter ? "1" : "0"}};
+        const char *file = brickLod == avboit::BrickLod::Low ? "shaders/VdbSmoothBrick.hlsl" : "shaders/VdbClassifiedBrick.hlsl";
+        auto shader = shaders->CreateShader(file, "brickPixel", &defs, nvrhi::ShaderType::Pixel);
+        if (!shader)
+            throw std::runtime_error("Classified VDB brick pixel shader");
+        return shader;
+    }
     nvrhi::ShaderHandle Shader(const char *entry, nvrhi::ShaderType type, const char *file = "")
     {
         const bool audit =
@@ -558,6 +611,32 @@ class NativeViewer : public app::IRenderPass
         }
         std::vector<engine::ShaderMacro> defines = {{"VOLUME_SCALE", std::to_string(volumeScale)},
                                                     {"SLICE_COUNT", std::to_string(depthBudget)}};
+        if ((vdbPartition != VdbPartition::Actor || vdbRayHull) && SupportsVdbPixelBounds(!PhysicalBrickSelected()) &&
+            ((lowResolutionVolumes && std::string(entry) == "texturedAccumulationHalf") ||
+             (!lowResolutionVolumes && PhysicalBrickSelected() && std::string(entry) == "texturedAccumulation")))
+        {
+            if (ClassifiedBricks())
+                return ClassifiedPixel(false);
+            if (PhysicalBrickSelected())
+            {
+                defines.push_back({"SMOKE_STOCHASTIC", stochasticSmokeFilter ? "1" : "0"});
+                defines.push_back({"BRICK_PIXEL_STRIDE", lowResolutionVolumes ? "2" : "1"});
+                defines.push_back({"BRICK_LIGHT_MODE", vdbPartition == VdbPartition::BrickCachedLight ? "3" :
+                                                       vdbPartition == VdbPartition::BrickVertexLight ? "2" :
+                                                       vdbPartition == VdbPartition::BrickCoarseLight ? "1" : "0"});
+                auto shader = shaders->CreateShader("shaders/VdbBrick.hlsl", "brickPixel", &defines, type);
+                if (!shader)
+                    throw std::runtime_error("Missing VDB brick pixel shader");
+                return shader;
+            }
+            const bool vdbGroupMarch = vdbPartition == VdbPartition::Group;
+            defines.push_back({"QUAD_T", eightVolumeT ? "2" : smokeDistanceTable && !vdbGroupMarch ? "3" : "1"});
+            const char *source = vdbGroupMarch ? "shaders/VdbGroupAccumulation.hlsl" : "shaders/VdbHullAccumulation.hlsl";
+            auto shader = shaders->CreateShader(source, entry, &defines, type);
+            if (!shader)
+                throw std::runtime_error(source);
+            return shader;
+        }
         const bool computeMarch = std::string(file) == "shaders/VdbMarchCompute.hlsl";
         const bool productionMarch = !volumeMarchStats && !marchHeatmap && !volumeReferenceSampling && !volumeLutSkip;
         if (computeMarch)
@@ -601,6 +680,17 @@ class NativeViewer : public app::IRenderPass
              std::string(file) == "shaders/LocalVolumeAccumulation.hlsl")
                 ? &defines
                 : nullptr;
+        if (std::string(entry) == "brickVertex")
+        {
+            const bool vertexLighting = vdbPartition == VdbPartition::BrickVertexLight;
+            defines = {{"BRICK_VERTEX_LIGHT", vertexLighting ? "1" : "0"}};
+            permutations = &defines;
+        }
+        if (std::string(file) == "shaders/VdbClassify.hlsl")
+            permutations = &defines;
+        if (std::string(file) == "shaders/VdbClassifiedBrick.hlsl")
+            defines = {{"BRICK_PIXEL_STRIDE", lowResolutionVolumes ? "2" : "1"},
+                       {"BRICK_CUBE", vdbPartition == VdbPartition::ClassifiedCube ? "1" : "0"}};
         auto shader = shaders->CreateShader(file, entry, permutations, type);
         if (!shader)
             throw std::runtime_error(entry);
@@ -828,9 +918,10 @@ class NativeViewer : public app::IRenderPass
         grenadeStorage = storage;
         grenadeSkip = skip;
     }
-    void SetBakedSmoke(bool enabled, bool mask, bool door)
+    void SetBakedSmoke(bool enabled, bool mask, bool door, bool ao)
     {
         bakedSmoke = enabled;
+        smokeAo = ao;
         smokeMask = mask;
         smokeDoorOpen = door;
     }
@@ -838,6 +929,11 @@ class NativeViewer : public app::IRenderPass
     {
         auto device = GetDevice();
         smokeFrames.clear();
+        visibilityFrames.clear();
+        smokeVisibility = nullptr;
+        visibilitySize = 0;
+        maxAmbientColumn = 0.f;
+        smokeFrameHulls.clear();
         smokeDistanceTable = false;
         uploadedSmokeFrame = -1;
         std::vector<uint32_t> data(8, 0);
@@ -850,6 +946,33 @@ class NativeViewer : public app::IRenderPass
             if (!(manifest >> count >> smokeFps) || count == 0 || count > 1024 || !std::isfinite(smokeFps) ||
                 smokeFps <= 0)
                 throw std::runtime_error("Invalid smoke sequence manifest");
+            auto visibilityPath = directory / "ambient-visibility.bin";
+            if (std::filesystem::exists(visibilityPath))
+            {
+                std::ifstream in(visibilityPath, std::ios::binary | std::ios::ate);
+                const auto length = in.tellg();
+                in.seekg(0);
+                uint32_t header[4]{};
+                if (!in.read(reinterpret_cast<char *>(header), sizeof(header)) ||
+                    std::memcmp(header, "VAO2", 4) || !header[1] || header[1] > 64 ||
+                    header[2] != count)
+                    throw std::runtime_error("Invalid smoke ambient visibility header: " + visibilityPath.string());
+                std::memcpy(&maxAmbientColumn, header + 3, sizeof(float));
+                if (!std::isfinite(maxAmbientColumn) || maxAmbientColumn < 0.f)
+                    throw std::runtime_error("Invalid smoke ambient optical depth scale");
+                visibilitySize = header[1];
+                const size_t bytes = size_t(count) * visibilitySize * visibilitySize * visibilitySize;
+                if (length != std::streamoff(sizeof(header) + bytes))
+                    throw std::runtime_error("Invalid smoke ambient visibility size: " + visibilityPath.string());
+                visibilityFrames.resize(bytes);
+                if (!in.read(reinterpret_cast<char *>(visibilityFrames.data()), bytes))
+                    throw std::runtime_error("Incomplete smoke ambient visibility: " + visibilityPath.string());
+                smokeVisibility = device->createTexture(nvrhi::TextureDesc()
+                    .setDimension(nvrhi::TextureDimension::Texture3D).setWidth(visibilitySize)
+                    .setHeight(visibilitySize).setDepth(visibilitySize).setFormat(nvrhi::Format::R8_UNORM)
+                    .setDebugName("Baked smoke ambient visibility").setKeepInitialState(true)
+                    .setInitialState(nvrhi::ResourceStates::ShaderResource));
+            }
             for (unsigned frame = 1; frame <= count; ++frame)
             {
                 auto path = directory / (std::to_string(frame) + ".bin");
@@ -875,11 +998,14 @@ class NativeViewer : public app::IRenderPass
                 if ((data[0] != 1 && data[0] != 3) || data[4] != 8 || (!hasDistances && data[5] != tableEnd) ||
                     data[5] > data.size())
                     throw std::runtime_error("Invalid smoke table");
+                avboit::VdbRayHull hull;
                 for (uint64_t j = 0; j < cells; ++j)
                 {
                     uint32_t index = (data[8 + j / 2] >> ((j & 1) * 16)) & 65535;
                     if (uint64_t(data[5]) + uint64_t(index) * (data[0] == 3 ? 64 : 17) > data.size())
                         throw std::runtime_error("Invalid smoke brick index");
+                    if (index)
+                        hull.IncludeBrick(j, data.data() + 1);
                 }
                 if (!smokeFrames.empty() && !std::equal(data.begin(), data.begin() + 4, smokeFrames.front().begin()))
                     throw std::runtime_error("Smoke sequence frames must share format and fixed dimensions");
@@ -887,6 +1013,7 @@ class NativeViewer : public app::IRenderPass
                     throw std::runtime_error("Smoke sequence frames must share distance-table layout");
                 smokeDistanceTable = hasDistances;
                 smokeFrames.push_back(data);
+                smokeFrameHulls.push_back(hull);
             }
             initialSmokePlayback.frame = std::clamp(initialSmokePlayback.frame, 0.f, float(smokeFrames.size() - 1));
         }
@@ -956,9 +1083,10 @@ class NativeViewer : public app::IRenderPass
         device->executeCommandList(commands);
         device->waitForIdle();
     }
-    void SetVolumeMarch(float step, float threshold, float scale, int budget, bool earlyOut)
+    void SetVolumeMarch(float step, float threshold, float scale, int budget, bool earlyOut, bool doubleBrickStep)
     {
         volumeStepSize = step;
+        coarseBrickSteps = doubleBrickStep;
         volumeEarlyOut = earlyOut;
         volumeLowT = threshold;
         volumeStepScale = scale;
@@ -1031,8 +1159,22 @@ class NativeViewer : public app::IRenderPass
         rebuildRequested = true;
         preserveMaterialsOnRebuild = true;
     }
-    void SetVolumeViews(bool compute, bool nearRayLod, bool quarterReference, bool sharedLighting, bool heatmap, bool skipped)
+    void SetVdbPartition(const avboit::ViewerOptions &options)
     {
+        indexedBrickQuads = options.indexedBrickQuads;
+        brickLod = options.brickLod;
+        vdbPartition = options.classifyCubes ? VdbPartition::ClassifiedCube :
+                       options.classifyBricks ? VdbPartition::ClassifiedRect :
+                       options.vdbBrickCache ? VdbPartition::BrickCachedLight :
+                       options.vdbBrickVertexLight ? VdbPartition::BrickVertexLight :
+                       options.vdbBrickCoarseLight ? VdbPartition::BrickCoarseLight :
+                       options.vdbBrickMarch ? VdbPartition::Brick :
+                       options.vdbGroupMarch ? VdbPartition::Group : VdbPartition::Actor;
+    }
+    void SetVolumeViews(bool proxyStencil, bool rayHull, bool compute, bool nearRayLod, bool quarterReference, bool sharedLighting, bool heatmap, bool skipped)
+    {
+        vdbProxyStencil = proxyStencil;
+        vdbRayHull = rayHull;
         vdbCompute = compute;
         vdbNearRayLod = nearRayLod;
         vdbQuarterReference = quarterReference;
@@ -1604,6 +1746,32 @@ class NativeViewer : public app::IRenderPass
                         ImGui::TextWrapped("Hover: executed (white), skipped (cyan). Counts per source ray. "
                                            "Black: 0, blue: 8, cyan: 16, green: 32, orange: 64, red: 128+.");
                     }
+                    ImGui::BeginDisabled(!SupportsVdbPixelBounds(false));
+                    int partition = int(vdbPartition);
+                    if (ImGui::Combo("VDB pixel march", &partition,
+                                     "Actor\0Brick group (2x2x2, half resolution)\0Single brick / per-step lighting\0Single brick / per-brick lighting\0Single brick / vertex lighting\0Single brick / cached lighting\0Classified / rectangle\0Classified / six faces\0"))
+                    {
+                        vdbPartition = VdbPartition(partition);
+                        if (vdbPartition == VdbPartition::Group)
+                        {
+                            // Group shaders use half-resolution quad rays.
+                            quadVolumeT = true;
+                            lowResolutionVolumes = true;
+                        }
+                        rebuildRequested = preserveMaterialsOnRebuild = true;
+                    }
+                    if (PhysicalBrickSelected() && ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Per-brick lighting shades one centroid per side of the glass. Vertex lighting blends eight brick corners.");
+                    ImGui::EndDisabled();
+                    bool groupMarchActive = vdbPartition != VdbPartition::Actor && SupportsVdbPixelBounds(!PhysicalBrickSelected());
+                    ImGui::BeginDisabled(smokeFrames.empty() || !lowResolutionVolumes || vdbCompute || gameplayGrenade || groupMarchActive);
+                    if (ImGui::Checkbox("VDB pixel march: proxy stencil", &vdbProxyStencil))
+                        rebuildRequested = preserveMaterialsOnRebuild = true;
+                    ImGui::EndDisabled();
+                    ImGui::BeginDisabled(!SupportsVdbPixelBounds() || groupMarchActive);
+                    if (ImGui::Checkbox("VDB pixel march: 14-DOP ray bounds", &vdbRayHull))
+                        rebuildRequested = preserveMaterialsOnRebuild = true;
+                    ImGui::EndDisabled();
                     ImGui::BeginDisabled(SmokeShaderMode() != 4 || stochasticSmokeFilter || !quadVolumeT || accumulationAudit);
                     if (ImGui::Checkbox("VDB compute wave march", &vdbCompute))
                         rebuildRequested = preserveMaterialsOnRebuild = true;
@@ -1634,8 +1802,27 @@ class NativeViewer : public app::IRenderPass
                         ImGui::SetTooltip("Eight T queries across the quad ray interval, interpolated in view Z. "
                                           "Density and lighting steps are unchanged. Boundary clipping is separate.");
                     ImGui::EndDisabled();
+                    if (visibilitySize)
+                        ImGui::Checkbox("Baked smoke ambient occlusion", &smokeAo);
                     ImGui::SliderFloat("Ray step", &volumeStepSize, .005f, 2.f, "%.3f", ImGuiSliderFlags_Logarithmic);
-                    if (ImGui::TreeNode("Marching limits"))
+                    if (groupMarchActive && PhysicalBrickSelected())
+                    {
+                        if (ClassifiedBricks())
+                        {
+                            int quality = int(brickLod);
+                            if (ImGui::Combo("Brick LOD", &quality, "Balanced\0Performance\0Low / smooth lighting\0"))
+                            {
+                                bool cacheChanged = (brickLod == avboit::BrickLod::Low) != (quality == int(avboit::BrickLod::Low));
+                                brickLod = avboit::BrickLod(quality);
+                                if (cacheChanged)
+                                    rebuildRequested = preserveMaterialsOnRebuild = true;
+                            }
+                        }
+                        ImGui::Checkbox("Double brick ray step", &coarseBrickSteps);
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Doubles the Ray step and raises its cap from one to two voxels along the fastest axis.");
+                    }
+                    if (!(groupMarchActive && PhysicalBrickSelected()) && ImGui::TreeNode("Marching limits"))
                     {
                         ImGui::SliderFloat("Low-T threshold", &volumeLowT, .001f, .5f, "%.3f",
                                            ImGuiSliderFlags_Logarithmic);
@@ -2237,7 +2424,7 @@ class NativeViewer : public app::IRenderPass
                                                         .setKeepInitialState(true)
                                                         .setDebugName("Special interface indices"));
         geometryIndexBuffer = device->createBuffer(nvrhi::BufferDesc()
-                                                       .setByteSize(std::max(4u, transparentVertices * 4))
+                                                       .setByteSize((size_t(transparentVertices) + 42) * sizeof(unsigned))
                                                        .setIsIndexBuffer(true)
                                                        .setInitialState(nvrhi::ResourceStates::CopyDest)
                                                        .setKeepInitialState(true)
@@ -2269,6 +2456,13 @@ class NativeViewer : public app::IRenderPass
         }
         CreateRenderResources();
         commands->open();
+        // Both proxy triangles share the leading vertex that carries the eight corner lights.
+        constexpr unsigned brickQuadIndices[] = {
+            0, 1, 2, 0, 1, 5,
+            0,2,3, 0,3,1, 7,6,4, 7,4,5, 0,4,6, 0,6,2,
+            7,5,1, 7,1,3, 0,1,5, 0,5,4, 7,3,2, 7,2,6};
+        commands->writeBuffer(geometryIndexBuffer, brickQuadIndices, sizeof(brickQuadIndices),
+                              size_t(transparentVertices) * sizeof(unsigned));
         commands->writeBuffer(vertexBuffer, vertices.data(), vertices.size() * 16);
         commands->writeBuffer(boundsBuffer, bounds.data(), bounds.size() * 16);
         if (!opaqueSubmission.indices.empty())
@@ -2329,6 +2523,44 @@ class NativeViewer : public app::IRenderPass
             inputs.vdbMarchCompute = Shader("main", nvrhi::ShaderType::Compute, "shaders/VdbMarchCompute.hlsl");
             inputs.vdbRaySpacing = vdbQuarterReference ? 2u : 1u;
         }
+        const bool groupMarch = vdbPartition != VdbPartition::Actor && SupportsVdbPixelBounds(!PhysicalBrickSelected());
+        if (groupMarch || (vdbProxyStencil && lowResolutionVolumes && !vdbCompute && !gameplayGrenade && !smokeFrames.empty()))
+        {
+            const bool singleBrick = groupMarch && PhysicalBrickSelected();
+            if (singleBrick)
+            {
+                printf("Physical Q4 bricks: %s resolution, %s lighting\n", lowResolutionVolumes ? "half" : "full",
+                       ClassifiedBricks() ? (vdbPartition == VdbPartition::ClassifiedCube ? "classified cube" : "classified rectangle") :
+                       vdbPartition == VdbPartition::BrickCachedLight ? "cached corner" :
+                       vdbPartition == VdbPartition::BrickVertexLight ?
+                           "vertex corner" :
+                           vdbPartition == VdbPartition::BrickCoarseLight ? "centroid" : "per-step");
+                inputs.vdbGroupVertex = Shader("brickVertex", nvrhi::ShaderType::Vertex,
+                    ClassifiedBricks() ? "shaders/VdbClassifiedBrick.hlsl" : "shaders/VdbBrick.hlsl");
+                if (ClassifiedBricks())
+                {
+                    inputs.brickClassify = Shader("main", nvrhi::ShaderType::Compute, "shaders/VdbClassify.hlsl");
+                    inputs.brickLowPixel = ClassifiedPixel(true);
+                    inputs.brickCube = vdbPartition == VdbPartition::ClassifiedCube;
+                }
+                if (indexedBrickQuads || ClassifiedBricks())
+                    inputs.brickQuadFirstIndex = transparentVertices;
+            }
+            else if (groupMarch)
+                inputs.vdbGroupVertex = Shader("groupVertex", nvrhi::ShaderType::Vertex, "shaders/VdbGroupVertex.hlsl");
+            else
+                inputs.vdbProxyVertex = Shader("main", nvrhi::ShaderType::Vertex, "shaders/VdbProxy.hlsl");
+            const auto &frame = smokeFrames.front();
+            if (singleBrick && (vdbPartition == VdbPartition::BrickCachedLight || (ClassifiedBricks() && brickLod == avboit::BrickLod::Low)))
+            {
+                inputs.vdbCornerCache = Shader("main", nvrhi::ShaderType::Compute, "shaders/VdbCornerCache.hlsl");
+                for (unsigned axis = 0; axis < 3; ++axis)
+                    inputs.cornerGrid[axis] = (frame[axis + 1] + 3) / 4 + 1;
+            }
+            const unsigned size = singleBrick ? 4 : 8;
+            inputs.vdbProxyCells = ((frame[1] + size - 1) / size) * ((frame[2] + size - 1) / size) *
+                                   ((frame[3] + size - 1) / size);
+        }
         inputs.halfAccumulation = halfAccumulation;
         inputs.lowResolutionVolumes = lowResolutionVolumes;
         inputs.frostMipCount = frostMipCount;
@@ -2350,6 +2582,7 @@ class NativeViewer : public app::IRenderPass
         inputs.smokeTrails = smokeTrailBuffer;
         inputs.smokeTrailCandidates = smokeTrailLut.candidates;
         inputs.gameplaySmokeMask = gameplaySmokeMask;
+        inputs.smokeVisibility = smokeVisibility ? smokeVisibility : gameplaySmokeMask;
         inputs.volumeLights = volumeLighting.lights;
         inputs.regularLightDepth = donutScene ? donutScene->ShadowTexture() : volumeLighting.fallbackDepth.Get();
         inputs.lightMoments = volumeLighting.moments;
@@ -2770,6 +3003,7 @@ class NativeViewer : public app::IRenderPass
                                         Stage::AccumulationClear,
                                         Stage::VolumeAccumulation,
                                         Stage::VolumeUpsample,
+                                        Stage::BrickClassify,
                                         Stage::Accumulation,
                                         Stage::Resolve,
                                         Stage::BlurBase,
@@ -3170,7 +3404,8 @@ int main(int argc, const char **argv)
         viewer.SetTaa(o.taa);
         viewer.SetStochasticSmokeFilter(o.stochasticSmokeFilter);
         viewer.SetQuadVolumeT(o.quadVolumeT, o.eightVolumeT);
-        viewer.SetVolumeViews(o.vdbCompute, o.vdbNearRayLod, o.vdbQuarterReference, o.vdbSharedLighting, o.marchHeatmap, o.showSkippedSteps);
+        viewer.SetVdbPartition(o);
+        viewer.SetVolumeViews(o.vdbProxyStencil, o.vdbRayHull, o.vdbCompute, o.vdbNearRayLod, o.vdbQuarterReference, o.vdbSharedLighting, o.marchHeatmap, o.showSkippedSteps);
         viewer.SetAccumulationAudit(o.accumulationAudit);
         viewer.SetVolumeLutSkip(o.volumeLutSkip, o.volumeMarchStats, o.volumeReferenceSampling);
         viewer.SetInitialVolumeExtinction(o.initialVolumeExtinction);
@@ -3180,9 +3415,9 @@ int main(int argc, const char **argv)
         viewer.SetMagazineOrdering(o.magazineOrdering, o.groupWeightStrength, o.groupDepthRange);
         viewer.SetMagazineNeighbours(o.magazineNeighbours);
         viewer.SetGameplayGrenade(o.gameplayGrenade, o.grenadeStorage, o.grenadeSkip);
-        viewer.SetBakedSmoke(o.bakedSmoke, o.smokeMask, o.smokeDoorOpen);
+        viewer.SetBakedSmoke(o.bakedSmoke, o.smokeMask, o.smokeDoorOpen, o.smokeAo);
         viewer.SetSmokeAnimation(o.smokeFrame, o.smokeBrickSkip, o.smokeSequencePath, o.playSmoke);
-        viewer.SetVolumeMarch(o.volumeStepSize, o.volumeLowT, o.volumeStepScale, o.volumeMaxSteps, o.volumeEarlyOut);
+        viewer.SetVolumeMarch(o.volumeStepSize, o.volumeLowT, o.volumeStepScale, o.volumeMaxSteps, o.volumeEarlyOut, o.coarseBrickSteps);
         viewer.SetCalibration(o.calibrationBoard, o.emissiveGain);
         viewer.SetEmissiveFront(o.emissiveFront);
         viewer.SetOccupancyOverlay(o.occupancyOverlay, o.occupancySlice);

@@ -13,19 +13,19 @@ void VolumeLighting::Create(nvrhi::IDevice *device, nvrhi::IShader *shader, nvrh
                             nvrhi::ITexture *mask, nvrhi::IBuffer *smokeTrails, nvrhi::ITexture *smokeTrailCandidates, nvrhi::IBuffer *smokeSampling)
 {
     m_resolution = enabled && capacity ? 256 : 1;
-    auto buffer = [&](unsigned size, const char *name, bool constant = false)
-    {
-        return device->createBuffer(nvrhi::BufferDesc()
-                                        .setByteSize(constant ? (size + 255u) & ~255u : size)
-                                        .setIsConstantBuffer(constant)
-                                        .setFormat(nvrhi::Format::RGBA32_FLOAT)
-                                        .setCanHaveTypedViews(true)
-                                        .setInitialState(nvrhi::ResourceStates::ShaderResource)
-                                        .setKeepInitialState(true)
-                                        .setDebugName(name));
-    };
-    lights = buffer(sizeof(VolumeLightData), "Volume light transforms and radiance", true);
-    m_volumes = buffer(std::max(capacity, 1u) * 80, "Volume shadow caster bounds and extinction");
+    lights = device->createBuffer(nvrhi::BufferDesc()
+                                      .setByteSize((sizeof(VolumeLightData) + 255u) & ~size_t(255))
+                                      .setIsConstantBuffer(true)
+                                      .setInitialState(nvrhi::ResourceStates::ConstantBuffer)
+                                      .setKeepInitialState(true)
+                                      .setDebugName("Volume light transforms and radiance"));
+    m_volumes = device->createBuffer(nvrhi::BufferDesc()
+                                         .setByteSize(std::max(capacity, 1u) * 80)
+                                         .setFormat(nvrhi::Format::RGBA32_FLOAT)
+                                         .setCanHaveTypedViews(true)
+                                         .setInitialState(nvrhi::ResourceStates::ShaderResource)
+                                         .setKeepInitialState(true)
+                                         .setDebugName("Volume shadow caster bounds and extinction"));
     auto texture = [&](nvrhi::Format format, const char *name)
     {
         return device->createTexture(nvrhi::TextureDesc()
@@ -64,7 +64,7 @@ void VolumeLighting::Create(nvrhi::IDevice *device, nvrhi::IShader *shader, nvrh
     }
     using B = nvrhi::BindingSetItem;
     nvrhi::BindingSetDesc bindings;
-    bindings.addItem(B::TypedBuffer_SRV(27, lights))
+    bindings.addItem(B::ConstantBuffer(2, lights))
         .addItem(B::TypedBuffer_SRV(32, m_volumes))
         .addItem(B::Texture_SRV(26, density))
         .addItem(B::TypedBuffer_SRV(33, bricks))

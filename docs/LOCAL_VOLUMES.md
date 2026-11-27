@@ -196,16 +196,11 @@ TAA pass as the neighboring ADS demo, after transparency/VFX distortion and befo
 tonemapping. Halton projection jitter is shared by opaque and transparent geometry,
 occupancy projection and volume rays. TAA also varies ray phases over time (quad rotation at full resolution, blue-noise
 phase offsets at half resolution).
-With half-resolution volumes and TAA enabled, reconstruction uses coherent jitter:
-a single blue-noise offset moves the bilinear sample center, selecting four distinct
-neighbors before screen clamping. Bilinear spatial weights are multiplied by
-scene/interface depth similarity and normalized. Only a near-zero total weight
-falls back to the closest-depth tap; ties prefer the spatially nearest candidate.
-N/A/totalTau/BackN share the same weights. Without TAA, the same four-neighbor
-kernel disables jitter. There is no depth-moment RT or volume-history buffer.
-This is the only runtime upsample path; the kernel selector and legacy/random
-and matched-reference shaders have been removed. The headless upsample regression
-still compares coherent jitter with its fixed-neighbor fallback.
+The half-resolution upsample uses a fixed four-tap bilateral filter. Bilinear
+weights are centered on the low-resolution ray grid and multiplied by opaque and
+interface depth similarity. All four AVBOIT targets share the normalized weights.
+If their sum is near zero, the closest depth wins, with spatial distance breaking ties.
+TAA still jitters the projection and the raymarch phase.
 
 Upsampling is a pixel-shader tile draw using the existing occupancy-generated
 `ScreenTiles` transparency bit (64x64 screen pixels). Empty tiles collapse in the
@@ -234,23 +229,12 @@ and actor material edits reset history. The GPU profiler reports a separate `taa
 stage. Headless `--taa` also checks toggling, motion, cuts, resizing and finite HDR
 output before capturing a converged frame.
 
-This adapts the final upscaling stage in
-[RDR2 slide 56 and its speaker notes](https://advances.realtimerendering.com/s2019/slides_public_release.pptx).
-The earlier skipped-ray history reconstruction and ray placement (slides 51–55)
-are not prerequisites for this stage and are not implemented here. We deliberately
-omit its weighted-ray-depth kernel width. The exact point sequence and thresholds
-are not published: our quadrant stratification and 2%/2cm depth scale are demo
-choices. We also use independent bilateral weights rather than the slide's
-closest-depth selection at discontinuities. RDR2 filters integrated scattering/transmittance; we filter additive
-AVBOIT intermediates before a nonlinear resolve, so the two are not mathematically
-identical. Missing compatible low-resolution samples at depth edges can still leak
-or flicker; final TAA has no independent volume motion.
+At depth edges, all four low-resolution samples can miss the visible surface.
+This can produce leaks or flicker during motion.
 
-`--sponza --stress 24 --volume-extinction 64 --volume-upsample-test` writes matched
-static/moving-camera A/B sequences at the requested resolution. The Python dense-volume
-check reports static smoke ROI temporal variation, verifies the no-TAA bilateral
-fallback, and checks a frosted-glass intersection. These short sequences are
-diagnostics, not a guarantee for arbitrary motion or all densities.
+`--sponza --stress 24 --volume-extinction 64 --volume-upsample-test` captures
+eight stationary and eight moving-camera frames after TAA warm-up. The dense-volume
+test checks temporal variation, empty tiles and the intersection with frosted glass.
 
 `--volume-temporal-dither` animates ray phases without enabling the demo's TAA,
 for hosts providing their own temporal accumulation. The former

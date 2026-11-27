@@ -81,6 +81,15 @@ void TransparencyPipeline::Create(nvrhi::IDevice *device, const TransparencyInpu
     oitInputs.indices = inputs.geometryIndices;
     oitInputs.marchHeatmap = inputs.marchHeatmap;
     oitInputs.vdbMarchCompute = inputs.vdbMarchCompute;
+    oitInputs.vdbProxyVertex = inputs.vdbProxyVertex;
+    oitInputs.vdbGroupVertex = inputs.vdbGroupVertex;
+    oitInputs.brickClassify = inputs.brickClassify;
+    oitInputs.brickLowPixel = inputs.brickLowPixel;
+    oitInputs.brickCube = inputs.brickCube;
+    oitInputs.vdbCornerCache = inputs.vdbCornerCache;
+    oitInputs.cornerGrid = inputs.cornerGrid;
+    oitInputs.vdbProxyCells = inputs.vdbProxyCells;
+    oitInputs.brickQuadFirstIndex = inputs.brickQuadFirstIndex;
     oitInputs.vdbRaySpacing = inputs.vdbRaySpacing;
     oitInputs.halfAccumulation = inputs.halfAccumulation;
     oitInputs.lowResolutionVolumes = inputs.lowResolutionVolumes;
@@ -96,6 +105,7 @@ void TransparencyPipeline::Create(nvrhi::IDevice *device, const TransparencyInpu
     oitInputs.smokeTrails = inputs.smokeTrails;
     oitInputs.smokeTrailCandidates = inputs.smokeTrailCandidates;
     oitInputs.gameplaySmokeMask = inputs.gameplaySmokeMask;
+    oitInputs.smokeVisibility = inputs.smokeVisibility;
     oitInputs.volumeLights = inputs.volumeLights;
     oitInputs.regularLightDepth = inputs.regularLightDepth;
     oitInputs.lightMoments = inputs.lightMoments;
@@ -207,7 +217,7 @@ void TransparencyPipeline::Record(nvrhi::ICommandList *commands, const Transpare
          [&] { m_zero.RecordDepth(commands, frame.zeroDepth); });
     m_resolve.RecordAccumulation(commands, frame.geometryDraws,
                                  {route(Stage::AccumulationClear), route(Stage::VolumeAccumulation),
-                                  route(Stage::VolumeUpsample), route(Stage::Accumulation)});
+                                  route(Stage::VolumeUpsample), route(Stage::Accumulation), route(Stage::BrickClassify)});
     pass(Stage::Resolve, "Refracted B prime / transparency tiles",
          [&] { m_resolve.RecordResolve(commands, frame.poisonResolve); });
     m_gaussian.RecordBlur(commands, frame.lastBlurMip, frame.poisonResolve, route(Stage::BlurBase), route(Stage::Blur));

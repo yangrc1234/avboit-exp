@@ -49,7 +49,7 @@ def main():
         numerator = texture(folder / "native-numerator.raw", "<f2", 4)[..., :3].astype("f4")
         assert np.isfinite(color).all() and np.isfinite(numerator).all()
         assert (color >= 0).all() and (numerator >= 0).all()
-        data = np.fromfile(folder / "native-volume-lights.f32", "<f4").reshape(39, 4)
+        data = np.fromfile(folder / "native-volume-lights.f32", "<f4", count=40 * 4).reshape(40, 4)
         assert np.isfinite(data).all()
         return folder, color, numerator, data
 
@@ -77,6 +77,16 @@ def main():
     )
     assert report["sun_surface_shadow_changed_pixels"] > 100
     assert shadow_delta.min() > -0.02
+    # Isolate the spotlight contribution on opaque receivers. A perspective
+    # device-depth cascade fade used to add unshadowed light here.
+    _, spot_on, _, _ = capture("spot-only", 24, "--sun-intensity", "0")
+    _, spot_off, _, _ = capture("spot-no-msm", 24, "--sun-intensity", "0", "--no-volume-shadows")
+    _, ambient, _, _ = capture("ambient-only", 24, "--sun-intensity", "0", "--spot-intensity", "0")
+    direct = spot_off[..., 0] - ambient[..., 0]
+    lit = direct > 0.05
+    fraction_blocked = (spot_off[..., 0][lit] - spot_on[..., 0][lit]) / direct[lit]
+    report["spot_surface_pixels_over_90pct_attenuation"] = int(np.count_nonzero(fraction_blocked > .9))
+    assert report["spot_surface_pixels_over_90pct_attenuation"] > 100, report
     for index in range(3):
         tau = texture(folder / f"native-light-tau-{index}.f16", "<f2", 1)[..., 0]
         moments = texture(folder / f"native-light-moments-{index}.unorm16", "<u2", 4)

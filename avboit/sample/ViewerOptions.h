@@ -9,6 +9,8 @@ constexpr unsigned AlignRenderDimension(unsigned value)
 {
     return (value + 3u) & ~3u;
 }
+enum class BrickLod { Balanced, Performance, Low };
+
 struct ViewerOptions
 {
     bool help = false, headless = false, uiCapture = false, uiSelfTest = false, actorEditorTest = false;
@@ -34,6 +36,7 @@ struct ViewerOptions
     unsigned smokeShots = 0; // Deterministic capsule preview, 0..15.
     float smokeShotRadius = .45f;
     bool smokeTrailReference = false, smokeTrailRebuild = false; // Offline comparison only.
+    bool smokeAo = true;
     bool bakedSmoke = false, smokeMask = true, smokeDoorOpen = true;
     bool smokeBrickSkip = true, playSmoke = true;
     float smokeFrame = 15.f;
@@ -47,7 +50,17 @@ struct ViewerOptions
     float groupWeightStrength = 4.f, groupDepthRange = 2.f;
     bool stochasticSmokeFilter = false, quadVolumeT = true, eightVolumeT = false;
     unsigned accumulationAudit = 0; // Offline shader ablation, not a quality option.
-    bool vdbCompute = false, vdbNearRayLod = false, vdbQuarterReference = false, vdbSharedLighting = false, marchHeatmap = false;
+    bool vdbRayHull = false;
+    bool vdbGroupMarch = false;
+    bool vdbBrickMarch = false;
+    BrickLod brickLod = BrickLod::Balanced;
+    bool coarseBrickSteps = false;
+    bool vdbBrickCoarseLight = false;
+    bool vdbBrickVertexLight = false;
+    bool indexedBrickQuads = true;
+    bool classifyBricks = false, classifyCubes = false;
+    bool vdbBrickCache = false;
+    bool vdbProxyStencil = false, vdbCompute = false, vdbNearRayLod = false, vdbQuarterReference = false, vdbSharedLighting = false, marchHeatmap = false;
     bool showSkippedSteps = false, volumeEarlyOut = true;
     bool volumeLutSkip = false, volumeMarchStats = false, volumeReferenceSampling = false;
     float volumeStepSize = .5f, volumeLowT = .1f, volumeStepScale = 1.f;

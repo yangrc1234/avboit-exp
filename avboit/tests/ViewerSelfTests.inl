@@ -690,96 +690,86 @@ void NativeViewer::TestTemporalAA(nvrhi::IFramebuffer *framebuffer, bool capture
     validate();
     if (lowResolutionVolumes && captureUpscaleSequence)
     {
-        // Deterministic A/B sequences at the requested render resolution. These
-        // exercise coherent jitter and its fixed-neighbor fallback.
-        const bool savedUpscale = ditheredVolumeUpsample;
+        // Capture eight stationary and eight moving frames after TAA warm-up.
         const float savedSmokeFrame = SmokePlayback().frame;
         auto *color = framebuffer->getDesc().colorAttachments[0].texture;
         auto staging = GetDevice()->createStagingTexture(color->getDesc(), nvrhi::CpuAccessMode::Read);
         auto *preTaa = transparency.DistortionApply().Output();
         auto hdrStaging = GetDevice()->createStagingTexture(preTaa->getDesc(), nvrhi::CpuAccessMode::Read);
         std::ofstream phases("volume-upscale-phases.csv");
-        phases << "dithered,frame,jitter_x,jitter_y,noise_phase\n";
-        for (bool dithered : {false, true})
+        phases << "frame,jitter_x,jitter_y,noise_phase\n";
+        volumeSampleFrame = 0;
+        ApplyCameraPreset(savedPreset);
+        temporalAA->Invalidate();
+        const auto startEye = navigation.Eye(), direction = navigation.Forward();
+        const float heading = std::atan2(direction[0], direction[2]);
+        const float pitchAngle = std::asin(std::clamp(direction[1], -1.f, 1.f));
+        for (unsigned frame = 0; frame < 48; ++frame)
         {
-            ditheredVolumeUpsample = dithered;
-            volumeSampleFrame = 0;
-            ApplyCameraPreset(savedPreset);
-            temporalAA->Invalidate();
-            const auto startEye = navigation.Eye(), direction = navigation.Forward();
-            const float heading = std::atan2(direction[0], direction[2]);
-            const float pitchAngle = std::asin(std::clamp(direction[1], -1.f, 1.f));
-            for (unsigned frame = 0; frame < 48; ++frame)
-            {
-                // Headless rendering does not call Animate. Advance both A/B
-                // sequences identically so baked smoke exercises moving density,
-                // frame uploads and TAA history instead of a frozen VDB frame.
-                if (bakedSmoke && !smokeFrames.empty())
-                    SmokePlayback().frame =
-                        std::min(savedSmokeFrame + float(frame) * smokeFps / 60.f, float(smokeFrames.size() - 1));
-                if (frame >= 40)
-                    navigation.SetPose({startEye[0] + float(frame - 39) * .02f, startEye[1], startEye[2]}, heading,
-                                       pitchAngle);
-                Render(framebuffer);
-                phases << dithered << "," << frame << "," << camera[11][0] << "," << camera[11][1] << ","
-                       << camera[9][3] << "\n";
-                if (frame < 32)
-                    continue;
-                // Capture matching HDR inputs/outputs to distinguish source noise
-                // from temporal reconstruction. Keep every 2x2 phase in a central crop.
-                if (frame < 40 && preTaa->getDesc().format == nvrhi::Format::RGBA16_FLOAT)
-                    for (unsigned stage = 0; stage < 2; ++stage)
-                    {
-                        auto *source = stage == 0 ? preTaa : temporalAA->Output();
-                        commands->open();
-                        commands->copyTexture(hdrStaging, {}, source, {});
-                        commands->close();
-                        GetDevice()->executeCommandList(commands);
-                        GetDevice()->waitForIdle();
-                        size_t hdrPitch = 0;
-                        auto *hdr = static_cast<const unsigned char *>(
-                            GetDevice()->mapStagingTexture(hdrStaging, {}, nvrhi::CpuAccessMode::Read, &hdrPitch));
-                        if (!hdr)
-                            throw std::runtime_error("Temporal HDR audit readback failed");
-                        char hdrName[128];
-                        snprintf(hdrName, sizeof(hdrName), "volume-upscale-%s-%s-%02u.rgba16f",
-                                 dithered ? "dithered" : "bilateral", stage == 0 ? "pre" : "post", frame - 32);
-                        std::ofstream hdrFile(hdrName, std::ios::binary);
-                        const unsigned size[] = {Width / 2, Height / 2};
-                        hdrFile.write(reinterpret_cast<const char *>(size), sizeof(size));
-                        for (unsigned y = Height / 4; y < Height / 4 + size[1]; ++y)
-                            hdrFile.write(reinterpret_cast<const char *>(hdr + y * hdrPitch + (Width / 4) * 8),
-                                          size[0] * 8);
-                        GetDevice()->unmapStagingTexture(hdrStaging);
-                    }
-                commands->open();
-                commands->copyTexture(staging, {}, color, {});
-                commands->close();
-                GetDevice()->executeCommandList(commands);
-                GetDevice()->waitForIdle();
-                size_t pitch = 0;
-                auto *data = static_cast<const unsigned char *>(
-                    GetDevice()->mapStagingTexture(staging, {}, nvrhi::CpuAccessMode::Read, &pitch));
-                if (!data)
-                    throw std::runtime_error("Volume upscale sequence readback failed");
-                char name[128];
-                snprintf(name, sizeof(name), "volume-upscale-%s-%02u.ppm", dithered ? "dithered" : "bilateral",
-                         frame - 32);
-                std::ofstream file(name, std::ios::binary);
-                const auto w = color->getDesc().width, h = color->getDesc().height;
-                file << "P6\n" << w << " " << h << "\n255\n";
-                std::vector<unsigned char> row(w * 3);
-                for (unsigned y = 0; y < h; ++y)
+            // Headless rendering does not call Animate. Advance the smoke at a fixed rate.
+            if (bakedSmoke && !smokeFrames.empty())
+                SmokePlayback().frame =
+                    std::min(savedSmokeFrame + float(frame) * smokeFps / 60.f, float(smokeFrames.size() - 1));
+            if (frame >= 40)
+                navigation.SetPose({startEye[0] + float(frame - 39) * .02f, startEye[1], startEye[2]}, heading,
+                                   pitchAngle);
+            Render(framebuffer);
+            phases << frame << "," << camera[11][0] << "," << camera[11][1] << ","
+                   << camera[9][3] << "\n";
+            if (frame < 32)
+                continue;
+            // Capture matching HDR inputs/outputs to distinguish source noise
+            // from temporal reconstruction. Keep every 2x2 phase in a central crop.
+            if (frame < 40 && preTaa->getDesc().format == nvrhi::Format::RGBA16_FLOAT)
+                for (unsigned stage = 0; stage < 2; ++stage)
                 {
-                    for (unsigned x = 0; x < w; ++x)
-                        for (unsigned c = 0; c < 3; ++c)
-                            row[x * 3 + c] = data[y * pitch + x * 4 + c];
-                    file.write(reinterpret_cast<const char *>(row.data()), row.size());
+                    auto *source = stage == 0 ? preTaa : temporalAA->Output();
+                    commands->open();
+                    commands->copyTexture(hdrStaging, {}, source, {});
+                    commands->close();
+                    GetDevice()->executeCommandList(commands);
+                    GetDevice()->waitForIdle();
+                    size_t hdrPitch = 0;
+                    auto *hdr = static_cast<const unsigned char *>(
+                        GetDevice()->mapStagingTexture(hdrStaging, {}, nvrhi::CpuAccessMode::Read, &hdrPitch));
+                    if (!hdr)
+                        throw std::runtime_error("Temporal HDR audit readback failed");
+                    char hdrName[128];
+                    snprintf(hdrName, sizeof(hdrName), "volume-upscale-bilateral-%s-%02u.rgba16f",
+                             stage == 0 ? "pre" : "post", frame - 32);
+                    std::ofstream hdrFile(hdrName, std::ios::binary);
+                    const unsigned size[] = {Width / 2, Height / 2};
+                    hdrFile.write(reinterpret_cast<const char *>(size), sizeof(size));
+                    for (unsigned y = Height / 4; y < Height / 4 + size[1]; ++y)
+                        hdrFile.write(reinterpret_cast<const char *>(hdr + y * hdrPitch + (Width / 4) * 8),
+                                      size[0] * 8);
+                    GetDevice()->unmapStagingTexture(hdrStaging);
                 }
-                GetDevice()->unmapStagingTexture(staging);
+            commands->open();
+            commands->copyTexture(staging, {}, color, {});
+            commands->close();
+            GetDevice()->executeCommandList(commands);
+            GetDevice()->waitForIdle();
+            size_t pitch = 0;
+            auto *data = static_cast<const unsigned char *>(
+                GetDevice()->mapStagingTexture(staging, {}, nvrhi::CpuAccessMode::Read, &pitch));
+            if (!data)
+                throw std::runtime_error("Volume upscale sequence readback failed");
+            char name[128];
+            snprintf(name, sizeof(name), "volume-upscale-bilateral-%02u.ppm", frame - 32);
+            std::ofstream file(name, std::ios::binary);
+            const auto w = color->getDesc().width, h = color->getDesc().height;
+            file << "P6\n" << w << " " << h << "\n255\n";
+            std::vector<unsigned char> row(w * 3);
+            for (unsigned y = 0; y < h; ++y)
+            {
+                for (unsigned x = 0; x < w; ++x)
+                    for (unsigned c = 0; c < 3; ++c)
+                        row[x * 3 + c] = data[y * pitch + x * 4 + c];
+                file.write(reinterpret_cast<const char *>(row.data()), row.size());
             }
+            GetDevice()->unmapStagingTexture(staging);
         }
-        ditheredVolumeUpsample = savedUpscale;
         SmokePlayback().frame = savedSmokeFrame;
         ApplyCameraPreset(savedPreset);
         temporalAA->Invalidate();

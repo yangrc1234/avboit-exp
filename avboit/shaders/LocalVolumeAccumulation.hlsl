@@ -4,7 +4,6 @@
 #endif
 #include "LocalVolume.hlsli"
 #include "ResolveData.hlsli"
-#define VOLUME_LIGHT_CONSTANT_BUFFER
 #include "VolumeLighting.hlsli"
 #include "VolumeBlueNoise.hlsli"
 struct VolumeMarchResult
@@ -17,20 +16,7 @@ struct VolumeMarchResult
     uint lodMask;
 #endif
 };
-// Volume samples have no thin-surface depth push. LUT texel k stores bin k's
-// exit, so the continuous coordinate starts at the preceding endpoint.
-float3 SampleVolumeTransmittance(float2 uv, float viewZ)
-{
-    float mapped = MapAdaptiveDepth(DepthWarp, viewZ, 80., 1., 0.);
-    if (mapped <= 0.)
-        return 1.;
-    if (mapped < 1.)
-    {
-        float3 first = SampleTransmittanceAtZ(uv, .5 / float(SLICE_COUNT));
-        return lerp(float3(1, 1, 1), first, mapped);
-    }
-    return SampleTransmittanceAtZ(uv, (mapped - .5) / float(SLICE_COUNT));
-}
+#include "VolumeTransmittance.hlsli"
 // Diagnostic variants retain the initial Zero-T clipping query. Replacing only
 // march queries requires fixed steps and disabled LUT-equality skipping.
 float3 SampleMarchTransmittance(float2 uv, float viewZ)
@@ -53,31 +39,7 @@ static const bool ReferenceSampling = false, LutIntervalSkip = false;
 #define LutIntervalSkip ((uint(Camera[12].z) & 1u) != 0)
 #endif
 
-#if SMOKE_STOCHASTIC
-// Integer avalanche keeps filter randomness separate from ray-position jitter.
-uint SmokeFilterHash(uint v)
-{
-    v ^= v >> 16;
-    v *= 0x7feb352du;
-    v ^= v >> 15;
-    v *= 0x846ca68bu;
-    return v ^ (v >> 16);
-}
-float3 SmokeFilterRandom(uint seed)
-{
-    uint3 bits = uint3(SmokeFilterHash(seed ^ 0xa511e9b3u), SmokeFilterHash(seed ^ 0x63d83595u),
-                       SmokeFilterHash(seed ^ 0xb8d4f239u));
-    return float3(bits >> 8) * (1. / 16777216.);
-}
-#endif
-uint SmokeFilterSeed(uint2 pixel)
-{
-#if SMOKE_STOCHASTIC
-    return SmokeFilterHash(pixel.x + pixel.y * WIDTH) ^ SmokeFilterHash(uint(Camera[9].w));
-#else
-    return 0u;
-#endif
-}
+#include "SmokeFilterRandom.hlsli"
 void AccumulateVolumeSegment(float2 segment, float sampleFraction, float rayZ, VolumeVaryings i, bool behind,
                              bool textured, float2 uv, float3 beginT, float3 endT, inout VolumeMarchResult o,
                              inout float shadingCount, uint filterSeed,
@@ -154,8 +116,9 @@ void AccumulateVolumeSegment(float2 segment, float sampleFraction, float rayZ, V
         // Only direct lighting/shadow evaluation is omitted at very low RGB T.
         // Retaining the ambient source avoids turning the entire tail black.
         bool lowContribution = max(meanT.r, max(meanT.g, meanT.b)) < .001;
+        float3 incoming;
         if (lowContribution && !ReferenceSampling)
-            i.source *= VolumeLights[4].xxx;
+            incoming = VolumeLights[4].xxx;
         else
         {
 #if VDB_SHARED_LIGHTING
@@ -172,15 +135,23 @@ void AccumulateVolumeSegment(float2 segment, float sampleFraction, float rayZ, V
                     float3 light = 0.;
                     if (lane == sourceLane)
                         light = EvaluateVolumeLighting(world);
-                    i.source *= WaveReadLaneAt(light, sourceLane);
+                    incoming = WaveReadLaneAt(light, sourceLane);
                 }
                 else
-                    i.source *= EvaluateVolumeLighting(world);
+                    incoming = EvaluateVolumeLighting(world);
             }
             else
 #endif
-                i.source *= EvaluateVolumeLighting(world);
+                incoming = EvaluateVolumeLighting(world);
         }
+#if SPECIALIZED_VDB
+        if (textured && VdbAmbientColumnScale > 0.)
+        {
+            float3 localUV = VolumeLocal(i, world - i.center) / (2. * i.extent) + .5;
+            incoming -= VolumeLights[4].xxx * (1. - SampleVdbAmbientVisibility(localUV, VdbExtinctionLength(i.sigma.r, i.extent)));
+        }
+#endif
+        i.source *= incoming;
     }
     // Integrate the visibility over the segment instead of allowing a random
     // point behind the quantized zero frontier to erase the entire interval.
@@ -299,6 +270,69 @@ float QuadEmptyBoxEnd(VolumeVaryings i, float2 uv, float rayZ, float z, uint lea
 #include "VdbSharedRay.hlsli"
 #endif
 
+#if VDB_RAY_HULL
+float4 VdbDiagonals(float3 p)
+{
+    return p.x + float4(p.y, -p.y, p.y, -p.y) + float4(p.z, p.z, -p.z, -p.z);
+}
+
+float2 VdbHullInterval(VolumeVaryings i, float2 uv, float rayZ, float2 bounds)
+{
+    float3 origin = VolumeLocal(i, Camera[0].xyz - i.center) / (2. * i.extent) + .5;
+    float3 slope = VolumeLocal(i, WorldRay(uv)) / (2. * i.extent * rayZ);
+    float4 diagonalOrigin = VdbDiagonals(origin), diagonalSlope = VdbDiagonals(slope);
+    if (VdbAxisLo.x > VdbAxisHi.x)
+        return float2(1., 0.); // Empty animation frame.
+    [unroll] for (uint k = 0; k < 7; ++k)
+    {
+        float2 slab = k < 3 ? float2(VdbAxisLo[k], VdbAxisHi[k]) : float2(VdbDiagonalLo[k-3], VdbDiagonalHi[k-3]);
+        float p = k < 3 ? origin[k] : diagonalOrigin[k-3];
+        float d = k < 3 ? slope[k] : diagonalSlope[k-3];
+        slab += float2(-1., 1.) * 1e-5; // Round out at grazing or parallel rays.
+        if (d == 0.)
+        {
+            if (p < slab.x || p > slab.y)
+                return float2(1., 0.);
+        }
+        else
+        {
+            float2 hit = (slab - p) / d;
+            bounds = float2(max(bounds.x, min(hit.x, hit.y)), min(bounds.y, max(hit.x, hit.y)));
+        }
+    }
+    return bounds;
+}
+#endif
+
+#if VDB_GROUP_MARCH
+#include "VdbGroupGeometry.hlsli"
+float2 GroupInterval(VolumeVaryings i, float2 uv, float rayZ, float2 interval)
+{
+    float3 lo, hi;
+    VdbGroupBounds(i.groupIndex, lo, hi);
+    float3 scale = VdbSize / (2. * i.extent);
+    float3 p = VolumeLocal(i, Camera[0].xyz - i.center) * scale + .5 * VdbSize;
+    float3 v = VolumeLocal(i, WorldRay(uv)) * scale / rayZ;
+    // The slab is a conservative scheduling bound. Density taps enforce ownership.
+    lo -= .0005;
+    hi += .0005;
+    [unroll] for (uint axis = 0; axis < 3; ++axis)
+    {
+        if (v[axis] == 0.)
+        {
+            if (p[axis] < lo[axis] || p[axis] > hi[axis])
+                return float2(1., 0.);
+        }
+        else
+        {
+            float2 hit = (float2(lo[axis], hi[axis]) - p[axis]) / v[axis];
+            interval = float2(max(interval.x, min(hit.x, hit.y)), min(interval.y, max(hit.x, hit.y)));
+        }
+    }
+    return interval;
+}
+#endif
+
 VolumeMarchResult ShadeVolumeQuad(VolumeVaryings i, bool halfResolution)
 {
     VolumeMarchResult o = (VolumeMarchResult)0;
@@ -331,7 +365,39 @@ VolumeMarchResult ShadeVolumeQuad(VolumeVaryings i, bool halfResolution)
         jitter = frac(jitter + (Camera[9].w - 1.) * .618033989);
     uint seed = SmokeFilterSeed(pixel);
     uint budget = max(uint(Camera[10].w), 4u);
+    uint firstStep = 0;
     float emptyUntil = -1., recheckAt = -1.;
+#if VDB_GROUP_MARCH
+    float2 group = GroupInterval(i, uv, rayZ, interval);
+    stopZ = valid && group.y >= group.x ? min(stopZ, group.y) : -1.;
+    if (QuadMaximum(stopZ) <= z)
+        return o;
+    emptyUntil = group.x;
+#if QUAD_T == 1
+    // Start on an actor block boundary before this group. Replaying from the
+    // actor entry is required if T changes the step size or an interface cuts a block.
+    float fixedDz = Camera[10].x * centerRayZ;
+    float limit = QuadMinimum(stopZ > z ? group.x : end);
+    if (Camera[10].z == 1. && fixedDz >= (end - z) / budget &&
+        QuadMinimum(valid && interfaceZ > z ? interfaceZ : end) >= limit)
+    {
+        uint blocks = min(uint(max(0., floor((limit - z) / (4. * fixedDz)))), budget / 4u);
+        if (blocks && z + blocks * (4. * fixedDz) > limit)
+            --blocks;
+        z += blocks * (4. * fixedDz);
+        firstStep = 4u * blocks;
+    }
+#endif
+#endif
+#if VDB_RAY_HULL
+    // Keep the original AABB lattice, T anchors, budget and interface cuts.
+    // The hull proves an empty prefix and a stopping point, never a new sample origin.
+    float2 hull = VdbHullInterval(i, uv, rayZ, float2(interval.x, stopZ));
+    stopZ = valid && hull.y >= hull.x ? hull.y : -1.;
+    if (QuadMaximum(stopZ) <= z)
+        return o;
+    recheckAt = emptyUntil = hull.x;
+#endif
     float3 stats = 0.;
     float3 t0 = SharedVolumeT(quadUv, z);
 #if QUAD_T == 2
@@ -342,7 +408,6 @@ VolumeMarchResult ShadeVolumeQuad(VolumeVaryings i, bool halfResolution)
     anchors.lower = t0;
     anchors.upper = SharedVolumeT(quadUv, z + anchors.length / 7.);
 #endif
-    uint firstStep = 0;
 #if VDB_NEAR_RAY_LOD
     float sharedZ, sharedEnd;
     bool sharedBehind;
@@ -381,12 +446,12 @@ VolumeMarchResult ShadeVolumeQuad(VolumeVaryings i, bool halfResolution)
     // Up to four interface cuts may split a block without consuming the tail.
     [loop] for (uint step = firstStep; step < budget + 16u && z < end; step += 4u)
     {
-#if SPECIALIZED_VDB
+#if SPECIALIZED_VDB && !(VDB_GROUP_MARCH && QUAD_T == 1)
         // Only jump on a fixed lattice. With T-dependent step growth, omitted
         // queries could change subsequent sample positions even in empty space.
         if (Camera[10].z == 1. && step < budget)
         {
-#if QUAD_T == 3
+#if QUAD_T == 3 && !VDB_GROUP_MARCH
             uint lane = (rasterPixel.x & 1u) + 2u * (rasterPixel.y & 1u);
             bool needsProof = valid && z < stopZ && max(z, interval.x) >= recheckAt;
             uint leader = uint(QuadMinimum(needsProof ? float(lane) : 4.));
@@ -468,12 +533,14 @@ VolumeMarchResult ShadeVolumeQuad(VolumeVaryings i, bool halfResolution)
 #if VDB_NEAR_RAY_LOD && MARCH_COUNTERS
                 o.lodMask |= 1u;
 #endif
+#if !VDB_GROUP_MARCH
                 if (segment.x >= recheckAt)
                 {
                     float recheckDistance;
                     emptyUntil = segment.x + VolumeEmptyRun(i, uv, segment.x, rayZ, recheckDistance);
                     recheckAt = max(emptyUntil, segment.x + recheckDistance);
                 }
+#endif
                 if (segment.y <= emptyUntil)
                 {
                     stats.z += count;
@@ -649,5 +716,10 @@ VolumeAccumulation volumeAccumulationHalf(VolumeVaryings i)
 VolumeAccumulation texturedAccumulationHalf(VolumeVaryings i)
 {
     i.position.xy = floor(i.position.xy) * 2. + 1.5;
-    return AccumulationTargets(ShadeVolume(i, true, true));
+    VolumeMarchResult result = ShadeVolume(i, true, true);
+#if VDB_GROUP_MARCH
+    if (result.totalTau == 0.)
+        discard;
+#endif
+    return AccumulationTargets(result);
 }

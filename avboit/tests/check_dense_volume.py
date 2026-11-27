@@ -100,22 +100,21 @@ def main():
         data = np.fromfile(folder / f"native-{name}.raw", dtype="<u4", offset=8).reshape(1440, 2560)
         assert not data[~active].any(), f"Nonzero {name} outside transparency tiles"
     report["inactive_accumulation_tiles_zero"] = True
-    for mode in ("bilateral", "dithered"):
-        sequence = np.stack(
-            [
-                np.asarray(
-                    Image.open(folder / f"volume-upscale-{mode}-{frame:02}.ppm"),
-                    dtype=np.float32,
-                )
-                for frame in range(8)
-            ]
-        )
-        # Fixed smoke ROI, unregistered static camera. Report rather than assert
-        # a universal quality win; the second eight frames exercise camera motion.
-        roi = sequence[:, 400:1200, 1250:1700]
-        report[f"{mode}_temporal_std_255"] = float(roi.std(axis=0).mean())
-        report[f"{mode}_frame_delta_255"] = float(abs(np.diff(roi, axis=0)).mean())
-        assert (folder / f"volume-upscale-{mode}-15.ppm").is_file()
+    sequence = np.stack(
+        [
+            np.asarray(
+                Image.open(folder / f"volume-upscale-bilateral-{frame:02}.ppm"),
+                dtype=np.float32,
+            )
+            for frame in range(8)
+        ]
+    )
+    # Fixed smoke ROI, unregistered static camera. Report rather than assert
+    # a universal quality win; the second eight frames exercise camera motion.
+    roi = sequence[:, 400:1200, 1250:1700]
+    report["bilateral_temporal_std_255"] = float(roi.std(axis=0).mean())
+    report["bilateral_frame_delta_255"] = float(abs(np.diff(roi, axis=0)).mean())
+    assert (folder / "volume-upscale-bilateral-15.ppm").is_file()
     capture("half-no-taa", 64, "--volume-half-res")
     frost, _ = capture("half-frost-taa", 64, "--stress", "25", "--volume-half-res", "--taa")
     assert np.isfinite(texture(frost / "native-taa.rgba16f", "<f2", 4)).all()

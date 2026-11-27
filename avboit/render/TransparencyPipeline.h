@@ -21,14 +21,19 @@ struct TransparencyInputs
     unsigned depthBudget = 128;
     bool fixedDepth = false, hardwareDepth = false;
     bool marchHeatmap = false;
-    nvrhi::ShaderHandle vdbMarchCompute;
+    nvrhi::ShaderHandle vdbMarchCompute, vdbProxyVertex, vdbGroupVertex;
+    nvrhi::ShaderHandle vdbCornerCache, brickClassify, brickLowPixel;
+    bool brickCube = false;
+    std::array<unsigned, 3> cornerGrid{};
+    unsigned vdbProxyCells = 0;
+    unsigned brickQuadFirstIndex = ~0u;
     unsigned vdbRaySpacing = 1;
     bool halfAccumulation = false, fullVfx = true;
     bool lowResolutionVolumes = true;
     nvrhi::BufferHandle vertices, bounds, camera, materials, interfaceIndices, geometryIndices;
     nvrhi::BufferRange transparentRange;
     nvrhi::TextureHandle opaqueColorDepth;
-    nvrhi::TextureHandle opaqueHardwareDepth, volumeDensity, gameplaySmokeMask;
+    nvrhi::TextureHandle opaqueHardwareDepth, volumeDensity, gameplaySmokeMask, smokeVisibility;
     nvrhi::BufferHandle smokeBricks, smokeTrails, smokeSampling;
     nvrhi::TextureHandle smokeTrailCandidates;
     nvrhi::BufferHandle volumeLights;
@@ -70,6 +75,7 @@ class TransparencyPipeline
         AccumulationClear,
         VolumeAccumulation,
         VolumeUpsample,
+        BrickClassify,
         Accumulation,
         Resolve,
         BlurBase,

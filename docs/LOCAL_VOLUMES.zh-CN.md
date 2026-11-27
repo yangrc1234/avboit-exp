@@ -59,17 +59,9 @@ GPU timer 拆成互不重叠的四项：`accumulation_clear`（全分辨率 RT �
 `accumulation`（全分辨率 actor 绘制）。与旧 CSV 对比时，需要将四项相加；
 旧版 `accumulation` 包含了全部这些开销。关闭的阶段记录空计时间隔，支持实时切换。
 
-启用半分辨率和 TAA 后，使用 coherent 四邻居 point taps，每个样本计算
-“抖动中心对应的 bilinear 空间权重 × 场景／interface 深度相似度”。
-一个候选不匹配只降低自身权重，不再让整个像素退回单点。
-只有权重总和接近零时才选择深度最匹配的候选；深度差相同则优先空间最近的样本。
-四张 RT 共用归一化后的权重。采样半径固定为一个半分辨率 texel，
-不生成深度矩，不增加 RT 或体积 history，也不查询 T-LUT。
-SceneDepth 仍包含 Zero-T，因此其人工深度台阶仍可能影响权重；这个改动不消除深度本身的歧义。
-上采样跟随 TAA 自动选择，不再单独提供 ImGui 对比开关。
-统一使用 coherent 四邻居重建：同一个蓝噪声偏移移动 bilinear 采样中心，
-空间权重乘 opaque/interface 深度权重后归一化；屏幕 clamp 前四个邻居不会重复。
-没有 TAA 时关闭中心抖动，使用固定四邻居。已删除核选择菜单、CLI 选项以及旧随机核和 9-tap 对照核。
+半分辨率体积统一使用四点 bilateral。采样中心固定在半分辨率射线网格上，bilinear 空间权重乘以 opaque 和 interface 的深度相似度，四张 accumulation RT 共用归一化权重。
+权重之和接近零时取深度最匹配的样本，深度误差相同时取空间最近的样本。SceneDepth 包含 Zero-T，其深度台阶仍可能影响权重。TAA 继续抖动投影和 raymarch 相位。
+
 `Temporal volume dithering (requires TAA)` / `--volume-temporal-dither`
 只改变 raymarch 的时域采样相位，用于接入宿主自己的 TAA。
 旧参数 `--volume-stochastic-upsample` 仅保留为别名，不再抖动 upsample 地址。
@@ -131,19 +123,11 @@ Halton 投影 jitter 同时用于 opaque、透明几何、occupancy 投影和体
 这是用于观察采样收敛的基线，不是完整的透明 temporal reconstruction。
 切换视角、重建资源和编辑 actor 材质会重置 history。GPU profiler 单独列出 `taa`。
 
-这里借鉴的是 [RDR2 第 56 页及备注的最终上采样](https://advances.realtimerendering.com/s2019/slides_public_release.pptx)。
-我们未实现第 51–55 页的缺失射线历史重建，而是每帧计算全部半分辨率像素；最终 upsample 输入没有体积专用的历史稳定处理。
-按当前取舍，没有实现加权 ray depth 控制 kernel 宽度。原分享没有公布精确点集与阈值，
-四象限分层点集、2%／2cm 深度尺度是 demo 的选择；也改用了逐样本 bilateral 权重，
-而不是分享中的深度不连续处选单点，不能称为逐项复现。
-原方案过滤已积分散射／透射率；我们过滤 AVBOIT 中间量后再非线性 resolve，两者不严格等价。
-低分辨率没有合适深度样本时仍可能漏光或闪动，最终 TAA 也没有独立的体积运动矢量。
-
-`--sponza --stress 24 --volume-extinction 64 --volume-upsample-test` 可输出静止／移动镜头的逐帧对照。
-测试脚本统计固定烟雾 ROI 的时域变化，并检查无 TAA 时回退 bilateral、磨砂交错时输出有限值。
+低分辨率射线可能漏掉遮挡轮廓处的可见表面，运动时边缘仍可能漏光或闪动。
+`--sponza --stress 24 --volume-extinction 64 --volume-upsample-test` 在 TAA 预热后输出八帧固定镜头和八帧移动镜头。
 
 `python avboit/tests/check_dense_volume.py` 在 2K、packed RT 下检查高消光 Zero-T 开关差异、
 底部零权重黑洞和半分辨率 TAA 有限值。仍允许少量孤立像素的截止差异，
 不能据此宣称任意运动下的时域质量已经通过验证。
 
-ImGui 的 **Quality → Volumes → Volume upsample** 可切换固定bilateral、旧随机核、整体jitter和匹配空间参考；切换清空TAA历史并保留材质编辑。半分辨率体积默认开启，可用`--volume-full-res`关闭。
+半分辨率体积默认开启，可用 `--volume-full-res` 切换全分辨率。

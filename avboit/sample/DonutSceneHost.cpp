@@ -59,7 +59,7 @@ class SceneShadingPass : public render::ForwardShadingPass
     {
         auto base = ForwardShadingPass::CreateShadingBindingLayout();
         auto desc = *base->getDesc();
-        desc.addItem(nvrhi::BindingLayoutItem::TypedBuffer_SRV(27))
+        desc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(2))
             .addItem(nvrhi::BindingLayoutItem::Texture_SRV(29))
             .addItem(nvrhi::BindingLayoutItem::Texture_SRV(31))
             .addItem(nvrhi::BindingLayoutItem::Sampler(10));
@@ -82,7 +82,7 @@ class SceneShadingPass : public render::ForwardShadingPass
             .addItem(B::Sampler(FORWARD_BINDING_SHADOW_MAP_SAMPLER, m_ShadowSampler))
             .addItem(B::Sampler(FORWARD_BINDING_LIGHT_PROBE_SAMPLER, m_CommonPasses->m_LinearWrapSampler))
             .addItem(B::Sampler(FORWARD_BINDING_ENVIRONMENT_BRDF_SAMPLER, m_CommonPasses->m_LinearClampSampler))
-            .addItem(B::TypedBuffer_SRV(27, volumeLights))
+            .addItem(B::ConstantBuffer(2, volumeLights))
             .addItem(B::Texture_SRV(29, volumeMoments))
             .addItem(B::Texture_SRV(31, volumeTau))
             .addItem(B::Sampler(10, m_CommonPasses->m_LinearClampSampler));
@@ -225,6 +225,9 @@ void DonutSceneHost::Load(nvrhi::IDevice *device, const std::filesystem::path &s
         nvrhi::FramebufferAttachment().setTexture(shadowTexture).setArraySlice(0)));
     state->spotShadow =
         std::make_shared<render::PlanarShadowMap>(device, shadowTexture, 1, nvrhi::Viewport(2048.f, 2048.f));
+    // The spot already fades by world-space range and cone angle. Donut's
+    // device-Z cascade fade would mix unshadowed light back into its whole cone.
+    state->spotShadow->SetFalloffDistance(0.f);
     state->spotShadow->SetLitOutOfBounds(true);
     state->spot->shadowMap = state->spotShadow;
     state->spotFramebuffer = device->createFramebuffer(nvrhi::FramebufferDesc().setDepthAttachment(
@@ -241,7 +244,7 @@ void DonutSceneHost::Load(nvrhi::IDevice *device, const std::filesystem::path &s
 }
 
 void DonutSceneHost::Record(nvrhi::ICommandList *commands, nvrhi::IFramebuffer *target,
-                            const std::array<std::array<float, 4>, 14> &camera)
+                            const std::array<std::array<float, 4>, 15> &camera)
 {
     auto &state = *m_impl;
     auto v = [&](unsigned index) { return math::float3(camera[index][0], camera[index][1], camera[index][2]); };

@@ -5,19 +5,11 @@
 #ifndef VOLUME_LIGHT_SPACE
 #define VOLUME_LIGHT_SPACE space0
 #endif
-#ifdef VOLUME_LIGHT_CONSTANT_BUFFER
-// Uniform light transforms should use the constant-cache path in the long
-// camera raymarch, not become persistent typed-buffer load results.
 cbuffer VolumeLightConstants : register(b2, VOLUME_LIGHT_SPACE)
 {
     float4 VolumeLights[40];
 };
-#else
-Buffer<float4> VolumeLights : register(t27, VOLUME_LIGHT_SPACE);
-#endif
-#ifdef VOLUME_LIGHT_CONSTANT_BUFFER
-SamplerComparisonState VolumeShadowComparison : register(s2, VOLUME_LIGHT_SPACE);
-#endif
+SamplerComparisonState VolumeShadowComparison : register(s4, VOLUME_LIGHT_SPACE);
 Texture2DArray<float> RegularLightDepth : register(t28, VOLUME_LIGHT_SPACE);
 Texture2DArray<float4> LightMoments : register(t29, VOLUME_LIGHT_SPACE);
 Texture2DArray<float> LightOpticalDepth : register(t31, VOLUME_LIGHT_SPACE);
@@ -132,28 +124,26 @@ float OpaqueLightVisibility(float3 world, uint light)
     float3 uvz = p.xyz / max(p.w, 1e-6);
     if (p.w <= 0. || any(uvz < 0.) || any(uvz > 1.))
         return 1.;
-#ifdef VOLUME_LIGHT_CONSTANT_BUFFER
     // NVRHI's comparison sampler uses LESS. Its complement is the original
     // reversed-Z >= test, including equality, with hardware bilinear PCF.
     return 1. - RegularLightDepth.SampleCmpLevelZero(VolumeShadowComparison, float3(uvz.xy, light), uvz.z + .0002);
-#else
-    // Four depth comparisons, bilinear weights. Filtering raw depth would leak.
-    uint width, height, layers;
-    RegularLightDepth.GetDimensions(width, height, layers);
-    float2 texel = uvz.xy * float2(width, height) - .5;
-    int2 base = int2(floor(texel));
-    float2 f = frac(texel);
-    float visibility = 0.;
-    [unroll] for (uint y = 0; y < 2; ++y)[unroll] for (uint x = 0; x < 2; ++x)
-    {
-        int2 pixel = clamp(base + int2(x, y), 0, int2(width, height) - 1);
-        float depth = RegularLightDepth.Load(int4(pixel, light, 0));
-        visibility += (uvz.z + .0002 >= depth ? 1. : 0.) * (x ? f.x : 1. - f.x) * (y ? f.y : 1. - f.y);
-    }
-    return visibility;
-#endif
 }
-float3 EvaluateVolumeLighting(float3 world)
+#if SPECIALIZED_VDB
+Texture3D<float> VdbAmbientColumn : register(t38);
+float VdbExtinctionLength(float extinction, float3 extent)
+{
+    return extinction * (2. * max(extent.x, max(extent.y, extent.z)));
+}
+float SampleVdbAmbientVisibility(float3 localUV, float extinctionLength)
+{
+    if (VdbAmbientColumnScale <= 0.)
+        return 1.;
+    float column = VdbAmbientColumn.SampleLevel(LinearClamp, localUV, 0) * VdbAmbientColumnScale;
+    return exp(-extinctionLength * column);
+}
+#endif
+
+float3 EvaluateVolumeLighting(float3 world, float ambientVisibility = 1.)
 {
     float sunVisibility = VolumeLights[0].w > 0. ? OpaqueLightVisibility(world, 0) : 0.;
     float3 sun = 0.;
@@ -161,7 +151,7 @@ float3 EvaluateVolumeLighting(float3 world)
         sun = VolumeLights[0].www * sunVisibility * SunVolumeLightResponse(world, true);
 #if defined(ACCUMULATION_AUDIT) && (ACCUMULATION_AUDIT & 128)
     // Exact for the benchmark's zero-intensity spotlight only.
-    return VolumeLights[4].xxx + sun / (4. * 3.14159265);
+    return VolumeLights[4].xxx * ambientVisibility + sun / (4. * 3.14159265);
 #endif
     float3 fromLight = world - VolumeLights[1].xyz;
     float distance2 = max(dot(fromLight, fromLight), .01);
@@ -177,6 +167,6 @@ float3 EvaluateVolumeLighting(float3 world)
             spot = VolumeLights[3].rgb * strength * visibility * SampleVolumeLightResponse(world, 2, true);
     }
     // Isotropic phase for all octaves. Source color remains the artistic scattering tint.
-    return VolumeLights[4].xxx + (sun + spot) / (4. * 3.14159265);
+    return VolumeLights[4].xxx * ambientVisibility + (sun + spot) / (4. * 3.14159265);
 }
 #endif

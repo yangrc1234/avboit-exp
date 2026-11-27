@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Analyze matched 2K --volume-upsample-test HDR captures (use --composition-half)."""
+"""Analyze archived paired HDR captures from the coherent-vs-fixed upsampling experiment."""
 from pathlib import Path
 import numpy as np, json, csv
 

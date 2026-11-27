@@ -190,5 +190,5 @@ frost, finite moments and inactive projections when no local volume exists.
 `avboit/tests/check_volume_resolution.py` compares full and half-resolution volume
 accumulation at 2560x1440, including empty eligibility, homogeneous volume, RGB
 frost intersection and Sponza smoke. It checks finite nonnegative statistics,
-unchanged interface depth and the no-volume identity case. Stochastic upsampling
-is experimental: these spatial captures do not validate final TAA behavior.
+unchanged interface depth and the no-volume identity case. Use `--volume-upsample-test`
+for stationary and moving-camera TAA captures.
